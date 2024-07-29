@@ -1,0 +1,102 @@
+#
+# Test recover xa specification.
+#
+source include/have_log_bin.inc;
+--source include/have_binlog_format_row.inc
+--source include/not_valgrind.inc
+source include/have_debug.inc;
+--source include/not_crashrep.inc
+
+call mtr.add_suppression('Unsafe statement written .*');
+call mtr.add_suppression('Found .*');
+
+connection default;
+
+create database db_crash_9;
+create table db_crash_9.t(id int);
+insert into db_crash_9.t values(0);
+
+create table db_crash_9.t2(id int);
+insert into db_crash_9.t2 values(0);
+
+--let $iter=1
+while ($iter <= 2)
+{
+	if ($iter == 1)
+	{
+	--let $sql0=insert into db_crash_9.t2 values(1)
+	--let $sql=insert into db_crash_9.t values(1)
+	}
+	if ($iter == 2)
+	{
+	--let $sql=update db_crash_9.t set id = id+1
+	}
+
+	--echo # run cmd: $sql
+	connect (conn1,localhost,root,,);
+	connection conn1;
+	xa recover;
+
+	--echo # 0$iter. succ
+	--source include/flush_and_load_data.inc
+
+	flush logs;
+	--eval $sql0
+	let $last_log_index= query_get_value(select LAST_LOG_INDEX from  information_schema.ALISQL_CLUSTER_LOCAL, LAST_LOG_INDEX, 1);
+	--disable_query_log
+	--eval call dbms_consensus.purge_log($last_log_index);
+	--enable_query_log
+
+	xa recover;
+	xa commit 'xx';
+	disconnect conn1;
+	connection default;
+
+
+	--let $debug_hook=crash_purge_before_update_index
+	--echo # 1$iter. $debug_hook
+	--source suite/xcluster/t/crash_druing_pruge_common.inc
+
+	--let $debug_hook=crash_purge_before_remove_logs_from_index
+	--echo # 2$iter. $debug_hook
+	--source suite/xcluster/t/crash_druing_pruge_common.inc
+
+	--let $debug_hook=fault_injection_copy_part_file
+	--echo # 3$iter. $debug_hook
+	--source suite/xcluster/t/crash_druing_pruge_common.inc
+
+	--let $debug_hook=crash_create_before_rename_index_file
+	--echo # 4$iter. $debug_hook
+	--source suite/xcluster/t/crash_druing_pruge_common.inc
+
+
+	--let $debug_hook=crash_create_after_rename_index_file
+	--echo # 5$iter. $debug_hook
+	--source suite/xcluster/t/crash_druing_pruge_common.inc
+
+	--let $debug_hook=crash_purge_before_truncate_before
+	--echo # 6$iter. $debug_hook
+	--source suite/xcluster/t/crash_druing_pruge_common.inc
+
+
+	--let $debug_hook=crash_purge_before_update_index_after_truncate
+	--echo # 7$iter. $debug_hook
+	--source suite/xcluster/t/crash_druing_pruge_common.inc
+
+	--let $debug_hook=crash_purge_critical_after_update_index
+	--echo # 8$iter. $debug_hook
+	--source suite/xcluster/t/crash_druing_pruge_common.inc
+
+
+	--let $debug_hook=crash_purge_non_critical_after_update_index
+	--echo # 9$iter. $debug_hook
+	--source suite/xcluster/t/crash_druing_pruge_common.inc
+
+	--inc $iter
+}
+connection default;
+SET GLOBAL debug="";
+
+drop table db_crash_9.t;
+drop table db_crash_9.t2;
+drop database db_crash_9;

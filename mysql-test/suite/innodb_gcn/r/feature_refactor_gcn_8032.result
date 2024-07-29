@@ -1,0 +1,109 @@
+###############################
+# close binlog
+###############################
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+create table tt (id int);
+###############################
+# Case 1: commit detached XA
+###############################
+set xa_detach_on_prepare = on;
+xa start '1_normal';
+insert into tt values (1);
+xa end '1_normal';
+xa prepare '1_normal';
+xa commit '1_normal';
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_state == actual_state]
+###############################
+# Case 2: rollback detached XA
+###############################
+set xa_detach_on_prepare = on;
+xa start '2_normal';
+insert into tt values (2);
+xa end '2_normal';
+xa prepare '2_normal';
+xa rollback '2_normal';
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_state == actual_state]
+###############################
+# Case 3: commit attached XA
+###############################
+set xa_detach_on_prepare = off;
+xa start '3_normal';
+insert into tt values (3);
+xa end '3_normal';
+xa prepare '3_normal';
+xa commit '3_normal';
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_state == actual_state]
+###############################
+# Case 4: rollback attached XA
+###############################
+set xa_detach_on_prepare = off;
+xa start '4_normal';
+insert into tt values (4);
+xa end '4_normal';
+xa prepare '4_normal';
+xa rollback '4_normal';
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_state == actual_state]
+###############################
+# cleanup
+###############################
+drop table tt;
+set xa_detach_on_prepare = default;
+###############################
+# open binlog
+###############################
+# restart:--log-bin=binlog
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+create table tt (id int);
+###############################
+# Case 1: commit detached XA
+###############################
+set xa_detach_on_prepare = on;
+xa start '1_restarted';
+insert into tt values (1);
+xa end '1_restarted';
+xa prepare '1_restarted';
+xa commit '1_restarted';
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_state == actual_state]
+###############################
+# Case 2: rollback detached XA
+###############################
+set xa_detach_on_prepare = on;
+xa start '2_restarted';
+insert into tt values (2);
+xa end '2_restarted';
+xa prepare '2_restarted';
+xa rollback '2_restarted';
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_state == actual_state]
+###############################
+# Case 3: commit attached XA
+###############################
+set xa_detach_on_prepare = off;
+xa start '3_restarted';
+insert into tt values (3);
+xa end '3_restarted';
+xa prepare '3_restarted';
+xa commit '3_restarted';
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_state == actual_state]
+###############################
+# Case 4: rollback attached XA
+###############################
+set xa_detach_on_prepare = off;
+xa start '4_restarted';
+insert into tt values (4);
+xa end '4_restarted';
+xa prepare '4_restarted';
+xa rollback '4_restarted';
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_state == actual_state]
+###############################
+# cleanup
+###############################
+drop table tt;
+set xa_detach_on_prepare = default;

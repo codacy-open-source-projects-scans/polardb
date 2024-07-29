@@ -1,0 +1,439 @@
+##############################################################################
+#
+# List the test cases that are to be disabled temporarily.
+#
+# Separate the test case name and the comment with ':'.
+#   <suite>.<test> [@platform|@!platform] : <BUG|WL>#<XXXX> [<comment>]
+#
+# Note:
+#   - Do not use any TAB characters for whitespace.
+#   - Length of a comment section must not be more than 80 characters.
+#
+##############################################################################
+
+# audit_log
+audit_log.audit_log_prune_seconds_var_cnf @windows : BUG#32245509 Test lets mysqltest crash only on windows.
+
+# audit_null
+audit_null.audit_plugin_bugs : BUG#28080637 Test fails consistently
+
+# auth_sec
+
+# binlog suite tests
+binlog.binlog_mysqlbinlog_rewrite_db @windows     : BUG#26717205 Requires a debug client binary and fails consistently.
+binlog_gtid.binlog_xa_select_gtid_executed_explicitly_crash : Bug#28588717 Fails both on FreeBSD and other platforms
+binlog_nogtid.binlog_gtid_next_xa                 : BUG#33650776 Failure of XA COMMIT of prepared txn, can result in txn rollback
+binlog.binlog_rotate_bgc_sync                     : WL#000 m_prep_xids protects MyISAM tables now, the scenario won't occur
+# func1 suite tests
+funcs_1.is_basics_mixed @darwin  : BUG#25882809 INCORRECT RESULT WHEN USING SUBQUERY ON TOP OF VIEW.
+funcs_1.is_basics_mixed @windows : BUG#25882809 INCORRECT RESULT WHEN USING SUBQUERY ON TOP OF VIEW.
+
+# innodb suite tests
+innodb.analyze_table @solaris                     : BUG#22607584 Failing too often on PB2 due to timeout.
+innodb.log_corruption @darwin                     : BUG#27760219 Test fails consistently on freebsd and Mac after WL#11009.
+innodb.log_corruption @freebsd                    : BUG#27760219 Test fails consistently on freebsd and Mac after WL#11009.
+innodb.create_tablespace_partition                : WL#12034 Enable again once shared tablespaces are allowed in partitioned table.
+innodb.alter_tablespace_partition                 : WL#12034 Enable again once shared tablespaces are allowed in partitioned table.
+innodb.truncate                                   : WL#12034 Enable again once shared tablespaces are allowed in partitioned table.
+innodb.subpartition                               : WL#12034 Enable again once shared tablespaces are allowed in partitioned table.
+innodb.ddl_crash_alter_table_partition_tablespace : WL#12034 Enable again once shared tablespaces are allowed in partitioned table.
+innodb.innodb_bug14676111                         : BUG#18200831 The test has never worked correctly
+innodb.fts_exec_interrupt                         : Bug#28534199 The test is unstable and should be rewritten
+innodb.slow_shutdown                              : Bug#31763837 mtr hits this debug assert post test run cleanup
+innodb.upgrade_fts_aux                            : Bug#33034679 Test needs an upgrade of its 5.7 data files
+innodb.instant_ddl_recovery_old                   : WL#12527 Redo format has changed - crashed_datadir.zip needs to be recreated.
+innodb.log_logical_size                           : WL#12527 Test is shaky - needs to be fixed.
+
+# keyring tests
+keyring_encrypted_file.keyring_migration_bugs @darwin : Bug#31041633
+
+# Tests that run ALTER on the "mysql" database
+innodb.mysql_ts_alter_encrypt_1                 : BUG#29531106 - ATTACHABLE_TRX(): ASSERTION `!M_THD->TRANSACTION_ROLLBACK_REQUEST' FAILED
+component_keyring_file.mysql_ts_alter_encrypt_1 : BUG#29531106 - ATTACHABLE_TRX(): ASSERTION `!M_THD->TRANSACTION_ROLLBACK_REQUEST' FAILED
+
+
+# main suite tests
+main.ds_mrr-big @solaris : BUG#14168107 Test leads to timeout on Solaris on slow sparc servers.
+main.gtid_next_xa_binlog_off : BUG#33650776 Failure of XA COMMIT of prepared txn, can result in txn rollback
+
+# Disabled due to InnoDB issues
+main.internal_tmp_disk_storage_engine : BUG#26917416 Disabled it since it's failing on pb2.
+
+# max_parts suite tests
+max_parts.innodb-import-partition-1                         : BUG#27413612 Fails consistently on hudson jobs. Disabled until bug is fixed.
+max_parts.innodb_partition_open_files_limit @solaris        : BUG#27423163 Times out on Solaris platform on Hudson. Disabled until bug is fixed.
+max_parts.partition_max_parts_hash_innodb @windows          : BUG#27681900 Disabling max_parts tests on windows.
+max_parts.partition_max_parts_inv_innodb @windows           : BUG#27681900 Disabling max_parts tests on windows.
+max_parts.partition_max_parts_key_innodb @windows           : BUG#27681900 Disabling max_parts tests on windows.
+max_parts.partition_max_parts_list_innodb @windows          : BUG#27681900 Disabling max_parts tests on windows.
+max_parts.partition_max_parts_range_innodb @windows         : BUG#27681900 Disabling max_parts tests on windows.
+max_parts.partition_max_sub_parts_key_list_innodb @windows  : BUG#27681900 Disabling max_parts tests on windows.
+max_parts.partition_max_sub_parts_key_range_innodb @windows : BUG#27681900 Disabling max_parts tests on windows.
+max_parts.partition_max_sub_parts_list_innodb @windows      : BUG#27681900 Disabling max_parts tests on windows.
+max_parts.partition_max_sub_parts_range_innodb @windows     : BUG#27681900 Disabling max_parts tests on windows.
+max_parts.innodb_partition_open_files_limit                 : BUG#27423163 Test times out consistently on Hudson.
+
+# perfschema suite test
+perfschema.threads_history      : BUG#27712231
+perfschema.ssl                  : BUG#30910698
+perfschema.idx_compare_events_waits_current : BUG#27865960
+perfschema.idx_compare_ews_by_thread_by_event_name : BUG#31041671
+perfschema.idx_compare_ews_by_instance : BUG#31791537
+perfschema.idx_compare_rwlock_instances : BUG#31791537
+
+# rpl_gtid suite tests
+rpl_gtid.rpl_async_conn_failover_restart @windows : BUG#34132168 Disabled until bug is fixed
+rpl_gtid.rpl_gtid_truncate_memory_table_after_start_server : BUG#24351040
+rpl_gtid.rpl_gtid_perfschema_applier_xa_status           : BUG#27914287 Disabled until the WL#9075 (Performance Schema, XA Transactions) be implemented
+rpl_gtid.rpl_gtid_mts_spco_deadlock_other_locks          : Bug#32499883 RPL_GTID.RPL_GTID_MTS_SPCO_DEADLOCK_OTHER_LOCKS FAILS ON PB2
+rpl_gtid.rpl_start_replica_until_pos_with_gtid_only      : Bug#33119241 START REPLICA UNTIL SOURCE_LOG_POS SHOULD NOT STOP ON REPLICA EVENTS
+
+# rpl_nogtid suite tests
+rpl_nogtid.rpl_perfschema_applier_xa_status_check : BUG#27914287 Disabled until the WL#9075 (Performance Schema, XA Transactions) be implemented
+rpl_nogtid.rpl_binlog_format_errors               : BUG#29776083 EXPLICIT BINLOG INJECTION WITH SELF LOGGING ENGINES IS BROKEN
+rpl_nogtid.rpl_gipk_cross_version_schema_changes  : BUG#34668313 Fix rpl_gipk_cross_version_schema_changes & binlog_mysqlbinlog_source_gipk_info
+
+# rpl suite tests
+rpl.rpl_io_thd_wait_for_disk_space_stress : BUG#23581287 Disabled until bug is fixed.
+rpl.rpl_writeset_add_unique_key : Bug#33134835 RPL_WRITESET_ADD_UNIQUE_KEY FAILS SPORADICALLY
+
+# sys_vars tests
+sys_vars.max_execution_time_basic @freebsd : BUG#31041720
+sys_vars.innodb_log_writer_threads_basic : Bug#32129814 SYS_VARS.INNODB_LOG_WRITER_THREADS_BASIC TIMES OUT SPORADICALLY ON PB2
+
+# sysschema suite tests
+sysschema.v_wait_classes_global_by_avg_latency : BUG#21550054 Test fails too often.
+
+# x plugin suite tests
+
+# Group Replication tests.
+
+# These will only run in XCom because of the following issue:
+group_replication.gr_join_with_suspect_member : BUG#31704262 XCOM CREATES NODES WITH PAST GHOST VIEWS
+group_replication.gr_leave_with_suspect_member : BUG#31704262 XCOM CREATES NODES WITH PAST GHOST VIEWS
+group_replication.gr_majority_loss_restored_after_timeout : BUG#31704262 XCOM CREATES NODES WITH PAST GHOST VIEWS
+group_replication.gr_primary_mode_group_operations_joining_during_election @windows : BUG#33679225 Disabled until bug is fixed
+group_replication.gr_primary_mode_group_operations_net_partition_4 @windows : BUG#34673762 Disabled until bug is fixed
+group_replication.gr_suspect_member_resumes_after_crash_join_retries : BUG#32458239 GR_SUSPECT_MEMBER_RESUMES_AFTER_CRASH_JOIN_RETRIES IS NOT STABLE
+group_replication.gr_xa_commit_failure_before_gtid_externalization @windows : BUG#34155238 Disabled until bug is fixed
+group_replication.gr_xa_commit_one_phase_failure_before_gtid_externalization @windows : BUG#34155238 Disabled until bug is fixed
+group_replication.gr_xa_prepare_failure_before_gtid_externalization @windows : BUG#34155238 Disabled until bug is fixed
+group_replication.gr_xa_rollback_failure_before_gtid_externalization @windows : BUG#34155238 Disabled until bug is fixed
+
+
+#galaxy add  here
+perfschema.hostcache_ipv6_addrinfo_again_allow : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_addrinfo_again_deny : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_addrinfo_bad_allow : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_addrinfo_bad_deny : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_addrinfo_good_allow : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_addrinfo_good_deny : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_addrinfo_noname_allow : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_addrinfo_noname_deny : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_auth_plugin : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_blocked : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_max_con : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_nameinfo_again_allow : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_nameinfo_again_deny : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_nameinfo_noname_allow : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_nameinfo_noname_deny : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_passwd : BUG#000 We don't support IPv6
+perfschema.hostcache_ipv6_ssl : BUG#000 We don't support IPv6
+main.bind_address_3 : BUG#000 We don't support IPv6
+rpl.rpl_ip_mix : BUG#000 We don't support IPv6
+rpl.rpl_ip_mix2 : BUG#000 We don't support IPv6
+rpl.rpl_ipv6 : BUG#000 We don't support IPv6
+x.performance_schema_sockets : BUG#000 We don't support IPv6
+group_replication.gr_startup_check_node_seed_skips_own_address  : BUG#000 We don't support IPv6
+group_replication.gr_startup_check_node_seed_skips_own_address_v6  : BUG#000 We don't support IPv6
+x.connection_multi_bind_address	 : BUG#000 We don't support IPv6
+x.status_variables	 : BUG#000 We don't support IPv6
+x.system_variable_bind_address	 : BUG#000 We don't support IPv6
+auth_sec.host_sort	 : BUG#000 We don't support IPv6
+
+main.mysql_load_data_local_dir  : BUG#0000 mysql failed
+
+# Lizard didn't support in-place upgrade.
+main.dd_upgrade_partition                       : WL#000 Lizard didn't support in-place upgrade.
+innodb.redo_log_archive_02                      : WL#000 Lizard didn't support in-place upgrade.
+main.dictionary_tablespace                      : WL#000 Lizard didn't support in-place upgrade.
+innodb.portability_tablespace                   : WL#000 Lizard didn't support in-place upgrade.
+sysschema.fn_format_path                        : WL#000 Lizard didn't support in-place upgrade.
+innodb.upgrade_fts                              : WL#000 Lizard didn't support in-place upgrade.
+innodb.upgrade_orphan                           : WL#000 Lizard didn't support in-place upgrade.
+innodb.upgrade_partition                        : WL#000 Lizard didn't support in-place upgrade.
+encryption.upgrade                              : WL#000 Lizard didn't support in-place upgrade.
+main.dd_schema_definition_after_upgrade_57_debug  : WL#000 Lizard didn't support in-place upgrade.
+innodb.upgrade_compressed_recv                    : WL#000 Lizard didn't support in-place upgrade.
+innodb.mysqldump_max_recordsize                   : WL#000 Lizard didn't support in-place upgrade.
+main.mysql_57_inplace_upgrade                     : WL#000 Lizard didn't support in-place upgrade.
+main.mysql_80_inplace_upgrade                     : WL#000 Lizard didn't support in-place upgrade.
+main.mysql_inplace_upgrade                        : WL#000 Lizard didn't support in-place upgrade.
+innodb.innodb_pagesize_max_recordsize             : WL#000 Lizard didn't support in-place upgrade.
+main.dd_upgrade_cs                                : WL#000 Lizard didn't support in-place upgrade.
+main.dd_upgrade_error                             : WL#000 Lizard didn't support in-place upgrade.
+main.dd_upgrade_error_cs                          : WL#000 Lizard didn't support in-place upgrade.
+main.dd_upgrade_error_debug                       : WL#000 Lizard didn't support in-place upgrade.
+innodb.bootstrap                                  : WL#000 Lizard didn't support in-place upgrade.
+
+innodb.import_compress_encrypt                    : WL#000 Lizard didn't support in-place upgrade.
+innodb.portability_tablespace_linux               : WL#000 Lizard didn't support in-place upgrade.
+innodb.row_format                                 : WL#000 Lizard didn't support in-place upgrade.
+#rds.feature_support_tde_sm4                       : WL#000 Lizard didn't support in-place upgrade.
+information_schema.upgrade_cs                     : WL#000 Lizard didn't support in-place upgrade.
+innodb.discarded_partition_upgrade_from_57        : WL#000 Lizard didn't support in-place upgrade.
+innodb.discarded_partition_upgrade_from_80        : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_5727_lin_lctn_0_debug    : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_5727_lin_lctn_1_debug    : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8013_debug               : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8015_debug               : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8017_debug               : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8019_lin_lctn_0_debug    : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8019_lin_lctn_1_debug    : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8019_mac_lctn_1_debug    : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8019_win_lctn_1_debug    : WL#000 Lizard didn't support in-place upgrade.
+innodb.upgrade_index_stats                        : WL#000 Lizard didn't support in-place upgrade.
+innodb.upgrade_unknown_directory                  : WL#000 Lizard didn't support in-place upgrade.
+main.partition_prefixkey_upgrade                  : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_5727_lin_lctn_0          : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_5727_lin_lctn_1          : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8013                     : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8015                     : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8017                     : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8019_lin_lctn_0          : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8019_lin_lctn_1          : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8019_mac_lctn_1          : WL#000 Lizard didn't support in-place upgrade.
+innodb.partition_upgrade_8019_win_lctn_1          : WL#000 Lizard didn't support in-place upgrade.
+innodb.upgrade_fts_aux                            : WL#000 Lizard didn't support in-place upgrade.
+innodb.upgrade_fts_shared_tablespace              : WL#000 Lizard didn't support in-place upgrade.
+main.dd_upgrade_lctn_cs_lin                       : WL#000 Lizard didn't support in-place upgrade.
+main.dd_upgrade_non_debug                         : WL#000 Lizard didn't support in-place upgrade.
+main.read_only_ddl                                : WL#000 Lizard didn't support in-place upgrade.
+clone.remote_dml_upgrade                          : WL#000 Lizard didn't support in-place upgrade.
+innodb.innodb_autoextend_upgrade                  : WL#000 Lizard didn't support in-place upgrade.
+innodb.log_5_6_case1                              : WL#000 Lizard didn't support in-place upgrade.
+innodb.instant_ddl_upgrade                        : WL#000 Lizard didn't support in-place upgrade.
+innodb.instant_ddl_upgrade_part                   : WL#000 Lizard didn't support in-place upgrade.
+innodb.instant_ddl_upgrade_part_debug             : WL#000 Lizard didn't support in-place upgrade.
+innodb.instant_ddl_recovery_old_2                 : WL#000 Lizard didn't support in-place upgrade.
+innodb.log_5_7_8_case2                            : WL#000 Lizard didn't support in-place upgrade.
+x.upgrade                                         : WL#000 Lizard didn't support in-place upgrade.
+main.upgrade                                      : WL#000 Lizard didn't support in-place upgrade.
+innodb.upgrade_geometry_56                        : WL#000 Lizard didn't support in-place upgrade.
+innodb.log_5_7_8_case1                            : WL#000 Lizard didn't support in-place upgrade.
+innodb.log_5_7_9_case1                            : WL#000 Lizard didn't support in-place upgrade.
+innodb.bug33788578                                : WL#000 Lizard didn't support in-place upgrade.
+main.upgrade_system_tables                        : WL#000 Lizard didn't support in-place upgrade.
+innodb.log_5_7_9_case2                            : WL#000 Lizard didn't support in-place upgrade.
+innodb.bug33788578_ddl                            : WL#000 Lizard didn't support in-place upgrade.
+innodb.log_5_7_9_case3                            : WL#000 Lizard didn't support in-place upgrade.
+innodb.bug33788578_online_ddl                     : WL#000 Lizard didn't support in-place upgrade.
+innodb.log_5_7_9_case4                            : WL#000 Lizard didn't support in-place upgrade.
+innodb.log_5_7_9_case5                            : WL#000 Lizard didn't support in-place upgrade.
+innodb.log_5_7_9_case6                            : WL#000 Lizard didn't support in-place upgrade.
+innodb.log_5_7_9_case7                            : WL#000 Lizard didn't support in-place upgrade.
+innodb.log_8_0_11_case1                           : WL#000 Lizard didn't support in-place upgrade.
+innodb.log_8_0_19_case1                           : WL#000 Lizard didn't support in-place upgrade.
+innodb.instant_ddl_upgrade_debug                  : WL#000 Lizard didn't support in-place upgrade.
+innodb.instant_ddl_upgrade_metadata               : WL#000 Lizard didn't support in-place upgrade.
+innodb.instant_ddl_upgrade_part_metadata          : WL#000 Lizard didn't support in-place upgrade.
+innodb.instant_ddl_upgrade_metadata_debug         : WL#000 Lizard didn't support in-place upgrade.
+innodb.instant_ddl_upgrade_part_metadata_debug    : WL#000 Lizard didn't support in-place upgrade.
+innodb.instant_ddl_upgrade_update                 : WL#000 Lizard didn't support in-place upgrade.
+innodb.instant_ddl_upgrade_rollback               : WL#000 Lizard didn't support in-place upgrade.
+main.dd_schema_definition_debug                   : WL#000 Lizard didn't support in-place upgrade.
+information_schema.i_s_schema_definition_debug    : WL#000 Lizard didn't support in-place upgrade.
+
+# innodb-rollback-segments
+innodb.innodb_bug12400341                         : WL#000 Lizard didn't support adjust innodb-rollback-segments.
+
+# More mtr / redo
+innodb.log_first_rec_group                        : WL#000 Lizard generate more redo.
+
+# Import
+innodb.import_compress_encrypt                    : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8019_lin_lctn_1_debug     : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_57                        : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8019_mac_lctn_1_debug     : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.crc32_endianness                           : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8019_win_lctn_1_debug     : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.import_5_7                                 : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.import                                     : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.import_cfg                                 : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.import_empty_instant_default               : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.instant_ddl_import                         : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.instant_ddl_import_debug                   : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.innodb-import-partition                    : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.instant_ddl_import_old                     : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.instant_ddl_import_old_debug               : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.instant_ddl_import_old_part                : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.instant_ddl_import_old_part_debug          : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.instant_ddl_import_partition               : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.instant_ddl_import_partition_debug         : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.bug34307874                                : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.transportable_tbsp-1                       : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8015_debug                : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8013_debug                : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8017_debug                : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8019_lin_lctn_0_debug     : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.table_encrypt_portable_64                  : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+component_keyring_file.import_compress_encrypt    : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.innodb-import-lctn_1                       : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8019_lin_lctn_1			 : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8019_mac_lctn_1			 : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.	
+innodb.partition_import_8019_win_lctn_1			 : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8019_lin_lctn_0			 : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8013					 : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8015					 : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+innodb.partition_import_8017					 : WL#000 Lizard can't import tablespaces which are generated by mysqld without lizard.
+
+# galaxy_sql
+galaxy_sql.feature_record_row_read_delete_mark    : WL#000 System variable 'innodb_undo_retention' is not supported yet
+
+# trx_sys_t::max_trx_id
+innodb.max_trx_id                                 : WL#000 Transaction commit no longer pushes up next_trx_id_or_no.
+
+galaxy_sql.rdsaudit_log                           : WL#000 System variable 'maintain_user_list' is not supported yet
+
+
+
+# xcluster not support
+
+federated.federated                            : WL#001 x-cluster does not support master / slave mode
+federated.federated_archive                    : WL#001 x-cluster does not support master / slave mode
+federated.federated_bug_13118                  : WL#001 x-cluster does not support master / slave mode
+federated.federated_bug_25714                  : WL#001 x-cluster does not support master / slave mode
+federated.federated_bug_35333                  : WL#001 x-cluster does not support master / slave mode
+federated.federated_bug_33500956               : WL#001 x-cluster does not support master / slave mode
+federated.federated_bug_33962357               : WL#001 x-cluster does not support master / slave mode
+federated.federated_connection_attrs           : WL#001 x-cluster does not support master / slave mode
+federated.federated_debug                      : WL#001 x-cluster does not support master / slave mode
+federated.federated_get_table_share            : WL#001 x-cluster does not support master / slave mode
+federated.federated_innodb                     : WL#001 x-cluster does not support master / slave mode
+federated.federated_server                     : WL#001 x-cluster does not support master / slave mode
+federated.percona_bug1739734                   : WL#001 x-cluster does not support master / slave mode
+
+main.persisted_variables_extended                : WL#21509040 reset master
+main.skip_log_bin                                : WL#21509040 skip-log-bin
+main.grant_dynamic				 				 : WL#21509040 start slave
+main.mysqlbinlog_raw_mode                        : WL#21509040 reset master
+main.rewrite_general_log                         : WL#21509040 change master
+main.dd_upgrade_partition                        : WL#21509040 disable binlog
+main.dd_upgrade_test                             : WL#21509040 disable lizard
+main.basedir                                     : WL#21509040 disable temp
+main.binlog_partial_json_warnings                : WL#21509040 binlog=stmt
+main.initialize_gtid                             : WL#21509040 not support gtid
+main.mysqld_safe                                 : WL#21509040 disable temp
+main.persisted_variables_bugs                    : WL#21509040 reset master
+main.rpl_multi_source_mysqldump_slave            : WL#21509040 start slave
+main.populate_collations_read_only               : WL#21509040 not support innodb_read_only
+main.mysql_57_inplace_upgrade                    : WL#21509040 disable upgrade
+main.mysql_80_inplace_upgrade                    : WL#21509040 disable upgrade
+main.per_thread_connection_handler				 : WL#21509040 unstable
+main.dd_upgrade_cs                               : WL#21509040 not support start from no 3 nodes dir
+main.dd_upgrade_error_debug                      : WL#21509040 not support start from no 3 nodes dir
+main.dd_upgrade_error                            : WL#21509040 not support start from no 3 nodes dir
+main.dd_upgrade_error_ci                         : WL#21509040 not support start from no 3 nodes dir
+main.dd_upgrade_error_cs                         : WL#21509040 not support start from no 3 nodes dir
+main.dd_upgrade_non_debug                        : WL#21509040 not support start from no 3 nodes dir
+main.wl14965									 :  WL#001 upgrade from 8027
+
+encryption.upgrade                               : WL#21509040 not support start from no 3 nodes dir
+
+component_keyring_file.clone_remote_encrypt      : WL#21509040 not support clone
+component_keyring_file.clone_local_encrypt       : WL#21509040 not support clone
+
+
+binlog.binlog_encryption_random_access           					: WL#21509040 encrypt binlog
+binlog.binlog_rotate_binlog_master_key_errors    					: WL#21509040 encrypt binlog
+binlog.binlog_rotate_binlog_master_key_crash_recovery_at_startup 	: WL#21509040 encrypt binlog
+binlog.binlog_rotate_binlog_master_key_crash_recovery 				: WL#21509040 encrypt binlog
+component_keyring_file.tablespace_encrypt_5							: WL#21509040 encrypt ablespace
+component_keyring_file.tablespace_encrypt_7							: WL#21509040 encrypt ablespace
+component_keyring_file.tablespace_encrypt_10						: WL#21509040 encrypt ablespace
+component_keyring_file.tablespace_encrypt_11						: WL#21509040 encrypt ablespace at fsp_init_resume_alter_encrypt_tablespace
+component_keyring_file.tablespace_encrypt_2                         : WL#000 Table flags are 0x4800 in data dictionary but encrypt_ts.ibd are 0x6800
+innodb.tablespace_encrypt_5                 						: WL#21509040 encrypt ablespace at fsp_init_resume_alter_encrypt_tablespace
+innodb.tablespace_encrypt_2											: WL#21509040 encrypt ablespace
+innodb.tablespace_encrypt_9											: WL#21509040 encrypt ablespace
+innodb.tablespace_encrypt_10										: WL#21509040 encrypt ablespace
+innodb.tablespace_encrypt_7											: WL#21509040 encrypt ablespace
+innodb.tablespace_encrypt_11										: WL#21509040 encrypt ablespace
+innodb_undo.truncate_recover_e01 : WL#21509040 not support encrypt table
+innodb_undo.truncate_recover_e02 : WL#21509040 not support encrypt table
+innodb_undo.truncate_recover_e03 : WL#21509040 not support encrypt table
+innodb_undo.truncate_recover_e04 : WL#21509040 not support encrypt table
+innodb_undo.truncate_recover_e05 : WL#21509040 not support encrypt table
+innodb_undo.truncate_recover_e06 : WL#21509040 not support encrypt table
+innodb_undo.truncate_recover_e07 : WL#21509040 not support encrypt table
+innodb_undo.truncate_recover_e08 : WL#21509040 not support encrypt table
+innodb_undo.truncate_recover_e09 : WL#21509040 not support encrypt table
+innodb.log_encrypt_6                             : WL#21509040 start from not 3 node dir
+innodb.sdi                                       : WL#21509040 master branch not support
+innodb.ibuf_not_empty                            : WL#21509040 --innodb-force-recovery=6
+innodb.innodb_bug-13628249                       : WL#21509040 --innodb-force-recovery=2
+innodb.portability_basic                         : WL#21509040 start from not 3 node dir
+innodb.portability_tablespace                    : WL#21509040 start from not 3 node dir
+innodb.log_encrypt_6                             : WL#21509040 --innodb-force-recovery
+innodb.readonly                                  : WL#21509040 --innodb-read-only
+innodb.innodb_force_recovery                     : WL#21509040 --innodb-force-recovery
+innodb.upgrade_compressed_recv                   : WL#21509040 skip_bin_log
+innodb_undo.truncate_recover_01                  : WL#21509040 not support remove file binlog*
+innodb_undo.truncate_recover_02                  : WL#21509040 not support remove file binlog*
+innodb_undo.truncate_recover_03                  : WL#21509040 not support remove file binlog*
+innodb_undo.truncate_recover_04                  : WL#21509040 not support remove file binlog*
+innodb_undo.truncate_recover_05                  : WL#21509040 not support remove file binlog*
+innodb_undo.truncate_recover_06                  : WL#21509040 not support remove file binlog*
+innodb_undo.truncate_recover_07                  : WL#21509040 not support remove file binlog*
+innodb_undo.truncate_recover_08                  : WL#21509040 not support remove file binlog*
+innodb_undo.truncate_recover_09                  : WL#21509040 not support remove file binlog*
+innodb.upgrade_orphan                            : WL#21509040 start from not 3 node dir
+innodb.innodb_read_only                          : WL#21509040 innodb-read-only
+innodb.innodb_read_only-2                        : WL#21509040 innodb-read-only
+innodb.innodb_read_only-1                        : WL#21509040 innodb-read-only
+
+innodb.ddl_kill					:  WL#001 failed in community 8032
+
+binlog.binlog_rewrite                            : WL#21509040 change REPLICATION SOURCE not support
+binlog_gtid.binlog_gtid_log_status_errors      	 : WL#21509040 change REPLICATION SOURCE not support
+binlog.binlog_expire_logs_days_deprecation       : WL#21509040 binlog expire
+binlog.binlog_expire_logs_seconds		     	 : WL#21509040 not support expire_logs_seconds
+binlog_gtid.binlog_gtid_purge_binlog_at_startup	 : WL#21509040 not support expire_logs_seconds
+
+binlog_gtid.binlog_simulate_crash_and_error_on_compress_gtid_table  : WL#21509040 not support encrypt table
+binlog_gtid.binlog_flush_logs_error                     : WL#21509040 not support now
+binlog_gtid.binlog_gtids_table_gcov                 	: WL#21509040 must write gtid to SE
+binlog_nogtid.binlog_gtid_simple_recovery        	 	: WL#21509040 binlog remove
+
+service_sys_var_registration.sys_var_service_cl       : WL#21509040 not support restart --log-in
+sys_vars.innodb_version_basic                         : WL#21509040 modify the version
+main.log_components_filter                            : WL#21509040 log timestamp unstable
+perfschema.idx_compare_socket_instances               : WL#21509040 disable ipv6
+
+
+main.mysqlpump_bugs             : WL#001 dependency not exist
+main.mtr_unit_tests             : WL#001 dependency not exist
+main.ssl_ca                     : WL#001 dependency not exist
+main.ssl_crl                    : WL#001 dependency not exist
+auth_sec.mysql_ssl_rsa_setup    : WL#001 dependency not exist
+innodb.mysqld_core_dump_without_buffer_pool                 : WL#001 tcn cache cause dump larger
+innodb.mysqld_core_dump_without_buffer_pool_dynamic         : WL#001 tcn cache cause dump larger
+innodb.mysqld_core_dump_without_buffer_pool_with_resizing   : WL#001 tcn cache cause dump larger
+main.count_distinct3            : WL#001 myisam not support
+main.window_functions_big       : WL#001 too slow
+main.sum_distinct-big           : WL#001 too slow
+main.multi_update2              : WL#001 too slow
+innodb.ibd2sdi                  : WL#001 Maximum number of characters allowed as the value for suffix are 17
+
+
+innodb.innodb_corrupt_readonly                   : WL#21509040 innodb readonly
+main.events_read_only                            : WL#001 readonly
+main.dd_schema_definition_after_upgrade_80_debug : WL#21509040 lizard not support
+main.dd_upgrade_encrypted                        : WL#21509040 lizard not support
+component_keyring_file.dd_upgrade_encrypted      : WL#21509040 lizard not support
+component_keyring_file.upgrade                   : WL#21509040 lizard not support
+main.wl14965                                     : WL#001 upgrade from 8027
+main.mysql_upgrade_grant                         : WL#001 upgrade
+main.binlog_partial_json_warnings                : WL#001 skip binlog
+perfschema.table_binary_log_transaction_compression_stats_restart : WL#001 skip binlog
+binlog_gtid.binlog_gtid_binlog_recovery_errors   : WL#001 std_data/binlog_recovery/xx.000001 is bad for xcluster/lizard

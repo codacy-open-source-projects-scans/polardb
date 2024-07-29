@@ -1,0 +1,24 @@
+"source_verify_checksum=OFF, replica_sql_verify_checksum=ON"
+set global source_verify_checksum=OFF;
+set global replica_sql_verify_checksum=OFF;
+set global source_verify_checksum=OFF;
+set global replica_sql_verify_checksum=OFF;
+create table t1(id int, data longblob);
+"source_verify_checksum=ON, replica_sql_verify_checksum=ON"
+set global source_verify_checksum=ON;
+set global replica_sql_verify_checksum=ON;
+set global source_verify_checksum=ON;
+set global replica_sql_verify_checksum=ON;
+"source_verify_checksum=ON, replica_sql_verify_checksum=OFF"
+set global source_verify_checksum=OFF;
+set global replica_sql_verify_checksum=ON;
+set global source_verify_checksum=OFF;
+set global replica_sql_verify_checksum=ON;
+select count(distinct(APPLIED_INDEX)) from information_schema.alisql_cluster_global where role <> "leader";
+count(distinct(APPLIED_INDEX))
+1
+drop table t1;
+set global source_verify_checksum=OFF;
+set global replica_sql_verify_checksum=OFF;
+set global source_verify_checksum=OFF;
+set global replica_sql_verify_checksum=OFF;

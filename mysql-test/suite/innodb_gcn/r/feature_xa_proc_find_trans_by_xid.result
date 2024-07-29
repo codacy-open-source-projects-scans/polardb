@@ -1,0 +1,90 @@
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+set global innodb_purge_rseg_truncate_frequency = 1;
+create table t1 (id int);
+set global innodb_undo_retention = 9000;
+###############################
+# case 1
+###############################
+xa start '1';
+insert into t1 values (1);
+xa end '1';
+xa prepare '1';
+xa commit '1';
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_state == actual_state]
+###############################
+# case 2
+###############################
+xa start '2';
+insert into t1 values (1);
+xa end '2';
+xa prepare '2';
+xa rollback '2';
+include/assert.inc [expect_state == actual_state]
+###############################
+# case 3
+###############################
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+xa start '3';
+insert into t1 values (1);
+xa end '3';
+xa prepare '3';
+include/assert.inc [expect_state == actual_state]
+xa commit '3';
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_state == actual_state]
+###############################
+# case 4
+###############################
+xa start '4';
+xa end '4';
+xa prepare '4';
+xa commit '4';
+include/assert.inc [expect_state == actual_state]
+###############################
+# case 5
+###############################
+xa start '5';
+call dbms_xa.find_by_xid('5', '', 1);
+Status	GCN	CSR
+ATTACHED	18446744073709551615	NONE
+insert into t1 values (1);
+call dbms_xa.find_by_xid('5', '', 1);
+Status	GCN	CSR
+ATTACHED	18446744073709551615	NONE
+xa end '5';
+call dbms_xa.find_by_xid('5', '', 1);
+Status	GCN	CSR
+ATTACHED	18446744073709551615	NONE
+xa prepare '5';
+call dbms_xa.find_by_xid('5', '', 1);
+Status	GCN	CSR
+ATTACHED	18446744073709551615	NONE
+xa commit '5';
+###############################
+# case 6
+###############################
+call dbms_xa.find_by_xid('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '', 1);
+ERROR HY000: Wrong XID for dbms_xa. Please check the format of the XID. For example, gtrid cannot exceed 64 bytes, and bqual cannot exceed 64 bytes.
+###############################
+# case 7
+###############################
+xa start 'drds-13ef7e97bbc00000@e394da2fea20da21', 'DRDS_POLARX1_QATEST_APP_000003_GROUP@0004';
+insert into t1 values (1);
+xa end 'drds-13ef7e97bbc00000@e394da2fea20da21', 'DRDS_POLARX1_QATEST_APP_000003_GROUP@0004';
+xa prepare 'drds-13ef7e97bbc00000@e394da2fea20da21', 'DRDS_POLARX1_QATEST_APP_000003_GROUP@0004';
+xa commit 'drds-13ef7e97bbc00000@e394da2fea20da21', 'DRDS_POLARX1_QATEST_APP_000003_GROUP@0004';
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_state == actual_state]
+###############################
+# case 8
+###############################
+xa start '8';
+insert into t1 values (1);
+xa end '8';
+xa commit '8' one phase;
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_state == actual_state]
+drop table t1;
+set global innodb_undo_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;

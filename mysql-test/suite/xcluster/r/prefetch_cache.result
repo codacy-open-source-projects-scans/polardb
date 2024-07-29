@@ -1,0 +1,15 @@
+use test;
+create table t1 (data longblob);
+insert into t1 values (repeat('a', 2*1024*1024));
+insert into t1 values (repeat('a', 2*1024*1024));
+insert into t1 values (repeat('a', 2*1024*1024));
+insert into t1 values (repeat('a', 2*1024*1024));
+insert into t1 values (repeat('a', 2*1024*1024));
+insert into t1 select * from t1;
+insert into t1 values (repeat('a', 2*1024*1024));
+insert into t1 values (repeat('a', 1024));
+insert into t1 values (repeat('a', 1024));
+insert into t1 values (repeat('a', 1024));
+insert into t1 values (repeat('a', 1024));
+insert into t1 values (repeat('a', 1024));
+drop table t1;

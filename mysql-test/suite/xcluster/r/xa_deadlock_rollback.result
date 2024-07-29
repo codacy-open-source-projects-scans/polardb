@@ -1,0 +1,16 @@
+CREATE TABLE t (i INT) ENGINE = InnoDB;
+INSERT INTO t (i) VALUES(1);
+xa start '1';
+SELECT * FROM t WHERE i = 1 LOCK IN SHARE MODE;
+i
+1
+xa start '2';
+update t set i=2 where i=1;;
+update t set i=2 where i=1;
+xa end '1';
+xa prepare '1';
+xa commit '1';
+insert into t values (5);
+xa end '2';
+xa rollback '2';
+drop table t;

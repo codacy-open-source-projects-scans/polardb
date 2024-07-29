@@ -1,0 +1,32 @@
+--source include/have_debug.inc
+--connect (follower,127.0.0.1,root,,test,$MYPORT_2)
+connection default;
+create table t(id int primary key);
+insert into t values(1);
+--source include/wait_follower_catchup.inc
+
+connection follower;
+begin;
+select * from t where id=1 for update;
+
+connection default;
+begin;
+update t set id=2 where id=1;
+commit;
+connection follower;
+
+--sleep 20
+#--let $wait_timeout=300
+#--let $wait_condition= select count_transactions_retries > 0 from performance_schema.replication_applier_status
+#--source include/wait_condition.inc
+
+rollback;
+
+connection default;
+--source include/wait_follower_catchup.inc
+
+connection follower;
+select * from t;
+
+connection default;
+drop table t;

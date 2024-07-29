@@ -1,0 +1,14 @@
+create table t(id int primary key);
+insert into t values(1);
+begin;
+select * from t where id=1 for update;
+id
+1
+begin;
+update t set id=2 where id=1;
+commit;
+rollback;
+select * from t;
+id
+2
+drop table t;

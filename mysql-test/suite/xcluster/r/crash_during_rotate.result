@@ -1,0 +1,159 @@
+call mtr.add_suppression('Unsafe statement written .*');
+call mtr.add_suppression('Found .*');
+create database db_crash_8;
+create table db_crash_8.t(id int);
+insert into db_crash_8.t values(0);
+# run cmd: insert into db_crash_8.t values(1)
+xa recover;
+formatID	gtrid_length	bqual_length	data
+# 01. succ
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 11. crash_before_rotate_binlog
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+SET SESSION debug="+d,crash_before_rotate_binlog";
+flush logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 21. crash_before_rotate_event_appended
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+SET SESSION debug="+d,crash_before_rotate_event_appended";
+flush logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 31. crash_after_rotate_event_appended
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+SET SESSION debug="+d,crash_after_rotate_event_appended";
+flush logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 41. crash_binlog_rotate_between_close_and_open
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+SET SESSION debug="+d,crash_binlog_rotate_between_close_and_open";
+flush logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# run cmd: update db_crash_8.t set id = id+1
+xa recover;
+formatID	gtrid_length	bqual_length	data
+# 02. succ
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 12. crash_before_rotate_binlog
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+SET SESSION debug="+d,crash_before_rotate_binlog";
+flush logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 22. crash_before_rotate_event_appended
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+SET SESSION debug="+d,crash_before_rotate_event_appended";
+flush logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 32. crash_after_rotate_event_appended
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+SET SESSION debug="+d,crash_after_rotate_event_appended";
+flush logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 42. crash_binlog_rotate_between_close_and_open
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+SET SESSION debug="+d,crash_binlog_rotate_between_close_and_open";
+flush logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+drop table db_crash_8.t;
+drop database db_crash_8;

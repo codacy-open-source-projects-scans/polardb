@@ -1,0 +1,22 @@
+use test;
+create table t1 (data longblob);
+
+let $counter= 5;
+while ($counter)
+{
+  insert into t1 values (repeat('a', 2*1024*1024));
+  dec $counter;
+}
+insert into t1 select * from t1;
+insert into t1 values (repeat('a', 2*1024*1024));
+let $counter= 5;
+while ($counter)
+{
+  insert into t1 values (repeat('a', 1024));
+  dec $counter;
+}
+
+--source include/wait_follower_catchup.inc
+
+drop table t1;
+
