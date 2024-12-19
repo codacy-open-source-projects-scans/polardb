@@ -77,7 +77,7 @@
 using std::max;
 using std::min;
 
-#ifndef DBUG_OFF
+#ifndef NDEBUG
 uint32 tt_guard = 0;
 uint32 pos_guard = 0;
 #endif
@@ -779,7 +779,7 @@ static bool opt_print_table_metadata;
 static ulonglong start_index = 0;
 static ulonglong stop_index = 0;
 static ulonglong current_index = 0;
-#ifndef DBUG_OFF
+#ifndef NDEBUG
 static bool debug_consensuslog_revise_check;
 #endif
 
@@ -1375,7 +1375,7 @@ static Exit_status process_event(PRINT_EVENT_INFO *print_event_info,
   Exit_status retval = OK_CONTINUE;
   IO_CACHE *const head = &print_event_info->head_cache;
 
-#ifndef DBUG_OFF
+#ifndef NDEBUG
   if (debug_consensuslog_revise_check) {
     uint32 tt_now = (uint32)ev->common_header->when.tv_sec;
     if (tt_guard > tt_now + 1)  // only allow 1 sec diff

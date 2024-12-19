@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2020, 2022, Oracle and/or its affiliates.
+Copyright (c) 2020, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -904,7 +904,11 @@ dberr_t Builder::copy_columns(Copy_ctx &ctx, size_t &mv_rows_added,
           return err;
         }
       } else {
-        src_field = dtuple_get_nth_field(ctx.m_row.m_ptr, col_no);
+        if (ifield->col->ind == DATA_GPP_NO) {
+          src_field = lizard::dtuple_get_v_gfield(ctx.m_row.m_ptr);
+        } else {
+          src_field = dtuple_get_nth_field(ctx.m_row.m_ptr, col_no);
+        }
       }
 
       dfield_copy(field, src_field);
@@ -1205,6 +1209,23 @@ dberr_t Builder::key_buffer_sort(size_t thread_id) noexcept {
   return DB_SUCCESS;
 }
 
+dberr_t Builder::online_build_handle_error(dberr_t err) noexcept {
+  set_error(err);
+
+  if (m_btr_load != nullptr) {
+    /* page_loaders[0] has increased buf_fix_count through release(). This is
+    decremented by calling latch(). Similar release() calls for page_loaders at
+    non-zero levels are handled in finish() */
+    m_btr_load->latch();
+    err = m_btr_load->finish(err);
+
+    ut::delete_(m_btr_load);
+    m_btr_load = nullptr;
+  }
+
+  return get_error();
+}
+
 dberr_t Builder::insert_direct(Cursor &cursor, size_t thread_id) noexcept {
   ut_a(m_id == 0);
   ut_ad(is_skip_file_sort());
@@ -1217,13 +1238,30 @@ dberr_t Builder::insert_direct(Cursor &cursor, size_t thread_id) noexcept {
   {
     auto err = m_ctx.check_state_of_online_build_log();
 
+    DBUG_EXECUTE_IF("builder_insert_direct_trigger_error", {
+      static int count = 0;
+      ++count;
+      if (count > 1) {
+        err = DB_ONLINE_LOG_TOO_BIG;
+        m_ctx.m_trx->error_key_num = SERVER_CLUSTER_INDEX_ID;
+      }
+    });
+
     if (err != DB_SUCCESS) {
-      set_error(err);
-      err = m_btr_load->finish(err);
-      ut::delete_(m_btr_load);
-      m_btr_load = nullptr;
-      return get_error();
+      return online_build_handle_error(err);
     }
+  }
+
+  DBUG_EXECUTE_IF("builder_insert_direct_no_builder",
+                  { static_cast<void>(online_build_handle_error(DB_ERROR)); });
+
+  if (m_btr_load == nullptr) {
+    auto ind = index();
+    ib::error(ER_IB_MSG_DDL_FAIL_NO_BUILDER, static_cast<unsigned>(get_state()),
+              static_cast<unsigned>(get_error()), id(), ind->name(),
+              ind->space_id(), static_cast<unsigned>(ind->page),
+              ctx().old_table()->name.m_name, ctx().new_table()->name.m_name);
+    return DB_ERROR;
   }
 
   m_btr_load->latch();
@@ -1532,8 +1570,13 @@ dberr_t Builder::add_row(Cursor &cursor, Row &row, size_t thread_id,
                          Latch_release &&latch_release) noexcept {
   auto err = m_ctx.check_state_of_online_build_log();
 
+  DBUG_EXECUTE_IF("builder_add_row_trigger_error", {
+    err = DB_ONLINE_LOG_TOO_BIG;
+    m_ctx.m_trx->error_key_num = SERVER_CLUSTER_INDEX_ID;
+  });
+
   if (err != DB_SUCCESS) {
-    set_error(err);
+    err = online_build_handle_error(err);
   } else if (is_spatial_index()) {
     if (!cursor.eof()) {
       err = batch_add_row(row, thread_id);

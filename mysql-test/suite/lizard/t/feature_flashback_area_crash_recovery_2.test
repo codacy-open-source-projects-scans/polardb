@@ -1,0 +1,173 @@
+--source include/have_debug.inc
+
+connection default;
+set global innodb_undo_retention = 0;
+set global innodb_txn_retention = 36000;
+set global innodb_purge_rseg_truncate_frequency = 1;
+set global innodb_undo_log_truncate = 1;
+
+--echo =============================================================================
+--echo Test crash recovery during the purge truncation. 
+--echo During purge truncation, if an undo log entry with SCN A
+--echo is migrated from the history list to the semi-purge list, but there remain
+--echo some undo log entries with SCNs smaller than A that have not yet been migrated,
+--echo the system may face issues if a crash occurs at this point.
+--echo After crash recovery, without proper restrictions during the erase process,
+--echo the system might erase undo log entries with larger SCNs while still having
+--echo undo log entries with smaller SCNs in the purge system. This results in an
+--echo out-of-order erase operation based on the SCNs. We need to ensure that erase 
+--echo operations follow the correct order of SCNs.
+--echo ==============================================================================
+set global innodb_purge_stop_now=ON;
+CREATE TABLE persistent_vars (var_name VARCHAR(255) PRIMARY KEY, var_value DATETIME);
+
+set opt_flashback_area = 1; 
+CREATE TABLE t1 ( id int NOT NULL, k int NOT NULL, c int NOT NULL, pad varchar(8192), PRIMARY KEY (id), KEY (k));
+
+INSERT INTO t1 (id, k, c, pad) VALUES (1, 1, 1, LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (2, 2, 2, LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (3, 3, 3, LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (4, 4, 4, LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (5, 5, 5, LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (6, 6, 6, LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (7, 7, 7, LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (8, 8, 8, LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (9, 9, 9, LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (10, 10, 10, LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000))));
+
+set opt_flashback_area = 0;
+create table t2 like t1;
+INSERT INTO t2 SELECT * FROM t1;
+
+select * from information_schema.innodb_table_status where table_name='t1' or table_name='t2';
+
+INSERT INTO persistent_vars (var_name, var_value) VALUES ('past_timestamp', NOW()) ON DUPLICATE KEY UPDATE var_value = NOW();
+sleep 4;
+
+begin;
+update t1 set k = 0 where id = 1;
+update t2 set k = 0 where id = 1;
+commit;
+
+begin;
+update t2 set k = 0 where id = 2;
+update t1 set k = 0 where id = 2;
+commit;
+
+begin;
+update t1 set k = 0 where id = 3;
+update t2 set k = 0 where id = 3;
+commit;
+
+begin;
+delete from t1 where id = 1;
+update t1 set pad = LEFT(REPEAT('B', 4000), CHAR_LENGTH(REPEAT('A', 4000)));
+delete from t2 where id = 1;
+update t2 set pad = LEFT(REPEAT('B', 4000), CHAR_LENGTH(REPEAT('A', 4000)));
+commit;
+
+begin;
+update t2 set k = 0 where id = 4;
+update t1 set k = 0 where id = 4;
+commit;
+
+begin;
+update t1 set k = 0 where id = 5;
+update t2 set k = 0 where id = 5;
+commit;
+
+begin;
+delete from t2 where id = 2;
+update t2 set pad = LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000)));
+delete from t1 where id = 2;
+update t1 set pad = LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000)));
+commit;
+
+begin;
+update t2 set k = 0 where id = 6;
+update t1 set k = 0 where id = 6;
+commit;
+
+begin;
+update t1 set k = 0 where id = 7;
+update t2 set k = 0 where id = 7;
+commit;
+
+begin;
+delete from t1 where id = 3;
+update t1 set pad = LEFT(REPEAT('B', 4000), CHAR_LENGTH(REPEAT('A', 4000)));
+delete from t2 where id = 3;
+update t2 set pad = LEFT(REPEAT('B', 4000), CHAR_LENGTH(REPEAT('A', 4000)));
+commit;
+
+begin;
+update t2 set k = 0 where id = 8;
+update t1 set k = 0 where id = 8;
+commit;
+
+begin;
+update t1 set k = 0 where id = 9;
+update t2 set k = 0 where id = 9;
+commit;
+
+begin;
+delete from t2 where id = 4;
+update t2 set pad = LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000)));
+delete from t1 where id = 4;
+update t1 set pad = LEFT(REPEAT('A', 4000), CHAR_LENGTH(REPEAT('A', 4000)));
+commit;
+
+begin;
+update t2 set k = 0 where id = 10;
+update t1 set k = 0 where id = 10;
+commit;
+
+begin;
+delete from t1 where id = 5;
+update t1 set pad = LEFT(REPEAT('B', 4000), CHAR_LENGTH(REPEAT('A', 4000)));
+delete from t2 where id = 5;
+update t2 set pad = LEFT(REPEAT('B', 4000), CHAR_LENGTH(REPEAT('A', 4000)));
+commit;
+
+--echo
+--echo ----crashed during purge truncation
+SET global DEBUG='+d,crash_during_purge_truncate';
+set global innodb_purge_run_now=ON;
+
+--source include/expect_crash.inc
+--error CR_SERVER_LOST
+sleep 3;
+
+# We expect a restart.
+--exec echo "restart:--innodb_undo_log_truncate=0 --innodb_txn_retention=36000" > $MYSQLTEST_VARDIR/tmp/mysqld.1.expect
+
+--enable_reconnect
+--source include/wait_until_connected_again.inc
+connection default;
+SET global DEBUG='-d,crash_during_purge_truncate';
+
+set global innodb_purge_run_now=ON;
+--source suite/innodb/include/force_purge.inc
+
+set global innodb_undo_log_truncate = 1;
+set global innodb_purge_rseg_truncate_frequency = 1;
+
+sleep 5;
+
+set @past_timestamp = (SELECT var_value FROM persistent_vars WHERE var_name = 'past_timestamp');
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamp;
+
+set opt_flashback_area = default;
+set global innodb_undo_retention = default;
+set global innodb_txn_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;
+set global innodb_undo_log_truncate = default;
+set global innodb_purge_batch_size = default;
+set global innodb_trx_rseg_n_slots_debug = default;
+SET GLOBAL innodb_fast_shutdown = default;
+
+connection default;
+drop table t1;
+drop table t2;
+drop table persistent_vars;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -1218,7 +1218,7 @@ bool Query_block::setup_tables(THD *thd, Table_ref *tables,
       if (tr->process_index_hints(thd, table)) return true;
     }
 
-    if (tr->process_snapshot_hint(thd)) return true;
+    if (tr->process_snapshot_hint(thd, table)) return true;
 
     if (table->part_info)  // Count number of partitioned tables
       partitioned_table_count++;

@@ -28,8 +28,8 @@
 --echo # Stop slave threads and clear slave datadir.
 --echo #
 --source include/stop_slave.inc
-RESET SLAVE;
---remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin.000001
+RESET SLAVE for channel 'test';
+--remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin-test.000001
 --remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin.index
 
 --echo #
@@ -45,12 +45,12 @@ if (`SELECT CONVERT(@@VERSION_COMPILE_OS USING latin1) NOT IN ('Win32', 'Win64',
 {
   --copy_file std_data/slave-relay-bin_linux.index $MYSQLD_SLAVE_DATADIR/slave-relay-bin.index
 }
---copy_file std_data/binlog_transaction_with_anonymous_GTID.000001 $MYSQLD_SLAVE_DATADIR/slave-relay-bin.000001
+--copy_file std_data/binlog_transaction_with_anonymous_GTID.000001 $MYSQLD_SLAVE_DATADIR/slave-relay-bin-test.000001
 
 --echo #
 --echo # Process the binlog with Anonymous_GTID log events.
 --echo #
-START SLAVE;
+START SLAVE for channel 'test';
 --echo #
 --echo # Wait for SQL thread error.
 --echo #
@@ -63,7 +63,7 @@ call mtr.add_suppression("The slave coordinator and worker threads are stopped")
 # Reset slave.
 --source include/stop_slave.inc
 RESET MASTER;
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 --source include/start_slave.inc
 
 # Cleanup

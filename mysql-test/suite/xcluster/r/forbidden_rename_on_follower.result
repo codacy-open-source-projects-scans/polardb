@@ -1,0 +1,7 @@
+create table t1(id int);
+rename table t1 to t2;
+ERROR HY000: The consensus follower is not allowed to to do current operation.
+show tables;
+Tables_in_test
+t1
+drop table t1;

@@ -1,5 +1,7 @@
 --source suite/innodb_gcn/include/init_conn_base_seq.inc
 
+set global innodb_undo_retention = 9000;
+
 --disable_warnings
 DROP TABLE IF EXISTS t1;
 --enable_warnings
@@ -66,3 +68,5 @@ disconnect conn3;
 
 connection default;
 DROP TABLE t1;
+
+set global innodb_undo_retention = default;

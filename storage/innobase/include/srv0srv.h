@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 Copyright (c) 2008, 2009, Google Inc.
 Copyright (c) 2009, Percona Inc.
 
@@ -1227,10 +1227,12 @@ struct export_var_t {
   ulint innodb_purge_trx_scn_age;      /*!< rw_max_trx_scn - purged trx_scn */
   ulint innodb_purge_view_trx_scn_age; /*!< rw_max_trx_scn
                                        - purged view's min trx_scn */
-  ulint innodb_ahi_drop_lookups;      /*!< number of adaptive hash
-                                      index lookups when freeing
-                                      file pages */
-#endif                                /* UNIV_DEBUG */
+  ulint innodb_purge_done_scn;         /*!< purged scn */
+  ulint innodb_erase_done_scn;         /*!< erased scn */
+  ulint innodb_ahi_drop_lookups;       /*!< number of adaptive hash
+                                        index lookups when freeing
+                                        file pages */
+#endif                                 /* UNIV_DEBUG */
 
   ulint commit_gcn;
   ulint innodb_polarx_block_mode_sample_records;

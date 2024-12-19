@@ -223,7 +223,7 @@ RESET MASTER;
 
 --source include/rpl_connection_slave.inc
 # Start the default channel slave threads
---let $rpl_channel_name=
+--let $rpl_channel_name= 'test'
 --source include/start_slave.inc
 
 --source include/rpl_end.inc

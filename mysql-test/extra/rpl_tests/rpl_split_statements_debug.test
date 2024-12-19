@@ -291,11 +291,11 @@ DROP DATABASE db7;
 SET DEBUG= '-d, rm_db_fail_after_dropping_tables';
 if ($gtid_mode_on)
 {
-  --let $event_sequence= Gtid # !Q(DROP TABLE.*)
+  --let $event_sequence= Consensus_log # Gcn # Gtid # !Q(DROP TABLE.*)
 }
 if (!$gtid_mode_on)
 {
-  --let $event_sequence= Anonymous_Gtid # !Q(DROP TABLE.*)
+  --let $event_sequence= Consensus_log # Gcn # Anonymous_Gtid # !Q(DROP TABLE.*)
 }
 --source include/assert_binlog_events.inc
 
@@ -310,11 +310,11 @@ SET DEBUG= '-d, rm_db_fail_after_dropping_tables';
 
 if ($gtid_mode_on)
 {
-  --let $event_sequence= Gtid # !Q(DROP TABLE.*) # Gtid # !Q(DROP TABLE.*)
+  --let $event_sequence= Consensus_log # Gcn # Gtid # !Q(DROP TABLE.*) # Gtid # !Q(DROP TABLE.*)
 }
 if (!$gtid_mode_on)
 {
-  --let $event_sequence= Anonymous_Gtid # !Q(DROP TABLE.*) # Anonymous_Gtid # !Q(DROP TABLE.*)
+  --let $event_sequence= Consensus_log # Gcn # Anonymous_Gtid # !Q(DROP TABLE.*) # Anonymous_Gtid # !Q(DROP TABLE.*)
 }
 --source include/assert_binlog_events.inc
 
@@ -346,11 +346,11 @@ SET GTID_NEXT = 'AUTOMATIC';
 DROP DATABASE db19;
 if ($gtid_mode_on)
 {
-  --let $event_sequence= Gtid # !Q(DROP TABLE.*) # Gtid # !Q(DROP DATABASE.*)
+  --let $event_sequence= Consensus_log # Gcn # Gtid # !Q(DROP TABLE.*) # Gtid # !Q(DROP DATABASE.*)
 }
 if (!$gtid_mode_on)
 {
-  --let $event_sequence= Anonymous_Gtid # !Q(DROP TABLE.*) # Anonymous_Gtid # !Q(DROP DATABASE.*)
+  --let $event_sequence= Consensus_log # Gcn # Anonymous_Gtid # !Q(DROP TABLE.*) # Anonymous_Gtid # !Q(DROP DATABASE.*)
 }
 --source include/assert_binlog_events.inc
 
@@ -420,7 +420,7 @@ if (!$gtid_mode_on)
   DROP DATABASE db8;
   SET DEBUG= '-d, rm_db_fail_after_dropping_tables';
 
-  --let $event_sequence= Anonymous_Gtid # !Q(DROP TABLE.*)
+  --let $event_sequence= Consensus_log # Gcn # Anonymous_Gtid # !Q(DROP TABLE.*)
   --source include/assert_binlog_events.inc
 }
 if ($gtid_mode_on)
@@ -447,7 +447,7 @@ if (!$gtid_mode_on)
   DROP DATABASE db11;
   SET DEBUG= '-d, rm_db_fail_after_dropping_tables';
 
-  --let $event_sequence= Anonymous_Gtid # !Q(DROP TABLE.*) # Anonymous_Gtid # !Q(DROP TABLE.*)
+  --let $event_sequence= Consensus_log # Gcn # Anonymous_Gtid # !Q(DROP TABLE.*) # Anonymous_Gtid # !Q(DROP TABLE.*)
   --source include/assert_binlog_events.inc
 }
 if ($gtid_mode_on)
@@ -490,11 +490,11 @@ SET GTID_NEXT = 'AUTOMATIC';
 DROP DATABASE db20;
 if ($gtid_mode_on)
 {
-  --let $event_sequence= Gtid # !Q(DROP DATABASE.*)
+  --let $event_sequence= Consensus_log # Gcn # Gtid # !Q(DROP DATABASE.*)
 }
 if (!$gtid_mode_on)
 {
-  --let $event_sequence= Anonymous_Gtid # !Q(DROP TABLE.*) # Anonymous_Gtid # !Q(DROP DATABASE.*)
+  --let $event_sequence= Consensus_log # Gcn # Anonymous_Gtid # !Q(DROP TABLE.*) # Anonymous_Gtid # !Q(DROP DATABASE.*)
 }
 --source include/assert_binlog_events.inc
 SET GTID_NEXT = 'AUTOMATIC';

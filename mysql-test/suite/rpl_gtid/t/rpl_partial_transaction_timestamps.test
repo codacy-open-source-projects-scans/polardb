@@ -36,13 +36,13 @@ COMMIT;
 --source include/rpl_connection_slave.inc
 --source include/wait_for_slave_io_to_stop.inc
 
---let $initial_queue_timestamp= query_get_value(select QUEUEING_TRANSACTION_START_QUEUE_TIMESTAMP from performance_schema.replication_connection_status,QUEUEING_TRANSACTION_START_QUEUE_TIMESTAMP,1)
+--let $initial_queue_timestamp= query_get_value(select QUEUEING_TRANSACTION_START_QUEUE_TIMESTAMP from performance_schema.replication_connection_status where CHANNEL_NAME = 'test',QUEUEING_TRANSACTION_START_QUEUE_TIMESTAMP,1)
 
 --source include/kill_and_restart_mysqld.inc
 --let $rpl_server_number= 2
 --source include/rpl_reconnect.inc
 
---let $restart_queue_timestamp= query_get_value(select QUEUEING_TRANSACTION_START_QUEUE_TIMESTAMP from performance_schema.replication_connection_status,QUEUEING_TRANSACTION_START_QUEUE_TIMESTAMP,1)
+--let $restart_queue_timestamp= query_get_value(select QUEUEING_TRANSACTION_START_QUEUE_TIMESTAMP from performance_schema.replication_connection_status where CHANNEL_NAME = 'test',QUEUEING_TRANSACTION_START_QUEUE_TIMESTAMP,1)
 
 # Debug point disappears on restart
 
@@ -51,7 +51,7 @@ COMMIT;
 --source include/rpl_connection_master.inc
 --source include/sync_slave_io_with_master.inc
 
---let $final_queue_timestamp= query_get_value(select LAST_QUEUED_TRANSACTION_START_QUEUE_TIMESTAMP from performance_schema.replication_connection_status,LAST_QUEUED_TRANSACTION_START_QUEUE_TIMESTAMP,1)
+--let $final_queue_timestamp= query_get_value(select LAST_QUEUED_TRANSACTION_START_QUEUE_TIMESTAMP from performance_schema.replication_connection_status where CHANNEL_NAME = 'test',LAST_QUEUED_TRANSACTION_START_QUEUE_TIMESTAMP,1)
 
 # Check that the timestamps values are valid
 --let $unix_ts_initial= `SELECT UNIX_TIMESTAMP('$initial_queue_timestamp')`

@@ -138,8 +138,8 @@ class Cache_interface {
   Cache_interface() {}
   virtual ~Cache_interface() {}
 
-  virtual bool insert(Value_type value) = 0;
-  virtual Value_type search(Key_type key) = 0;
+  virtual bool insert(const Value_type &value) = 0;
+  virtual Value_type search(const Key_type &key) = 0;
 };
 
 template <typename Element_type, typename Key_type, typename Value_type>
@@ -157,7 +157,7 @@ class Random_array
 
   virtual void do_after_operation(bool required, size_t pos) {}
 
-  virtual bool insert(Value_type value) override {
+  virtual bool insert(const Value_type &value) override {
     size_t pos = ut_hash_ulint(value.key(), m_size);
     bool pre_check = do_before_operation(pos);
     if (!pre_check) {
@@ -168,7 +168,7 @@ class Random_array
     return pre_check;
   }
 
-  virtual Value_type search(Key_type key) override {
+  virtual Value_type search(const Key_type &key) override {
     size_t pos = ut_hash_ulint(key, m_size);
     bool pre_check = do_before_operation(pos);
     Value_type value;
@@ -238,9 +238,9 @@ class Lru_list : public Cache_interface<Element_type, Key_type, Value_type> {
 
   ~Lru_list() override;
 
-  bool insert(Value_type value) override;
+  bool insert(const Value_type &value) override;
 
-  Value_type search(Key_type key) override;
+  Value_type search(const Key_type &key) override;
 
   Element_type *get_free_item() {
     Element_type *elem = nullptr;

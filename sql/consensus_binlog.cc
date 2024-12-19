@@ -1063,6 +1063,7 @@ int MYSQL_BIN_LOG::truncate_files_after(std::string &file_name) {
       error = 1;
       break;
     }
+    xp::info(ER_XP_COMMIT) << "truncate file:" << (*iter).c_str();
   }
 
   if (error) xp::error(ER_XP_COMMIT) << "truncate_files_after failed";
@@ -1117,10 +1118,12 @@ int MYSQL_BIN_LOG::consensus_truncate_log(uint64 consensus_index) {
     abort();
   } else {
     update_binlog_end_pos();
-    xp::system(ER_XP_COMMIT) << "succ to truncate binlog file "
-                           << file_name.c_str() << ", consensus_index "
-                           << consensus_index << ", offset " << offset
-                           << ", position " << m_binlog_file->position();
+    xp::system(ER_XP_COMMIT)
+      << "succ to truncate binlog file " << file_name.c_str()
+      << ", consensus_index " << consensus_index
+      << ", offset " << offset
+      << ", position " << m_binlog_file->position()
+      << ", current file " << m_binlog_file->get_binlog_name();
   }
 
   if (!is_relay_log) mysql_mutex_unlock(&LOCK_sync);
@@ -1179,16 +1182,15 @@ int MYSQL_BIN_LOG::consensus_prefetch_log_entries(THD *thd, uint64 channel_id,
   return ret;
 }
 
-static void store_gtid_for_xpaxos(const char *buf, size_t buf_size, Relay_log_info *rli) {
-  Log_event_type event_type = (Log_event_type)buf[EVENT_TYPE_OFFSET];
+static void store_gtid_for_xpaxos(const char *buf, size_t buf_size,
+                                  Relay_log_info *rli) {
+  Log_event_type event_type;
   Format_description_log_event fd_ev;
   fd_ev.footer()->checksum_alg =
       static_cast<enum_binlog_checksum_alg>(binlog_checksum_options);
 
-  if (event_type == binary_log::GCN_LOG_EVENT && buf_size > Gcn_log_event::get_event_length(fd_ev.footer()->checksum_alg)) {
-    buf = buf + Gcn_log_event::get_event_length(fd_ev.footer()->checksum_alg);
-    event_type = (Log_event_type)buf[EVENT_TYPE_OFFSET];
-  }
+  buf = Gcn_log_event::peek(buf, buf_size, fd_ev.footer()->checksum_alg);
+  event_type = (Log_event_type)buf[EVENT_TYPE_OFFSET];
 
   if (event_type == binary_log::GTID_LOG_EVENT) {
     Gtid_log_event gtid_ev(buf, &fd_ev);
@@ -1721,8 +1723,10 @@ void binlog_commit_pos_watcher(bool *is_running) {
             1. open a new binlog file
             2. reopen the same binlog file because truncateLog happens
           */
-          if (prev_index >= consensus_log_manager.get_commit_pos_index()) {
-            pos = binlog_file_reader.position();
+          pos = binlog_file_reader.position();
+          if (prev_index > consensus_log_manager.get_commit_pos_index() ||
+              (prev_index == consensus_log_manager.get_commit_pos_index()
+               && pos != consensus_log_manager.get_commit_pos_position())) {
             consensus_log_manager.update_commit_pos(log_name, pos, prev_index);
             retry = 0;  // reset retry times after a success update_commit_pos
           }
@@ -1882,7 +1886,7 @@ bool MYSQL_BIN_LOG::open_exist_binlog(
   max_size = max_size_arg;
 
 /* This must be before goto err. */
-#ifndef DBUG_OFF
+#ifndef NDEBUG
   binary_log_debug::debug_pretend_version_50034_in_binlog =
       DBUG_EVALUATE_IF("pretend_version_50034_in_binlog", true, false);
 #endif

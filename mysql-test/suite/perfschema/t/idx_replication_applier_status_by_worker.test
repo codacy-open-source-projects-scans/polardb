@@ -16,18 +16,19 @@ RESET SLAVE ALL;
 SET @old_replica_parallel_workers= @@global.replica_parallel_workers;
 SET GLOBAL replica_parallel_workers = 4;
 --disable_query_log
---eval CHANGE REPLICATION SOURCE TO SOURCE_HOST='localhost', SOURCE_USER='root', SOURCE_PORT=$MASTER_MYPORT, SOURCE_DELAY=0 FOR CHANNEL 'channel_1';
+--eval CHANGE REPLICATION SOURCE TO SOURCE_HOST='localhost', SOURCE_USER='root', SOURCE_PORT=$MASTER_MYPORT, SOURCE_DELAY=0 FOR CHANNEL 'test';
 --enable_query_log
 --source include/start_slave.inc
 
 --connection master
---let $rpl_channel_name= 'channel_1'
+--let $rpl_channel_name= 'test'
 --let $sync_slave_connection= slave
 --source include/sync_slave_sql_with_master.inc
 
 select CHANNEL_NAME, WORKER_ID, THREAD_ID
   from performance_schema.replication_applier_status_by_worker
   where WORKER_ID = 1
+  and channel_name = 'test'
   into @c_name, @w_id, @t_id;
 
 # Make sure we found data to look at.
@@ -66,10 +67,10 @@ RESET SLAVE ALL;
 SET GLOBAL replica_parallel_workers= @old_replica_parallel_workers;
 --disable_warnings
 --disable_query_log
-eval CHANGE REPLICATION SOURCE to SOURCE_HOST='127.0.0.1', SOURCE_PORT=$MASTER_MYPORT, SOURCE_USER='root';
+eval CHANGE REPLICATION SOURCE to SOURCE_HOST='127.0.0.1', SOURCE_PORT=$MASTER_MYPORT, SOURCE_USER='root' for channel 'test';
 --enable_query_log
 --enable_warnings
---let $rpl_channel_name=
+--let $rpl_channel_name= 'test'
 --let $sync_slave_connection= slave
 source include/start_slave.inc;
 --connection master

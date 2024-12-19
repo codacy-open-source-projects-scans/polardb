@@ -34,6 +34,9 @@ int consensus_command_limit(THD *thd);
 void killall_threads();
 void killall_dump_threads();
 int start_consensus_apply_threads();
+void xpaxos_set_privilege_checks_user();
+int start_slave_threads();
+void stop_slave_threads();
 void binlog_commit_pos_watcher(bool *is_running);
 int check_exec_consensus_log_end_condition(Relay_log_info *rli,
                                            bool is_xpaxos_replication);

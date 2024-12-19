@@ -1,0 +1,597 @@
+--source include/have_debug.inc
+
+CALL mtr.add_suppression("'innodb-scn-history-interval': unsigned value 0 adjusted to 1");
+
+connect (con1,localhost,root,,);
+connect (con2,localhost,root,,);
+
+connection default;
+set global innodb_undo_retention = 0;
+set global innodb_txn_retention = 36000;
+set global innodb_purge_rseg_truncate_frequency = 1;
+set global innodb_undo_log_truncate = 1;
+
+--echo =============================================
+--echo Test basic flashback_area
+--echo =============================================
+--echo === test flashback_area option in DD ===
+set opt_flashback_area = 1; 
+create table bar (c1 int, c2 int, primary key(c1), key(c2));
+insert into bar values (1, 1);
+insert into bar values (2, 2);
+select * from information_schema.innodb_table_status where table_name='bar';
+
+--echo
+--echo === test flashback to a future moment ===
+set query_via_flashback_area = 1;
+--error ER_SNAPSHOT_OUT_OF_RANGE
+select * from bar as of timestamp date_add(now(), interval 2 hour);
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+--echo
+--echo === test flashback to purged data ===
+set @past_timestamp = (select now());
+sleep 2;
+update bar set c2 = 3 where c1 = 1;
+--source include/wait_innodb_all_purged.inc
+sleep 2;
+--error ER_SNAPSHOT_TOO_OLD
+select * from bar as of timestamp @past_timestamp;
+--error ER_SNAPSHOT_TOO_OLD
+select c1 from bar as of timestamp @past_timestamp force index(c2) where c2 = 1;
+
+--echo
+--echo === test flashback to purged data via flashback area ===
+set @past_timestamp = (select now());
+sleep 2;
+update bar set c2 = 4 where c1 = 1;
+--source include/wait_innodb_all_purged.inc
+sleep 2;
+set query_via_flashback_area = 1;
+select * from bar as of timestamp @past_timestamp;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+set query_via_flashback_area = 1;
+select c1 from bar as of timestamp @past_timestamp force index(c2) where c2 = 3;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+--echo
+--echo === test flashback to erased data via flashback area ===
+set global innodb_txn_retention = 0;
+set @past_timestamp = (select now());
+sleep 2;
+update bar set c2 = 5 where c1 = 1;
+--source include/wait_innodb_all_purged.inc
+sleep 2;
+set query_via_flashback_area = 1;
+--error ER_SNAPSHOT_TOO_OLD
+select * from bar as of timestamp @past_timestamp;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+set query_via_flashback_area = 1;
+--error ER_SNAPSHOT_TOO_OLD
+select c1 from bar as of timestamp @past_timestamp force index(c2) where c2 = 4;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+drop table bar;
+
+--echo
+--echo ========================================================
+--echo Test flashback_area across different DDL operations.
+--echo The ALTER TABLE statement will modify the flashback_area
+--echo option only if the table needs to be rebuilt.
+--echo ========================================================
+connection con1;
+set opt_flashback_area = 1; 
+set global innodb_undo_retention = 0;
+set global innodb_txn_retention = 36000;
+
+create table t1 (c1 int, c2 int, primary key(c1));
+insert into t1 values (1, 100);
+insert into t1 values (2, 200);
+
+create table t2 like t1;
+create table t3 like t1;
+create table t4 like t1;
+create table t5 like t1;
+insert into t2 select * from t1;
+insert into t3 select * from t1;
+insert into t4 select * from t1;
+insert into t5 select * from t1;
+
+set opt_flashback_area = 0; 
+create table t6 like t1;
+create table t7 like t1;
+create table t8 like t1;
+create table t9 like t1;
+insert into t6 select * from t1;
+insert into t7 select * from t1;
+insert into t8 select * from t1;
+insert into t9 select * from t1;
+
+select * from information_schema.innodb_table_status where schema_name='test';
+
+set global innodb_undo_retention = 3600;
+sleep 2;
+set @past_timestamps = (select now());
+sleep 2;
+
+--echo
+--echo === Operations with "ALGORITHM = copy" always rebuild the table. ===
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0; 
+alter table t1 add c3 int default 100, ALGORITHM = copy;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_AS_OF_TABLE_DEF_CHANGED
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+--echo
+--echo === Index Operations ===
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t2
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0; 
+alter table t2 add index sec(c2);
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t2
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+alter table t2 rename index sec to sec_new, ALGORITHM=INPLACE, LOCK=NONE;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t2
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+alter table t2 drop index sec_new, add index sec_new(c2, c1) USING BTREE, ALGORITHM=INPLACE;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t2
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+alter table t2 drop index sec_new;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t2
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+alter table t2 add c3 text; 
+CREATE FULLTEXT INDEX ft ON t2(c3);
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t2
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+drop table t2;
+create table t2 like t3;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t2
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1;
+alter table t2 add c3 text; 
+CREATE FULLTEXT INDEX ft_new ON t2(c3);
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t2
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0; 
+CREATE TABLE geom (g GEOMETRY NOT NULL);
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=geom
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1; 
+ALTER TABLE geom ADD SPATIAL INDEX(g), ALGORITHM=INPLACE, LOCK=SHARED;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=geom
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+--echo
+--echo === Primary Key Operations ===
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t3
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0; 
+alter table t3 DROP PRIMARY KEY, ADD PRIMARY KEY(c2), ALGORITHM=INPLACE, LOCK=NONE;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t3
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+--echo
+--echo === Table Operations  ===
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t4
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0; 
+truncate table t4;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t4
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1; 
+drop table t4;
+create table t4 (c1 int, c2 int, primary key(c1));
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t4
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0;
+alter table t4 add c3 varchar(10);
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t4
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+alter table t4 CHARACTER SET = big5; # inplcae alter but no rebuilt(innobase_need_rebuild)
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t4
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0;
+alter table t4 CONVERT TO CHARACTER SET latin1; # copy algorithm, ha_create_table
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t4
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1;
+optimize table t4;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t4
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0;
+alter table t4 KEY_BLOCK_SIZE = 8;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t4
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1; 
+alter table t4 row_format = compressed;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t4
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0;
+alter table t4 force;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t4
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1;
+alter table t4 RENAME TO t44;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t44
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+alter table t44 RENAME TO t4;
+ALTER TABLE t4 STATS_PERSISTENT=0, STATS_SAMPLE_PAGES=20, STATS_AUTO_RECALC=1, ALGORITHM=INPLACE, LOCK=NONE;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t4
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1;
+alter table t4 ENGINE=InnoDB, ALGORITHM=INPLACE, LOCK=NONE;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t4
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+--echo
+--echo === Column Operations do not need to rebuild the table. ===
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t5
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0; 
+alter table t5 add c3 varchar(10) after c1; # add column 
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t5
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+alter table t5 change column c3 c3 varchar(20), ALGORITHM=INPLACE, LOCK=NONE; # extend varchar
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t5
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+alter table t5 change c3 c4 varchar(20); # rename 
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t5
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+alter table t5 alter column c4 set default "a"; # set default
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t5
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+alter table t5 alter column c4 drop default; # drop default
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t5
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+alter table t5 add c5 ENUM('a', 'b', 'c'); # enum
+alter table t5 MODIFY COLUMN c5 ENUM('a', 'b', 'c', 'd');
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t5
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+alter table t5 add c10 int;
+alter table t5 drop column c10, ALGORITHM=INSTANT; # drop column
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t5
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+create table tt (c1 int AUTO_INCREMENT PRIMARY KEY, c2 int);
+INSERT INTO tt (c2) VALUES (1);
+INSERT INTO tt (c2) VALUES (2);
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=tt
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1; 
+ALTER TABLE tt AUTO_INCREMENT=1000, ALGORITHM=INPLACE, LOCK=NONE;  # auto-inc value
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=tt
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+--echo === Column Operations need to rebuild the table. ===
+set opt_flashback_area = 0; 
+alter table t5 change c4 c4 int; # change type
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t5
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1; 
+alter table t5 modify column c4 int after c2; # reorder column 
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t5
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+select * from t5;
+update t5 set c4 = 0;
+set opt_flashback_area = 0; 
+alter table t5 modify column c4 int not null; # set not null
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t5
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1; 
+alter table t5 modify column c4 int null; # set null
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t5
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set global innodb_undo_retention = 0;
+--source include/wait_innodb_all_purged.inc
+set opt_flashback_area = 1; 
+
+--echo
+--echo === Generated Column Operations ===
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t6
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1; 
+alter table t6 ADD COLUMN (c3 INT GENERATED ALWAYS AS (c1 + 1) STORED);
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t6
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0; 
+alter table t6 MODIFY COLUMN c3 INT GENERATED ALWAYS AS (c1 + 1) STORED FIRST;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t6
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1; 
+ALTER TABLE t6 ADD COLUMN (c4 INT GENERATED ALWAYS AS (c1 + 1) VIRTUAL);
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t6
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1; 
+ALTER TABLE t6 MODIFY COLUMN c4 INT GENERATED ALWAYS AS (c1 + 1) VIRTUAL FIRST;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t6
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0; 
+alter table t6 drop column c3, ALGORITHM=INPLACE;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t6
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1; 
+alter table t6 drop column c4;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t6
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+--echo
+--echo === Foreign Key Operations ===
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t7
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set session foreign_key_checks=0;
+set opt_flashback_area = 1; 
+alter table t6 add index sec(c2);
+ALTER TABLE t7 ADD CONSTRAINT fk FOREIGN KEY (c2) REFERENCES t6(c2);
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t7
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+ALTER TABLE t7 DROP FOREIGN KEY fk;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t7
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set session foreign_key_checks=1;
+set opt_flashback_area = 1; 
+ALTER TABLE t7 ADD CONSTRAINT fk FOREIGN KEY (c2) REFERENCES t6(c2);
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t7
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0; 
+ALTER TABLE t7 DROP FOREIGN KEY fk, ALGORITHM=INPLACE;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t7
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+--echo
+--echo === Tablespace Operations ===
+set opt_flashback_area = 1;
+CREATE TABLESPACE test_space ADD DATAFILE 'test_space.ibd' ENGINE = InnoDB;
+create table t10 (c1 int, c2 int, primary key(c1)) TABLESPACE test_space;
+
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t10
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 0;
+ALTER TABLESPACE test_space RENAME TO new_space;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t10
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+INSTALL PLUGIN keyring_file SONAME 'keyring_file.so';
+ALTER TABLESPACE new_space ENCRYPTION='Y';
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t10
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t9
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set opt_flashback_area = 1;
+ALTER TABLE t9 ENCRYPTION='Y';
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t9
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+ALTER TABLE t9 ENCRYPTION='N';
+
+set @past_timestamps = (select now());
+sleep 2;
+
+set opt_flashback_area = 0;
+create table t11 like t9;
+insert into t11 select * from t9;
+
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t11
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+ALTER TABLE t9 DISCARD TABLESPACE;
+
+FLUSH TABLES t11 FOR EXPORT;
+LET $MYSQLD_DATADIR = `SELECT @@datadir`;
+--copy_file $MYSQLD_DATADIR/test/t11.ibd $MYSQLTEST_VARDIR/tmp/t9.ibd
+--copy_file $MYSQLD_DATADIR/test/t11.cfg $MYSQLTEST_VARDIR/tmp/t9.cfg
+UNLOCK TABLES;
+--copy_file $MYSQLTEST_VARDIR/tmp/t9.ibd $MYSQLD_DATADIR/test/t9.ibd
+--copy_file $MYSQLTEST_VARDIR/tmp/t9.cfg $MYSQLD_DATADIR/test/t9.cfg
+
+ALTER TABLE t9 IMPORT TABLESPACE;
+
+--remove_file $MYSQLTEST_VARDIR/tmp/t9.ibd
+--remove_file $MYSQLTEST_VARDIR/tmp/t9.cfg
+
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t9
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_SNAPSHOT_TOO_OLD
+select * from t9 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set opt_flashback_area = default;
+set global innodb_undo_retention = default;
+set global innodb_txn_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;
+set global innodb_undo_log_truncate = default;
+
+connection default;
+
+disconnect con1;
+disconnect con2;
+drop table t1;
+drop table t2;
+drop table t3;
+drop table t4;
+drop table t5;
+drop table t6;
+drop table t7;
+drop table t8;
+drop table t9;
+drop table t10;
+drop table tt;
+drop table geom;
+drop table t11;
+drop tablespace new_space;
+UNINSTALL PLUGIN keyring_file;

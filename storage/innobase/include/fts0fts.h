@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2006, 2022, Oracle and/or its affiliates.
+Copyright (c) 2006, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -49,6 +49,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ut0rbt.h"
 #include "ut0vec.h"
 #include "ut0wqueue.h"
+
+#include "dd/lizard_policy_types.h"
 
 /** "NULL" value of a document id. */
 #define FTS_NULL_DOC_ID 0
@@ -514,11 +516,11 @@ CREATE TABLE $FTS_PREFIX_CONFIG
 @param[in]      table                   table with FTS index
 @param[in]      name                    table name normalized
 @param[in]      skip_doc_id_index       Skip index on doc id
+@param[in]      ddl_policy              ddl policy from handler
 @return DB_SUCCESS if succeed */
-[[nodiscard]] dberr_t fts_create_common_tables(trx_t *trx,
-                                               const dict_table_t *table,
-                                               const char *name,
-                                               bool skip_doc_id_index);
+[[nodiscard]] dberr_t fts_create_common_tables(
+    trx_t *trx, const dict_table_t *table, const char *name,
+    bool skip_doc_id_index, const lizard::Ha_ddl_policy *ddl_policy);
 
 /** Creates the column specific ancillary tables needed for supporting an
 FTS index on the given table. row_mysql_lock_data_dictionary must have
@@ -532,21 +534,23 @@ CREATE TABLE $FTS_PREFIX_INDEX_[1-6](
         doc_count       UNSIGNED INT NOT NULL,
         ilist           VARBINARY NOT NULL,
         UNIQUE CLUSTERED INDEX ON (word, first_doc_id))
-@param[in,out]  trx     transaction
-@param[in]      index   index instance
+@param[in,out]  trx             transaction
+@param[in]      index           index instance
+@param[in]      ddl_policy      ddl policy from handler
 @return DB_SUCCESS or error code */
-[[nodiscard]] dberr_t fts_create_index_tables(trx_t *trx, dict_index_t *index);
+[[nodiscard]] dberr_t fts_create_index_tables(
+    trx_t *trx, dict_index_t *index, lizard::Ha_ddl_policy *ddl_policy);
 
 /** Create auxiliary index tables for an FTS index.
 @param[in,out]  trx             transaction
 @param[in]      index           the index instance
 @param[in]      table_name      table name
 @param[in]      table_id        the table id
+@param[in]      ddl_policy      ddl policy from handler
 @return DB_SUCCESS or error code */
-[[nodiscard]] dberr_t fts_create_index_tables_low(trx_t *trx,
-                                                  dict_index_t *index,
-                                                  const char *table_name,
-                                                  table_id_t table_id);
+[[nodiscard]] dberr_t fts_create_index_tables_low(
+    trx_t *trx, dict_index_t *index, const char *table_name,
+    table_id_t table_id, lizard::Ha_ddl_policy *ddl_policy);
 
 /** Add the FTS document id hidden column.
 @param[in,out] table Table with FTS index

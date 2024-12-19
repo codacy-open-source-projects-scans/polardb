@@ -1,3 +1,30 @@
+/*****************************************************************************
+
+Copyright (c) 2023, 2024, Alibaba and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License, version 2.0, as published by the
+Free Software Foundation.
+
+This program is also distributed with certain software (including but not
+limited to OpenSSL) that is licensed under separate terms, as designated in a
+particular file or component or in included license documentation. The authors
+of MySQL hereby grant you an additional permission to link the program and
+your derivative works with the separately licensed software that they have
+included with MySQL.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
+for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
+
+*****************************************************************************/
+
+
 /*
  * Copyright (c) 2017, 2018, Oracle and/or its affiliates. All rights reserved.
  *
@@ -31,7 +58,6 @@
 #include "account_verification_handler.h"
 #include "authentication_interface.h"
 #include "native_verification.h"
-#include "sha256_password_cache_interface.h"
 
 namespace polarx_rpc {
 class CtcpConnection;
@@ -66,8 +92,7 @@ class Sasl_challenge_response_auth : public Authentication_interface {
   explicit Sasl_challenge_response_auth(Account_verification_handler *handler)
       : m_verification_handler(handler), m_state(S_starting) {}
 
-  static Authentication_interface_ptr create(
-      CtcpConnection &tcp, SHA256_password_cache_interface *cache);
+  static Authentication_interface_ptr create(CtcpConnection &tcp);
 
   Response handle_start(const std::string &, const std::string &,
                         const std::string &) override;
@@ -101,9 +126,9 @@ template <Account_verification_interface::Account_type Account_type,
           typename Auth_verificator_t>
 Authentication_interface_ptr
 Sasl_challenge_response_auth<Account_type, Auth_verificator_t>::create(
-    CtcpConnection &tcp, SHA256_password_cache_interface *cache) {
-  auto handler = new Account_verification_handler(
-      tcp, Account_type, new Auth_verificator_t(cache));
+    CtcpConnection &tcp) {
+  auto handler = new Account_verification_handler(tcp, Account_type,
+                                                  new Auth_verificator_t());
   return Authentication_interface_ptr(
       new Sasl_challenge_response_auth<Account_type, Auth_verificator_t>(
           handler));

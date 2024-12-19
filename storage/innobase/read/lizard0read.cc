@@ -7,14 +7,14 @@ the terms of the GNU General Public License, version 2.0, as published by the
 Free Software Foundation.
 
 This program is also distributed with certain software (including but not
-lzeusited to OpenSSL) that is licensed under separate terms, as designated in a
+limited to OpenSSL) that is licensed under separate terms, as designated in a
 particular file or component or in included license documentation. The authors
 of MySQL hereby grant you an additional permission to link the program and
 your derivative works with the separately licensed software that they have
 included with MySQL.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the zeusplied warranty of MERCHANTABILITY or FITNESS
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
 for more details.
 
@@ -87,34 +87,6 @@ VisionContainer::VisionList::VisionList() {
 VisionContainer::VisionList::~VisionList() {
   mutex_free(&m_mutex);
   ut_ad(UT_LIST_GET_LEN(m_vision_list) == 0);
-}
-
-/**
-  Add a element
-
-  @retval		  a new empty vision obj
-  @deprecated    use add_element instead
-*/
-Vision *VisionContainer::VisionList::new_element() {
-  Vision *vision = nullptr;
-  vision = ut::new_<Vision>();
-
-  if (vision == nullptr) {
-    lizard_error(ER_LIZARD) << "Failed to allocate vision";
-    return nullptr;
-  }
-
-  vision->m_up_limit_id = gcs_load_min_active_trx_id();
-
-  ut_ad(!m_mutex.is_owned());
-
-  mutex_enter(&m_mutex);
-  UT_LIST_ADD_LAST(m_vision_list, vision);
-  vision->m_snapshot_scn = gcs_load_scn();
-  vision->m_active = true;
-  mutex_exit(&m_mutex);
-
-  return vision;
 }
 
 /**
@@ -297,24 +269,16 @@ bool Snapshot_scn_vision::modification_visible(void *txn_rec) const {
 */
 bool Snapshot_gcn_vision::modification_visible(void *txn_rec) const {
   csr_t rec_csr, vision_csr;
+  bool is_slave;
   txn_rec_t *rec = static_cast<txn_rec_t *>(txn_rec);
 
   /** Promise committed trx and not myself. */
   ut_ad(rec->scn != SCN_NULL && rec->gcn != GCN_NULL);
   ut_ad(!undo_ptr_is_active(rec->undo_ptr));
 
-  switch (m_csr) {
-    case MYSQL_CSR_ASSIGNED:
-      vision_csr = csr_t::CSR_ASSIGNED;
-      break;
-    case MYSQL_CSR_AUTOMATIC:
-      vision_csr = csr_t::CSR_AUTOMATIC;
-      break;
-    default:
-      ut_error;
-  }
-
+  vision_csr = m_csr;
   rec_csr = undo_ptr_get_csr(rec->undo_ptr);
+  is_slave = undo_ptr_is_slave(rec->undo_ptr);
 
   if (rec->gcn == m_gcn) {
     if (vision_csr == CSR_ASSIGNED) {
@@ -337,14 +301,53 @@ bool Snapshot_gcn_vision::modification_visible(void *txn_rec) const {
         happen before the local reading opened. */
         return true;
       } else {
-        /** Case 4: If the record is generate by local trx, the the visibility
-        judgment of the local read depends entirely on the local commit
-        number (SCN).*/
-        return rec->scn <= m_current_scn;
+        if (!is_slave) {
+          /** Case 4: If the record is generate by local trx, the the visibility
+          judgment of the local read depends entirely on the local commit
+          number (SCN).*/
+          return rec->scn <= m_current_scn;
+        } else {
+          /** Case 5: If a single-shard read query two branchs of a global
+          transaction, then the two branchs shoud share a commit state. */
+          return modification_visible_by_share_cn(txn_rec);
+        }
       }
     }
   } else {
     return rec->gcn < m_gcn;
+  }
+}
+
+bool Snapshot_gcn_vision::modification_visible_by_share_cn(void *rec) const {
+  txn_rec_t *txn_rec = static_cast<txn_rec_t *>(rec);
+  txn_rec_t ref_txn_rec;
+  bool active;
+
+  /** Must be Single Shard Transaction, and the master branch must be distribute
+  transation. So never: creator_trx_id == txn_rec->trx_id. */
+  ut_a(m_csr == CSR_AUTOMATIC);
+
+  active = txn_rec_get_master_by_lookup(txn_rec, &ref_txn_rec);
+
+  /**
+    For normal GCN based XA transaction, the external commit number is still
+    not yet knonwn after XA PREPARE. So query must wait until the transaction
+    committing.
+
+    For async commt XA transaction, the external commit number of a master branch
+    should be same as its slave branchs. So no need to wait if the master branch
+    is still active.
+  */
+  if (active) {
+    /** Still active. Assume that the transaction will get a COMMIT_GCN >= my
+    snapshot_gcn. */
+    ut_ad(ref_txn_rec.scn == SCN_NULL);
+    return false;
+  } else {
+    /** Skip infinite recursion */
+    ut_a(!undo_ptr_is_slave(ref_txn_rec.undo_ptr));
+
+    return modification_visible(&ref_txn_rec);
   }
 }
 

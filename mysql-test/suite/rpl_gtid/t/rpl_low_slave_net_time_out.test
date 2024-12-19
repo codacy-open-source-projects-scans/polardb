@@ -19,7 +19,7 @@
 
 # set replica_net_timeout to 10 seconds and then start slave threads
 --connection slave
-CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD=5;
+CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD=5 for channel "test";
 SET @save_old_replica_net_timeout=@@global.replica_net_timeout;
 SET @@global.replica_net_timeout=10;
 --source include/start_slave.inc

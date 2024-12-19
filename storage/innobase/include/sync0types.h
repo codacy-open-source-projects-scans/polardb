@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -395,6 +395,7 @@ enum latch_id_t {
   LATCH_ID_DICT_PERSIST_CHECKPOINT,
   LATCH_ID_PAGE_CLEANER,
   LATCH_ID_PURGE_SYS_PQ,
+  LATCH_ID_ERASE_SYS_PQ,
   LATCH_ID_RECALC_POOL,
   LATCH_ID_RECV_SYS,
   LATCH_ID_RECV_WRITER,
@@ -473,7 +474,6 @@ enum latch_id_t {
   LATCH_ID_GP_SYS_WAIT,
   LATCH_ID_UNDO_RETENTION,
   LATCH_ID_COMMIT_SNAPSHOT_RW_LOCK,
-  LATCH_ID_PURGE_BLOCKED_STAT,
   /** Lizard mutex end */
   LATCH_ID_TEST_MUTEX,
   LATCH_ID_MAX = LATCH_ID_TEST_MUTEX

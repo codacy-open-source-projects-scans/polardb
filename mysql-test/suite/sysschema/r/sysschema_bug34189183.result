@@ -12,5 +12,5 @@ REVOKE SYSTEM_VARIABLES_ADMIN ON *.* FROM 'test'@'localhost';
 REVOKE SESSION_VARIABLES_ADMIN ON *.* FROM 'test'@'localhost';
 REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'test'@'localhost';
 DROP USER test@localhost;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/rpl_end.inc

@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2009, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -12139,10 +12139,24 @@ bool Gcn_manager::assign_gcn_to_flush_group(THD *first_seen) {
   bool err = false;
 
   for (THD *head = first_seen; head; head = head->next_to_commit) {
-    if (head->owned_commit_gcn.is_empty()) {
-      head->owned_commit_gcn.set(innodb_hton->ext.load_gcn(),
-                                 MYSQL_CSR_AUTOMATIC);
+    if (head->owned_commit_gcn.is_pmmt_gcn()) {
+      innodb_hton->ext.decide_xa_when_prepare(&head->owned_commit_gcn);
+    } else {
+      assert(head->owned_commit_gcn.is_cmmt_gcn() ||
+             head->owned_commit_gcn.is_null());
+      auto xid_state = head->get_transaction()->xid_state();
+
+      if (!xid_state->check_in_xa(false) || !xid_state->is_detached()) {
+        innodb_hton->ext.decide_xa_when_commit(head, &head->owned_commit_gcn,
+                                               &head->owned_master_addr);
+      } else {
+        innodb_hton->ext.decide_xa_when_commit_by_xid(
+            innodb_hton, xid_state->get_xid(), &head->owned_commit_gcn,
+            &head->owned_master_addr);
+      }
     }
+
+    assert(!head->owned_commit_gcn.is_null());
 
     DBUG_EXECUTE_IF("simulate_old_8018_allow_null_gcn",
                     { head->owned_commit_gcn.reset(); });

@@ -102,8 +102,8 @@ if(!$rpl_group_replication)
       if ($rpl_only_running_threads)
       {
         --connection server_$_rpl_server
-        --let $_rpl_slave_io_running= query_get_value(SHOW SLAVE STATUS, Slave_IO_Running, 1)
-        --let $_rpl_slave_sql_running= query_get_value(SHOW SLAVE STATUS, Slave_SQL_Running, 1)
+        --let $_rpl_slave_io_running= query_get_value(SHOW SLAVE STATUS for channel 'test', Slave_IO_Running, 1)
+        --let $_rpl_slave_sql_running= query_get_value(SHOW SLAVE STATUS for channel 'test', Slave_SQL_Running, 1)
         if ($rpl_debug)
         {
           --echo Sync IO: $_rpl_slave_io_running; Sync SQL: $_rpl_slave_sql_running

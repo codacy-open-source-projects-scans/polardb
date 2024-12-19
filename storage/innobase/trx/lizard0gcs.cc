@@ -7,14 +7,14 @@ the terms of the GNU General Public License, version 2.0, as published by the
 Free Software Foundation.
 
 This program is also distributed with certain software (including but not
-lzeusited to OpenSSL) that is licensed under separate terms, as designated in a
+limited to OpenSSL) that is licensed under separate terms, as designated in a
 particular file or component or in included license documentation. The authors
 of MySQL hereby grant you an additional permission to link the program and
 your derivative works with the separately licensed software that they have
 included with MySQL.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the zeusplied warranty of MERCHANTABILITY or FITNESS
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
 for more details.
 
@@ -139,8 +139,28 @@ void CRecover::apply_gcn() {
   return;
 }
 
+/** Prepare also generate commit number if has proposal, it only
+ *  produce gcn, and left scn until real commit.
+ *
+ * @param[in/out]	trx
+ * @param[in/out]	mtr
+ *
+ * @retval	proposal mark */
+proposal_mark_t gcs_t::new_prepare(trx_t *trx, mtr_t *mtr) {
+  ut_ad(trx->txn_desc.cmmt.scn == SCN_NULL);
+  ut_ad(!trx->txn_desc.pmmt.is_null());
+
+  gcn_tuple_t gtuple =
+      gcn.new_gcn(trx->txn_desc.pmmt.gcn, trx->txn_desc.pmmt.csr, mtr);
+
+  trx->txn_desc.pmmt = {gtuple.gcn, gtuple.csr};
+
+  ut_ad(undo_ptr_is_active(trx->txn_desc.undo_ptr));
+  return {gtuple.gcn, gtuple.csr};
+}
+
 commit_mark_t gcs_t::new_commit(trx_t *trx, mtr_t *mtr) {
-  commit_mark_t cmmt = COMMIT_MARK_NULL;
+  commit_mark_t cmmt;
 
   ut_ad(!recv_sys || !recv_sys->cn_recover->is_need_recovery());
 
@@ -172,11 +192,11 @@ commit_mark_t gcs_t::new_commit(trx_t *trx, mtr_t *mtr) {
   scn_list_mutex_exit();
 
   /** 2. generate gcn number. */
-  std::pair<gcn_t, csr_t> ret =
+  gcn_tuple_t ret =
       gcn.new_gcn(trx->txn_desc.cmmt.gcn, trx->txn_desc.cmmt.csr, mtr);
 
-  trx->txn_desc.cmmt.gcn = cmmt.gcn = ret.first;
-  trx->txn_desc.cmmt.csr = cmmt.csr = ret.second;
+  trx->txn_desc.cmmt.gcn = cmmt.gcn = ret.gcn;
+  trx->txn_desc.cmmt.csr = cmmt.csr = ret.csr;
 
   /** 3. generate utc time. */
   trx->txn_desc.cmmt.us = cmmt.us = ut_time_system_us();
@@ -190,7 +210,8 @@ commit_mark_t gcs_t::new_commit(trx_t *trx, mtr_t *mtr) {
   }
 #endif
 
-  undo_ptr_set_commit(&trx->txn_desc.undo_ptr, trx->txn_desc.cmmt.csr);
+  undo_ptr_set_commit(&trx->txn_desc.undo_ptr, trx->txn_desc.cmmt.csr,
+                      !trx->txn_desc.maddr.is_null());
 
   return cmmt;
 }
@@ -530,5 +551,77 @@ scn_t gcs_load_min_safe_scn() {
 }
 
 void gcs_set_gcn_if_bigger(gcn_t gcn) { gcs->gcn.set_gcn_if_bigger(gcn); }
+
+template <unsigned long long POS>
+void Persisted_gcn<POS>::init() {
+  ut_ad(m_inited == false);
+  m_gcn = read();
+  m_inited = true;
+}
+
+template <unsigned long long POS>
+gcn_t Persisted_gcn<POS>::read() {
+  gcn_t gcn;
+  gcs_sysf_t *hdr;
+  mtr_t mtr;
+
+  mtr_start(&mtr);
+  hdr = gcs_sysf_get(&mtr);
+
+  gcn = mach_read_from_8(hdr + POS);
+
+  /** If lizard version is low, purge_gcn or erased_gcn has not been saved. */
+  if (gcn == 0) {
+    gcn = GCN_INITIAL;
+  } else {
+    ut_a(gcn >= GCN_INITIAL);
+  }
+
+  mtr_commit(&mtr);
+  return gcn;
+}
+
+template <unsigned long long POS>
+void Persisted_gcn<POS>::write(gcn_t gcn) {
+  ut_ad(m_inited == true);
+  gcs_sysf_t *hdr;
+  mtr_t mtr;
+
+  mtr_start(&mtr);
+  hdr = gcs_sysf_get(&mtr);
+  mlog_write_ull(hdr + POS, gcn, &mtr);
+  mtr_commit(&mtr);
+}
+
+template <unsigned long long POS>
+gcn_t Persisted_gcn<POS>::get() {
+  ut_ad(m_inited == true);
+  return m_gcn.load();
+}
+
+/**
+  Flush the bigger commit number to lizard tbs,
+  Only one single thread to persist.
+*/
+template <unsigned long long POS>
+void Persisted_gcn<POS>::flush(gcn_t gcn) {
+  ut_ad(m_inited == true);
+  if (gcn > m_gcn) {
+    m_gcn.store(gcn);
+    write(m_gcn);
+  }
+}
+
+template void Persisted_gcn<GCS_DATA_PURGE_GCN>::init();
+template void Persisted_gcn<GCS_DATA_PURGE_GCN>::flush(gcn_t gcn);
+template gcn_t Persisted_gcn<GCS_DATA_PURGE_GCN>::read();
+template gcn_t Persisted_gcn<GCS_DATA_PURGE_GCN>::get();
+template void Persisted_gcn<GCS_DATA_PURGE_GCN>::write(gcn_t gcn);
+
+template void Persisted_gcn<GCS_DATA_ERASE_GCN>::init();
+template void Persisted_gcn<GCS_DATA_ERASE_GCN>::flush(gcn_t gcn);
+template gcn_t Persisted_gcn<GCS_DATA_ERASE_GCN>::read();
+template gcn_t Persisted_gcn<GCS_DATA_ERASE_GCN>::get();
+template void Persisted_gcn<GCS_DATA_ERASE_GCN>::write(gcn_t gcn);
 
 }  // namespace lizard

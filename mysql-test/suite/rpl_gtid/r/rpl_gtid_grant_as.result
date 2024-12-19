@@ -36,16 +36,16 @@ include/rpl_diff.inc
 include/rpl_diff.inc
 include/rpl_diff.inc
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 DROP USER u1, u2, u3, u4, u5, u6, u7;
 DROP ROLE r1, r2;
 DROP USER foo;
 RESET MASTER;
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 Warnings:
 Warning	1287	'RESET SLAVE' is deprecated and will be removed in a future release. Please use RESET REPLICA instead
 [connection slave]
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 include/rpl_diff.inc
 include/rpl_diff.inc
 include/rpl_diff.inc
@@ -62,6 +62,7 @@ SET @@global.partial_revokes = @save_partial_revokes_master;
 [connection slave]
 SET @@global.partial_revokes = @save_partial_revokes_slave;
 include/rpl_reset.inc
+rpl_channel_name='test'
 # Case 2: Without --partial_revokes
 [connection master]
 SET @save_partial_revokes_master = @@global.partial_revokes;
@@ -93,16 +94,16 @@ include/rpl_diff.inc
 include/rpl_diff.inc
 include/rpl_diff.inc
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 DROP USER u1, u2, u3, u4, u5, u6, u7;
 DROP ROLE r1, r2;
 DROP USER foo;
 RESET MASTER;
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 Warnings:
 Warning	1287	'RESET SLAVE' is deprecated and will be removed in a future release. Please use RESET REPLICA instead
 [connection slave]
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 include/rpl_diff.inc
 include/rpl_diff.inc
 include/rpl_diff.inc

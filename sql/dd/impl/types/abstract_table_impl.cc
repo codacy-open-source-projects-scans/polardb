@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2014, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -90,7 +90,8 @@ static const std::set<String_type> default_valid_option_keys = {
     "view_valid",
     "gipk",
     "__origin_schema__",
-    "__origin_table__"};
+    "__origin_table__",
+    "flashback_area"};
 
 ///////////////////////////////////////////////////////////////////////////
 // Abstract_table_impl implementation.

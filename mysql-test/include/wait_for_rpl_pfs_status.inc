@@ -54,7 +54,7 @@ if (`SELECT '$status_col_value' REGEXP '^[\+\-]*[0-9]+(\.[0-9]+)*\$'`)
   let $_is_number= 1;
 }
 
-let $_pfs_rpl_status_value= query_get_value("select $status_col from performance_schema.$table", $status_col, 1);
+let $_pfs_rpl_status_value= query_get_value("select $status_col from performance_schema.$table where channel_name = 'test'", $status_col, 1);
 
 # Set way of comparing
 let $_query= SELECT NOT('$_pfs_rpl_status_value' $_status_col_comparsion '$status_col_value');
@@ -75,13 +75,13 @@ while (`$_query`)
     --echo **** ERROR: failed while waiting for $status_type $status_col $_status_col_comparsion $status_col_value ****
     --echo Note: the following output may have changed since the failure was detected
     --echo **** Showing PFS RPL TABLE STATUS, PROCESSLIST ****:
-    eval select $status_col from performance_schema.$table;
+    eval select $status_col from performance_schema.$table where channel_name = 'test';
     SHOW PROCESSLIST;
     die;
   }
   dec $_status_timeout_counter;
   sleep 0.1;
-  let $_pfs_rpl_status_value= query_get_value("select $status_col from performance_schema.$table", $status_col, 1);
+  let $_pfs_rpl_status_value= query_get_value("select $status_col from performance_schema.$table where channel_name = 'test'", $status_col, 1);
   let $_query= SELECT NOT('$_pfs_rpl_status_value' $_status_col_comparsion '$status_col_value');
   if ($_is_number)
   {

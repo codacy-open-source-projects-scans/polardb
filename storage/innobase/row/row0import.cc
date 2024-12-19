@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2012, 2022, Oracle and/or its affiliates.
+Copyright (c) 2012, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -39,6 +39,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "sql/dd/types/column_type_element.h"
 
 #include "btr0pcur.h"
+#include "ddl0impl-builder.h"
 #include "dict0boot.h"
 #include "dict0crea.h"
 #include "dict0dd.h"
@@ -2408,7 +2409,7 @@ dberr_t PageConverter::update_records(buf_block_t *block) UNIV_NOTHROW {
         (comp ? rec_new_is_versioned(rec) : rec_old_is_versioned(rec));
 
     /* CFG file is required to process records having version */
-
+    ut_ad(!m_cfg->m_missing);
     if (m_cfg->m_missing && has_version) {
       return (DB_SCHEMA_MISMATCH);
     }
@@ -2475,6 +2476,7 @@ dberr_t PageConverter::update_index_page(buf_block_t *block) UNIV_NOTHROW {
 
   /* If the .cfg file is missing and there is an index mismatch
   then ignore the error. */
+  ut_ad(!m_cfg->m_missing);
   if (m_cfg->m_missing &&
       (m_index == nullptr || m_index->m_srv_index == nullptr)) {
     return (DB_SUCCESS);
@@ -4188,15 +4190,15 @@ Read the contents of the @<tablename@>.cfg file.
   FILE *file = fopen(name, "rb");
 
   if (file == nullptr) {
-    char msg[BUFSIZ];
+    // char msg[BUFSIZ];
 
-    snprintf(msg, sizeof(msg),
-             "Error opening '%s', will attempt to import"
-             " without schema verification",
-             name);
+    // snprintf(msg, sizeof(msg),
+    //          "Error opening '%s', will attempt to import"
+    //          " without schema verification",
+    //          name);
 
-    ib_senderrf(thd, IB_LOG_LEVEL_WARN, ER_IO_READ_ERROR, errno,
-                strerror(errno), msg);
+    // ib_senderrf(thd, IB_LOG_LEVEL_WARN, ER_IO_READ_ERROR, errno,
+    //             strerror(errno), msg);
 
     cfg.m_missing = true;
 
@@ -4428,7 +4430,6 @@ dberr_t row_import_for_mysql(dict_table_t *table, dd::Table *table_def,
   rw_lock_s_lock_func(dict_operation_lock, 0, UT_LOCATION_HERE);
 
   row_import cfg;
-  ulint space_flags = 0;
 
   /* Read CFP file */
   if (dd_is_table_in_encrypted_tablespace(table)) {
@@ -4488,59 +4489,69 @@ dberr_t row_import_for_mysql(dict_table_t *table, dd::Table *table_def,
     the index root pages from the .ibd file and skip the schema
     matching step. */
 
+    /* Lizard-4.0 revision: We don't support missing cfg file any more. */
+
     ut_a(err == DB_FAIL);
 
-    cfg.m_page_size.copy_from(univ_page_size);
+    ib_errf(trx->mysql_thd, IB_LOG_LEVEL_ERROR, ER_TABLE_CFG_MISSING, "%s",
+            table_def->name().c_str());
 
-    /* Check and store compression type. */
-    Compression compression;
+    return (row_import_cleanup(prebuilt, trx, err));
 
-    err = Compression::check(prebuilt->m_mysql_table->s->compress.str,
-                             &compression);
+    // cfg.m_page_size.copy_from(univ_page_size);
 
-    ut_a(err == DB_SUCCESS);
-    cfg.m_compression_type = compression.m_type;
+    // /* Check and store compression type. */
+    // Compression compression;
 
-    FetchIndexRootPages fetchIndexRootPages(table, trx);
+    // err = Compression::check(prebuilt->m_mysql_table->s->compress.str,
+    //                          &compression);
 
-    err = fil_tablespace_iterate(
-        table,
-        IO_BUFFER_SIZE(cfg.m_page_size.physical(), cfg.m_page_size.physical()),
-        cfg.m_compression_type, fetchIndexRootPages);
+    // ut_a(err == DB_SUCCESS);
+    // cfg.m_compression_type = compression.m_type;
 
-    if (err == DB_SCHEMA_MISMATCH) {
-      ib_errf(trx->mysql_thd, IB_LOG_LEVEL_ERROR, ER_TABLE_SCHEMA_MISMATCH,
-              "CFG file is missing and source table is found to have row "
-              "versions. CFG file is must to IMPORT tables with row versions.");
-      return (row_import_cleanup(prebuilt, trx, err));
-    }
+    // FetchIndexRootPages fetchIndexRootPages(table, trx);
 
-    if (err == DB_SUCCESS) {
-      err = fetchIndexRootPages.build_row_import(&cfg);
+    // err = fil_tablespace_iterate(
+    //     table,
+    //     IO_BUFFER_SIZE(cfg.m_page_size.physical(),
+    //     cfg.m_page_size.physical()), cfg.m_compression_type,
+    //     fetchIndexRootPages);
 
-      /* Update index->page and SYS_INDEXES.PAGE_NO
-      to match the B-tree root page numbers in the
-      tablespace. */
+    // if (err == DB_SCHEMA_MISMATCH) {
+    //   ib_errf(trx->mysql_thd, IB_LOG_LEVEL_ERROR, ER_TABLE_SCHEMA_MISMATCH,
+    //           "CFG file is missing and source table is found to have row "
+    //           "versions. CFG file is must to IMPORT tables with row
+    //           versions.");
+    //   return (row_import_cleanup(prebuilt, trx, err));
+    // }
 
-      if (err == DB_SUCCESS) {
-        err = cfg.set_root_by_heuristic();
-      }
-    }
+    // if (err == DB_SUCCESS) {
+    //   err = fetchIndexRootPages.build_row_import(&cfg);
 
-    space_flags = fetchIndexRootPages.get_space_flags();
+    //   /* Update index->page and SYS_INDEXES.PAGE_NO
+    //   to match the B-tree root page numbers in the
+    //   tablespace. */
 
-    /* If the fsp flag is set for data_dir, but table flag is not set
-    for data_dir or vice versa then return error. */
-    if (err == DB_SUCCESS && FSP_FLAGS_HAS_DATA_DIR(space_flags) !=
-                                 DICT_TF_HAS_DATA_DIR(table->flags)) {
-      ib_errf(trx->mysql_thd, IB_LOG_LEVEL_ERROR, ER_TABLE_SCHEMA_MISMATCH,
-              "Table location flags do not match. The source table %s a "
-              "DATA DIRECTORY but the destination table %s.",
-              (FSP_FLAGS_HAS_DATA_DIR(space_flags) ? "uses" : "does not use"),
-              (DICT_TF_HAS_DATA_DIR(table->flags) ? "does" : "does not"));
-      err = DB_ERROR;
-      return (row_import_error(prebuilt, trx, err));
-    }
+    //   if (err == DB_SUCCESS) {
+    //     err = cfg.set_root_by_heuristic();
+    //   }
+    // }
+
+    // space_flags = fetchIndexRootPages.get_space_flags();
+
+    // /* If the fsp flag is set for data_dir, but table flag is not set
+    // for data_dir or vice versa then return error. */
+    // if (err == DB_SUCCESS && FSP_FLAGS_HAS_DATA_DIR(space_flags) !=
+    //                              DICT_TF_HAS_DATA_DIR(table->flags)) {
+    //   ib_errf(trx->mysql_thd, IB_LOG_LEVEL_ERROR, ER_TABLE_SCHEMA_MISMATCH,
+    //           "Table location flags do not match. The source table %s a "
+    //           "DATA DIRECTORY but the destination table %s.",
+    //           (FSP_FLAGS_HAS_DATA_DIR(space_flags) ? "uses" : "does not
+    //           use"), (DICT_TF_HAS_DATA_DIR(table->flags) ? "does" : "does
+    //           not"));
+    //   err = DB_ERROR;
+    //   return (row_import_error(prebuilt, trx, err));
+    // }
   } else {
     rw_lock_s_unlock_gen(dict_operation_lock, 0);
   }
@@ -4607,6 +4618,9 @@ dberr_t row_import_for_mysql(dict_table_t *table, dd::Table *table_def,
   if (table->has_instant_cols() || table->has_row_versions()) {
     dd_import_instant_add_columns(table, table_def);
   }
+
+  ut_ad(!table->is_2pp ||
+        lizard::dd_table_options_has_fba(&table_def->options()));
 
   /* If the table is stored in a remote tablespace, we need to
   determine that filepath from the link file and system tables.
@@ -4880,6 +4894,10 @@ dberr_t row_import_for_mysql(dict_table_t *table, dd::Table *table_def,
   table->autoinc_field_no = ULINT_UNDEFINED;
 
   ut_a(err == DB_SUCCESS);
+
+  ib::info() << "Initiating index load operation with a MLOG_INDEX_LOAD redo log.";
+  ddl::Builder::write_redo(index);
+  ib::info() << "The MLOG_INDEX_LOAD redo log has been successfully written and committed.";
 
   /* After discard, sdi_table->ibd_file_missing is set to true.
   This is avoid to purge on SDI tables after discard.

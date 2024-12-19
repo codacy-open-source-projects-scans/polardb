@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -244,7 +244,9 @@ static void dict_mem_table_col_rename_low(
         if ((!is_virtual) != (!field->col->is_virtual())) {
           continue;
         }
-
+        if (field->col->mtype == DATA_SYS_GPP) {
+          continue;
+        }
         ulint name_ofs = field->name - t_col_names;
         if (name_ofs <= prefix_len) {
           field->name = col_names + name_ofs;
@@ -603,7 +605,8 @@ bool dict_col_default_t::operator!=(const dict_col_default_t &other) {
 
 /** Check whether index can be used by transaction
 @param[in] trx          transaction*/
-bool dict_index_t::is_usable(const trx_t *trx) {
+bool dict_index_t::is_usable(const trx_t *trx,
+                             const lizard::Snapshot_vision *snapshot_vision) {
   /* Indexes that are being created are not usable. */
   if (!is_clustered() && dict_index_is_online_ddl(this)) {
     return false;
@@ -615,31 +618,11 @@ bool dict_index_t::is_usable(const trx_t *trx) {
   }
 
   /* Check if the specified transaction can see this index. */
-  return (table->is_temporary() || trx_id == 0 || !trx->vision.is_active() ||
-          lizard::dd_index_modificatsion_visible(this, trx, nullptr));
-}
-
-/** Check whether index can be used by an as-of query
-@param[in] trx            transaction
-@param[in] as_of_scn      as of scn
-@param[in] as_of_gcn      as of gcn */
-bool dict_index_t::is_usable_as_of(const trx_t *trx,
-                                   lizard::Snapshot_vision *snapshot_vision) {
-  /* Indexes that are being created are not usable. */
-  if (!is_clustered() && dict_index_is_online_ddl(this)) {
-    return false;
+  if (table->is_temporary() || trx_id == 0) {
+    return true;
   }
 
-  /* Cannot use a corrupted index. */
-  if (is_corrupted()) {
-    return false;
-  }
-
-  /* as of query don't support temporary table. */
-  if (table->is_temporary()) return false;
-
-  return (trx_id == 0 ||
-          lizard::dd_index_modificatsion_visible(this, trx, snapshot_vision));
+  return lizard::dd_index_modification_visible(this, trx, snapshot_vision);
 }
 
 #endif /* !UNIV_HOTBACKUP */

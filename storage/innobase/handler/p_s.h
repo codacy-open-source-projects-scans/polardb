@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2016, 2022, Oracle and/or its affiliates.
+Copyright (c) 2016, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -33,6 +33,10 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #define p_s_h
 
 #include "mysql/psi/psi_data_lock.h"
+
+/** The following variables are used to limit the output of the
+ * performance_schema.data_locks*/
+extern ulong pfs_data_locks_max_locks_per_batch;
 
 /** Inspect data locks in innodb.
 This class is used by the performance schema to extract lock data.

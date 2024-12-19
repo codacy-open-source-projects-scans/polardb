@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 Copyright (c) 2008, Google Inc.
 Copyright (c) 2012, Facebook Inc.
 
@@ -131,6 +131,7 @@ extern mysql_pfs_key_t mutex_list_mutex_key;
 extern mysql_pfs_key_t recalc_pool_mutex_key;
 extern mysql_pfs_key_t page_cleaner_mutex_key;
 extern mysql_pfs_key_t purge_sys_pq_mutex_key;
+extern mysql_pfs_key_t erase_sys_pq_mutex_key;
 extern mysql_pfs_key_t recv_sys_mutex_key;
 extern mysql_pfs_key_t recv_writer_mutex_key;
 extern mysql_pfs_key_t rtr_active_mutex_key;

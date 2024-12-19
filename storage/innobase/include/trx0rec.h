@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -316,6 +316,10 @@ constexpr uint32_t TRX_UNDO_MODIFY_BLOB = 64;
  fields: used by purge to free the external storage */
 constexpr uint32_t TRX_UNDO_UPD_EXTERN = 128;
 
+/* Lizard: This bit indicates whether this undo record will undergo a two-phase
+ purge when purging . */
+constexpr uint32_t TRX_UNDO_UPD_FLAG_2PP = 128;
+
 /** Operation type flags used in trx_undo_report_row_operation */
 constexpr uint32_t TRX_UNDO_INSERT_OP = 1;
 constexpr uint32_t TRX_UNDO_MODIFY_OP = 2;
@@ -372,6 +376,7 @@ byte *trx_undo_rec_get_pars(
                               externally stored fild */
     undo_no_t *undo_no,       /*!< out: undo log record number */
     table_id_t *table_id,     /*!< out: table id */
+    bool *is_2pp,       /*!< out: true if it's two phase purge */
     type_cmpl_t &type_cmpl);  /*!< out: type compilation info. */
 
 /** Get the max free space of undo log by assuming it's a fresh new page

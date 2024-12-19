@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -82,7 +82,11 @@ enum class Page_fetch {
 
   /** Like Page_fetch::NORMAL, but do not mind if the file page has been
   freed. */
-  POSSIBLY_FREED
+  POSSIBLY_FREED,
+
+  /** Like Page_fetch::POSSIBLY_FREED, but do not mind if the page id is out of
+     tablespace. */
+  GPP_FETCH,
 };
 /** @} */
 
@@ -375,11 +379,12 @@ done.
 @param[in] hint Cache_hint::MAKE_YOUNG or Cache_hint::KEEP_OLD
 @param[in] file File name from where it was called.
 @param[in] line Line from where it was called.
+@param[in] gpp_fetch (only used in debug mode)
 @param[in,out] mtr Mini-transaction covering the fetch
 @return true if success */
 bool buf_page_get_known_nowait(ulint rw_latch, buf_block_t *block,
                                Cache_hint hint, const char *file, ulint line,
-                               mtr_t *mtr);
+                               bool gpp_fetch [[maybe_unused]], mtr_t *mtr);
 
 /** Given a tablespace id and page number tries to get that page. If the
 page is not in the buffer pool it is not loaded and NULL is returned.
@@ -1903,8 +1908,6 @@ struct buf_block_t {
   page_zip_des_t const *get_page_zip() const noexcept {
     return page.zip.data != nullptr ? &page.zip : nullptr;
   }
-
-  lizard::Cache_tcn *cache_tcn;
 };
 
 /** Check if a buf_block_t object is in a valid state
@@ -2655,10 +2658,5 @@ inline void buf_block_reset_page_type_on_mismatch(buf_block_t &block,
   }
 }
 #include "buf0buf.ic"
-
-namespace lizard {
-void allocate_block_tcn(buf_block_t *block);
-void deallocate_block_tcn(buf_block_t *block);
-}  // namespace lizard
 
 #endif /* !buf0buf_h */

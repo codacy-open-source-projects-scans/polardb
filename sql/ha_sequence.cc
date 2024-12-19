@@ -690,7 +690,7 @@ int Sequence_share::reload_cache(TABLE *table, bool *changed, SR_ctx *sr_ctx) {
   }
   *changed = compare_records(table);
 
-#ifndef DBUG_OFF
+#ifndef NDEBUG
   fprintf(stderr,
           "Sequence will write values: "
           "currval %llu "
@@ -1435,6 +1435,21 @@ int ha_sequence::external_lock(THD *thd, int lock_type) {
   DBUG_ENTER("ha_sequence::external_lock");
   assert(m_file);
   DBUG_RETURN(m_file->ha_external_lock(thd, lock_type));
+}
+
+/**
+  start stmt
+
+  @param[in]      thd         User connection
+  @param[in]      lock_typ    Lock type
+
+  @retval         0         Success
+  @retval         ~0        Failure
+*/
+int ha_sequence::start_stmt(THD *thd, thr_lock_type lock_type) {
+  DBUG_ENTER("ha_sequence::start_stmt");
+  assert(m_file);
+  DBUG_RETURN(m_file->start_stmt(thd, lock_type));
 }
 
 /**

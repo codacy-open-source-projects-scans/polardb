@@ -36,7 +36,10 @@ perl;
   if ($channel_name) {
     $index_file =~ s/(.*)(\.index)/$1-$channel_name$2/;
   }
-
+  if (!$channel_name) {
+    $index_file =~ s/(.*)(\.index)/$1-test$2/;
+  }
+ 
   # Read relay log filename.
   open FILE, "$index_file" or die "Error $? opening $index_file: $!";
   my $relay_log_file= '';

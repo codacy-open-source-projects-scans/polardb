@@ -1,4 +1,4 @@
-/* Copyright (c) 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -67,12 +67,19 @@ class Sql_cmd_xa_prepare : public Sql_cmd {
   /** Lizard: Delay my_ok because we want to send result set. */
   void set_delay_ok() { m_delay_ok = true; }
 
+  void set_proposal_gcn(const MyGCN &gcn) { m_proposal_gcn = gcn; }
+
+  MyGCN get_proposal_gcn() const { return m_proposal_gcn; }
+
  private:
   /** The XID associated with the underlying XA transaction. */
   xid_t *m_xid;
 
   /** Lizard: True if we want to delay OK. */
   bool m_delay_ok;
+
+  /** Lizard: Proposal gcn info. */
+  MyGCN m_proposal_gcn;
 
   /**
     Puts an XA transaction in the PREPARED state.

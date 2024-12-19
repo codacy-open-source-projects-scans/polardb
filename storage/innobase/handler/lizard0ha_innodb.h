@@ -38,3 +38,17 @@ void innobase_register_trx_only_trans(handlerton *hton, THD *thd, trx_t *trx);
   param[in]  innobase_hton  handlerton of innobase.
 */
 void innobase_init_ext(handlerton *innobase_hton);
+
+/**
+ * InnoDB storage copy external commit number (gcn) if assigned by user when
+ * commit
+ *
+ * @param[in]		user context
+ * @param[in/out]	innobase trx context */
+extern void innobase_copy_user_commit(THD *thd, trx_t *trx);
+/**
+ * InnoDB storage copy external proposal number (gcn) if assigned by user when
+ * prepare
+ * @param[in/out]	user context
+ * @param[in/out]	innobase trx context */
+extern void innobase_copy_user_prepare(THD *thd, trx_t *trx);

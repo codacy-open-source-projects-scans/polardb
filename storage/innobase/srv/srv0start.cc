@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 Copyright (c) 2008, Google Inc.
 Copyright (c) 2009, Percona Inc.
 
@@ -125,7 +125,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ut0crc32.h"
 #include "ut0new.h"
 
-#include "lizard0cleanout.h"
+#include "lizard0cleanout0safe.h"
 #include "lizard0fsp.h"
 #include "lizard0gcs.h"
 #include "lizard0gcs0hist.h"
@@ -133,6 +133,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "lizard0txn.h"
 #include "lizard0undo.h"
 #include "lizard0undo0types.h"
+#include "lizard0erase.h"
 
 #include "srv0file.h"
 
@@ -1581,7 +1582,8 @@ dberr_t srv_start(bool create_new_db) {
   page_no_t tablespace_size_in_header;
   dberr_t err;
   mtr_t mtr;
-  lizard::purge_heap_t *purge_heap;
+  lizard::purge_heap_t *purge_heap = nullptr;
+  lizard::erase_heap_t *erase_heap = nullptr;
 
   assert(srv_dict_metadata == nullptr);
   /* Reset the start state. */
@@ -2005,12 +2007,16 @@ dberr_t srv_start(bool create_new_db) {
 
     trx_purge_sys_mem_create();
 
-    purge_heap = trx_sys_init_at_db_start();
+    lizard::trx_erase_sys_mem_create();
+
+    std::tie(purge_heap, erase_heap) = trx_sys_init_at_db_start();
 
     /* The purge system needs to create the purge view and
     therefore requires that the trx_sys is inited. */
 
     trx_purge_sys_initialize(srv_threads.m_purge_workers_n, purge_heap);
+
+    lizard::trx_erase_sys_initialize(srv_threads.m_purge_workers_n, erase_heap);
 
     lizard::undo_retention_init();
 
@@ -2420,9 +2426,11 @@ dberr_t srv_start(bool create_new_db) {
 
     trx_purge_sys_mem_create();
 
+    lizard::trx_erase_sys_mem_create();
+
     /* The purge system needs to create the purge view and
     therefore requires that the trx_sys is inited. */
-    purge_heap = trx_sys_init_at_db_start();
+    std::tie(purge_heap, erase_heap) = trx_sys_init_at_db_start();
 
     if (srv_is_upgrade_mode) {
       if (!purge_heap->empty()) {
@@ -2445,6 +2453,8 @@ dberr_t srv_start(bool create_new_db) {
     therefore requires that the trx_sys and trx lists were
     initialized in trx_sys_init_at_db_start(). */
     trx_purge_sys_initialize(srv_threads.m_purge_workers_n, purge_heap);
+
+    lizard::trx_erase_sys_initialize(srv_threads.m_purge_workers_n, erase_heap);
 
     lizard::undo_retention_init();
   }

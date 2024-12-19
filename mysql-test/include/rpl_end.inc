@@ -67,7 +67,7 @@
 #
 #     --source include/wait_for_slave_sql_error.inc
 #     --source include/stop_slave_io.inc
-#     RESET REPLICA;
+#     RESET REPLICA for channel 'test';
 #     --let $rpl_only_running_threads= 1
 #     --source include/rpl_end.inc
 #
@@ -105,7 +105,8 @@ while ($_rpl_server)
 
   # Only check slave threads for error on hosts that were at some
   # point configured as slave.
-  --let $_tmp= query_get_value(SHOW SLAVE STATUS, Master_Host, 1)
+
+  --let $_tmp= query_get_value(select * from performance_schema.replication_applier_status where CHANNEL_NAME='test', SERVICE_STATE, 1)
   if ($_tmp != 'No such row')
   {
     --source include/check_slave_no_error.inc
@@ -176,7 +177,7 @@ if (!$rpl_group_replication)
 
         if (!$rpl_multi_source)
         {
-          CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL;
+          CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL for channel 'test';
         }
         if ($rpl_multi_source)
         {
@@ -186,7 +187,7 @@ if (!$rpl_group_replication)
           }
           if(!$rpl_channel_name)
           {
-            CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL FOR CHANNEL '';
+            CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL FOR CHANNEL 'test';
           }
         }
         --enable_query_log
@@ -245,7 +246,7 @@ if ($rpl_gtid_only)
     --disable_query_log
     if (!$rpl_multi_source)
     {
-      CHANGE REPLICATION SOURCE TO GTID_ONLY = 0;
+      CHANGE REPLICATION SOURCE TO GTID_ONLY = 0 for channel "test";
     }
     if ($rpl_multi_source)
     {
@@ -255,7 +256,7 @@ if ($rpl_gtid_only)
       }
       if(!$rpl_channel_name)
       {
-        CHANGE REPLICATION SOURCE TO GTID_ONLY = 0 FOR CHANNEL '';
+        CHANGE REPLICATION SOURCE TO GTID_ONLY = 0 FOR CHANNEL 'test';
       }
     }
     --enable_query_log
@@ -296,7 +297,7 @@ while ($_rpl_server)
     --disable_query_log
     if (!$rpl_multi_source)
     {
-      CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT=0;
+      CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT=0 for channel "test";
     }
     if ($rpl_multi_source)
     {
@@ -306,7 +307,7 @@ while ($_rpl_server)
       }
       if(!$rpl_channel_name)
       {
-        CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 0 FOR CHANNEL '';
+        CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 0 FOR CHANNEL 'test';
       }
     }
     --enable_query_log

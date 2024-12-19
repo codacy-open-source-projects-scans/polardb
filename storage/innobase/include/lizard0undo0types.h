@@ -39,6 +39,9 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "lizard0scn0types.h"
 #include "lizard0txn.h"
+#include "lizard0txn0service.h"
+
+#include "sql/lizard/lizard_service.h"
 
 struct trx_rseg_t;
 struct trx_undo_t;
@@ -119,9 +122,6 @@ struct slot_addr_t {
 
 typedef struct slot_addr_t slot_addr_t;
 
-/** Slot ptr in undo header. */
-typedef ib_id_t slot_ptr_t;
-
 /** Compare function */
 inline bool operator==(const slot_addr_t &lhs, const slot_addr_t &rhs) {
   return (lhs.offset == rhs.offset && lhs.page_no == rhs.page_no &&
@@ -162,6 +162,8 @@ struct undo_addr_t {
   bool state;
   /** Commit number source for gcn */
   csr_t csr;
+  /** Whether xa branch is slave */
+  bool is_slave;
 
  public:
   undo_addr_t(const slot_addr_t &slot_addr, bool state_arg, csr_t csr_arg)
@@ -169,10 +171,16 @@ struct undo_addr_t {
         page_no(slot_addr.page_no),
         offset(slot_addr.offset),
         state(state_arg),
-        csr(csr_arg) {}
+        csr(csr_arg),
+        is_slave(false) {}
 
   undo_addr_t()
-      : space_id(0), page_no(0), offset(0), state(false), csr(CSR_AUTOMATIC) {}
+      : space_id(0),
+        page_no(0),
+        offset(0),
+        state(false),
+        csr(CSR_AUTOMATIC),
+        is_slave(false) {}
 };
 
 typedef struct undo_addr_t undo_addr_t;
@@ -188,7 +196,8 @@ typedef struct undo_addr_t undo_addr_t;
 
    1  bit     active/commit state (0:active 1:commit)
    1  bit     commit source
-   7  bit     reserved unused
+   1  bit     share commit number
+   6  bit     reserved unused
    7  bit     undo space number (1-127)
    32 bit     page no (4 bytes)
    16 bit     Offset of undo log header (2 bytes)
@@ -204,9 +213,14 @@ typedef struct undo_addr_t undo_addr_t;
 #define UBA_WIDTH_SPACE_ID 7
 
 #define UBA_POS_UNUSED (UBA_POS_SPACE_ID + UBA_WIDTH_SPACE_ID)
-#define UBA_WIDTH_UNUSED 7
+#define UBA_WIDTH_UNUSED 6
 
-#define UBA_POS_CSR (UBA_POS_UNUSED + UBA_WIDTH_UNUSED)
+#define UBA_POS_IS_SLAVE (UBA_POS_UNUSED + UBA_WIDTH_UNUSED)
+#define UBA_WIDTH_IS_SLAVE 1
+
+#define UBA_MASK_IS_SLAVE ((~(~0ULL << UBA_WIDTH_IS_SLAVE)) << UBA_POS_IS_SLAVE)
+
+#define UBA_POS_CSR (UBA_POS_IS_SLAVE + UBA_WIDTH_IS_SLAVE)
 #define UBA_WIDTH_CSR 1
 
 #define UBA_MASK_CSR ((~(~0ULL << UBA_WIDTH_CSR)) << UBA_POS_CSR)
@@ -232,8 +246,54 @@ static_assert(UBA_POS_SPACE_ID == 48, "UBA space id from 48th bits");
 /** Undo log header address in record */
 typedef ib_id_t undo_ptr_t;
 
+/** NULL value of slot ptr  */
+constexpr undo_ptr_t UNDO_PTR_NULL = std::numeric_limits<undo_ptr_t>::min();
+
+inline bool undo_ptr_is_active(const undo_ptr_t &undo_ptr) {
+  return !static_cast<bool>((undo_ptr & UBA_MASK_STATE) >> UBA_POS_STATE);
+}
+
+inline csr_t undo_ptr_get_csr(const undo_ptr_t &undo_ptr) {
+  return static_cast<csr_t>((undo_ptr & UBA_MASK_CSR) >> UBA_POS_CSR);
+}
+
+inline bool undo_ptr_is_slave(const undo_ptr_t &undo_ptr) {
+  return static_cast<bool>((undo_ptr & UBA_MASK_IS_SLAVE) >> UBA_POS_IS_SLAVE);
+}
+
+inline void undo_ptr_set_commit(undo_ptr_t *undo_ptr, unsigned int csr,
+                                bool is_slave) {
+  *undo_ptr |= ((undo_ptr_t)1 << UBA_POS_STATE);
+
+  undo_ptr_t value = static_cast<undo_ptr_t>(csr);
+  *undo_ptr |= (value << UBA_POS_CSR);
+
+  value = static_cast<undo_ptr_t>(is_slave);
+  *undo_ptr |= (value << UBA_POS_IS_SLAVE);
+}
+
+/** Retrieve slot address from undo address */
+inline slot_ptr_t undo_ptr_get_slot(const undo_ptr_t &undo_ptr) {
+  return ((undo_ptr & UBA_MASK_ADDR) >> UBA_POS_ADDR);
+}
+
+inline bool undo_ptr_is_slot(const undo_ptr_t &undo_ptr) {
+  return !(undo_ptr >> UBA_WIDTH_ADDR);
+}
+
+
 /** Scn in record */
 typedef scn_t scn_id_t;
+
+/**
+  XA branch info structure:
+  {n_globals, n_locals}
+*/
+
+struct xes_tags_t {
+  bool is_rollback;
+  csr_t csr;
+};
 
 /**
   The transaction description:
@@ -247,17 +307,37 @@ struct txn_desc_t {
   undo_ptr_t undo_ptr;
   /** scn number */
   commit_mark_t cmmt;
+  /** proposal commit number. */
+  proposal_mark_t pmmt;
+  /** branch info */
+  xa_branch_t branch;
+  /** Master txn address for async commit. */
+  xa_addr_t maddr;
 
  public:
-  txn_desc_t();
+  txn_desc_t() : undo_ptr(UNDO_PTR_NULL), cmmt(), pmmt(), branch(), maddr() {}
 
-  void reset();
+  void reset() {
+    undo_ptr = UNDO_PTR_NULL;
+    cmmt.reset();
+    pmmt.reset();
+    branch.reset();
+    maddr.reset();
+  }
+
 
   /** assemble cmmt and undo ptr */
   void assemble(const commit_mark_t &mark, const slot_addr_t &slot_addr);
 
   /** assemble undo ptr */
   void assemble_undo_ptr(const slot_addr_t &slot_addr);
+
+  void resurrect_xa(const proposal_mark_t &pmmt, const xa_branch_t &branch,
+                    const xa_addr_t &maddr);
+
+  void copy_xa_when_prepare(const MyGCN &xa_gcn, const xa_branch_t &xa_branch);
+
+  void copy_xa_when_commit(const MyGCN &xa_gcn, const xa_addr_t &xa_maddr);
 };
 
 /**
@@ -267,6 +347,7 @@ struct txn_desc_t {
    3) undo_ptr
 */
 struct txn_rec_t {
+ public:
   /* trx id */
   trx_id_t trx_id;
   /** scn number */
@@ -281,6 +362,49 @@ struct txn_rec_t {
   */
   /** Revision: Persist gcn into record */
   gcn_t gcn;
+
+ public:
+  txn_rec_t()
+      : trx_id(0), scn(SCN_NULL), undo_ptr(UNDO_PTR_NULL), gcn(GCN_NULL) {}
+
+  txn_rec_t(trx_id_t trx_id_arg, scn_id_t scn_arg, undo_ptr_t undo_ptr_arg,
+            gcn_t gcn_arg)
+      : trx_id(trx_id_arg),
+        scn(scn_arg),
+        undo_ptr(undo_ptr_arg),
+        gcn(gcn_arg) {}
+
+  bool is_committed() const {
+    if (!undo_ptr_is_active(undo_ptr)) {
+      ut_ad(scn != SCN_NULL && gcn != GCN_NULL && trx_id != 0);
+      return true;
+    } else {
+      /** Active trx didn't known Commit Info. */
+      ut_ad(scn == SCN_NULL && gcn == GCN_NULL &&
+            undo_ptr_get_csr(undo_ptr) == CSR_AUTOMATIC);
+      return false;
+    }
+  }
+
+  bool is_active() const { return !is_committed(); }
+
+  bool is_null() const {
+    if (trx_id == 0) {
+      ut_ad(scn == SCN_NULL && gcn == GCN_NULL && undo_ptr == UNDO_PTR_NULL);
+      return true;
+    }
+    return false;
+  }
+
+  void reset() {
+    trx_id = 0;
+    scn = SCN_NULL;
+    undo_ptr = UNDO_PTR_NULL;
+    gcn = GCN_NULL;
+  }
+
+  slot_ptr_t slot() const { return undo_ptr_get_slot(undo_ptr); }
+  csr_t csr() const { return undo_ptr_get_csr(undo_ptr); }
 };
 
 /**
@@ -298,11 +422,6 @@ struct txn_info_t {
   gcn_t gcn;
 };
 
-/**
-  Lizard committed transaction txn information
-  special for cleanout.
-*/
-typedef struct txn_rec_t txn_commit_t;
 /**
   Lizard transaction attributes in index (used by Vision)
    1) scn
@@ -330,50 +449,41 @@ struct txn_undo_ptr_t {
   XID xid_for_hash;
 };
 
-/**
-  Unlike normal UNDOs (insert undo / update undo), there are 5 kinds of states
-  of TXN. Among them, TXN_STATE_ACTIVE, TXN_STATE_COMMITTED and TXN_STATE_PURGED
-  are specified by TXN_UNDO_LOG_STATE flag (respectively, TXN_UNDO_LOG_ACTIVE,
-  TXN_UNDO_LOG_COMMITED and TXN_UNDO_LOG_PURGED) in TXN header. And also, that's
-  mean these TXN headers are existing.
+struct txn_slot_t {
+ public:
+  txn_slot_t()
+      : image(),
+        slot_ptr(0),
+        trx_id(0),
+        magic_n(0),
+        prev_image(),
+        state(0),
+        xes_storage(0),
+        tags(0),
+        is_2pp(false),
+        pmmt(),
+        branch(),
+        maddr() {}
 
-  By contrast, TXN_STATE_REUSE / TXN_STATE_UNDO_CORRUPTED mean that the TXN
-  headers are non-existing.
+  txn_slot_t(commit_mark_t image_arg, slot_ptr_t slot_ptr_arg,
+             trx_id_t trx_id_arg, ulint magic_n_arg,
+             commit_mark_t prev_image_arg, ulint state_arg,
+             ulint xes_storage_arg, ulint tags_arg, bool is_2pp_arg,
+             proposal_mark_t pmmt_arg, xa_branch_t branch_arg,
+             xa_addr_t addr_arg)
+      : image(image_arg),
+        slot_ptr(slot_ptr_arg),
+        trx_id(trx_id_arg),
+        magic_n(magic_n_arg),
+        prev_image(prev_image_arg),
+        state(state_arg),
+        xes_storage(xes_storage_arg),
+        tags(tags_arg),
+        is_2pp(is_2pp_arg),
+        pmmt(pmmt_arg),
+        branch(branch_arg),
+        maddr(addr_arg) {}
 
-  * TXN_STATE_ACTIVE: A txn header is initialized as TXN_STATE_ACTIVE when the
-  transaction begins.
-
-  * TXN_STATE_COMMITTED: The state of txn header is set as TXN_STATE_COMMITTED
-  at the moment that the transaction commits.
-
-  * TXN_STATE_PURGED: At the moment that the purge sys start purging it. Notes
-  that: Access to the binding normal UNDOs (insert undo / update undo) is not
-  safe from then on.
-
-  * TXN_STATE_REUSE: At the moment that the TXN headers are reused by another
-  transactions. These TXN headers are reinited as TXN_STATE_ACTIVE, but for
-  those UBAs who also pointed at them, are supposed to be TXN_STATE_REUSE.
-
-  * TXN_STATE_UNDO_CORRUPTED: In fact, TXN_STATE_REUSE also lost their TXN
-  headers, but TXN_STATE_UNDO_CORRUPTED is a abnormal state for some special
-  cases, for example, page corrupt or TXN file unexpectedly removed.
-
-  So the life cycle of TXN hedaer:
-
-  TXN_STATE_ACTIVE (Trx_A) ==> TXN_STATE_COMMITTED (Trx_A) ==>
-    TXN_STATE_PURGED (Trx_A) ==>
-      * TXN_STATE_REUSE  (from Trx_A's point of view)
-      * TXN_STATE_ACTIVE (from Trx_B's point of view)
-*/
-enum txn_state_t {
-  TXN_STATE_ACTIVE,
-  TXN_STATE_COMMITTED,
-  TXN_STATE_PURGED,
-  TXN_STATE_REUSE,
-  TXN_STATE_UNDO_CORRUPTED
-};
-
-struct txn_undo_hdr_t {
   /** commit image in txn undo header */
   commit_mark_t image;
   /** slot address */
@@ -388,55 +498,102 @@ struct txn_undo_hdr_t {
   or TXN_UNDO_LOG_PURGED */
   ulint state;
   /** A flag determining how to explain the txn extension */
-  ulint ext_storage;
+  ulint xes_storage;
   /** flags of the TXN. For example: 0x01 means rollback. */
-  ulint tags_1;
+  ulint tags;
+  /** true if the TXN is two phase purge. */
+  bool is_2pp;
+  /** AC XA PMMT info */
+  proposal_mark_t pmmt;
+  /** XA branch count info */
+  xa_branch_t branch;
+  /** XA master branch info */
+  xa_addr_t maddr;
   /** Return true if the transaction was eventually rolled back. */
   bool is_rollback() const;
   /** Return true if the txn has new_flags. */
-  bool have_tags_1() const;
+  bool tags_allocated() const;
+  bool ac_prepare_allocated() const;
+  bool ac_commit_allocated() const;
 };
 
 struct txn_lookup_t {
-  /** The raw data in txn header */
-  txn_undo_hdr_t txn_undo_hdr;
+ public:
+  /**
+    Unlike normal UNDOs (insert undo / update undo), there are 5 kinds of states
+    of TXN. Among them, Status::ACTIVE, Status::COMMITTED and Status::PURGED
+    are specified by TXN_UNDO_LOG_STATE flag (respectively, TXN_UNDO_LOG_ACTIVE,
+    TXN_UNDO_LOG_COMMITED and TXN_UNDO_LOG_PURGED) in TXN header. And also, that's
+    mean these TXN headers are existing.
+
+    By contrast, Status::REUSE / Status::UNDO_CORRUPTED mean that the TXN
+    headers are non-existing.
+
+    * State::ACTIVE: A txn header is initialized as Status::ACTIVE when the
+    transaction begins.
+
+    * Status::COMMITTED: The state of txn header is set as Status::COMMITTED
+    at the moment that the transaction commits.
+
+    * Status::PURGED: At the moment that the purge sys start purging it. Notes
+    that: Access to the binding normal UNDOs (insert undo / update undo) is not
+    safe from then on.
+
+    * Status::ERASED: At the moment that the erase sys start erasing it. Notes
+    that: Access to the binding normal UNDOs (insert undo / update undo) is not
+    safe for two phase purge tables from then on.
+
+    * Status::REUSE: At the moment that the TXN headers are reused by another
+    transactions. These TXN headers are reinited as Status::ACTIVE, but for
+    those UBAs who also pointed at them, are supposed to be Status::REUSE.
+
+    * Status::UNDO_CORRUPTED: In fact, Status::REUSE also lost their TXN
+    headers, but Status::UNDO_CORRUPTED is a abnormal state for some special
+    cases, for example, page corrupt or TXN file unexpectedly removed.
+
+    So the life cycle of TXN hedaer:
+
+    Status::ACTIVE (Trx_A) ==> Status::COMMITTED (Trx_A) ==>
+      Status::PURGED (Trx_A) ==> { (Status::ERASED) (Trx_A) ==> }
+        * Status::REUSE  (from Trx_A's point of view)
+        * Status::ACTIVE (from Trx_B's point of view)
+  */
+  enum Status : char {
+    ACTIVE,
+    COMMITTED,
+    PURGED,
+    ERASED,
+    REUSE,
+    UNDO_CORRUPTED,
+  };
+
+ public:
+  txn_lookup_t()
+      : txn_slot(),
+        real_image(),
+        real_status(Status::ACTIVE) {}
+  /** The raw data in txn slot. */
+  txn_slot_t txn_slot;
   /**
     If the txn is still existing:
-      * real_state: [TXN_STATE_ACTIVE, TXN_STATE_COMMITTED, TXN_STATE_PURGED]
-      * real_image == txn_undo_hdr.image
+      * real_state: [Status::ACTIVE, Status::COMMITTED, Status::PURGED]
+      * real_image == txn_slot.image
 
     If the txn is non-existing:
-      * real_state: [TXN_STATE_REUSE]
-      * real_image == txn_undo_hdr.prev_image
+      * real_state: [Status::REUSE]
+      * real_image == txn_slot.prev_image
 
     If the txn is unexpectedly lost:
-      * real_state: [TXN_STATE_UNDO_CORRUPTED]
+      * real_state: [Status::UNDO_CORRUPTED]
       * real_image == {SCN_UNDO_CORRUPTED, US_UNDO_CORRUPTED}
   */
   commit_mark_t real_image;
-  txn_state_t real_state;
+  Status real_status;
 };
 
+typedef txn_lookup_t::Status txn_status_t;
+
 namespace lizard {
-
-inline bool undo_ptr_is_active(undo_ptr_t undo_ptr) {
-  return !static_cast<bool>((undo_ptr & UBA_MASK_STATE) >> UBA_POS_STATE);
-}
-
-inline csr_t undo_ptr_get_csr(undo_ptr_t undo_ptr) {
-  return static_cast<csr_t>((undo_ptr & UBA_MASK_CSR) >> UBA_POS_CSR);
-}
-
-inline void undo_ptr_set_commit(undo_ptr_t *undo_ptr, csr_t csr) {
-  *undo_ptr |= ((undo_ptr_t)1 << UBA_POS_STATE);
-
-  undo_ptr_t value = static_cast<undo_ptr_t>(csr);
-  *undo_ptr |= (value << UBA_POS_CSR);
-}
-
-inline undo_ptr_t undo_ptr_get_addr(const undo_ptr_t undo_ptr) {
-  return ((undo_ptr & UBA_MASK_ADDR) >> UBA_POS_ADDR);
-}
 
 /**
   The element of minimum heap for the purge.
@@ -546,11 +703,65 @@ typedef std::priority_queue<
     TxnUndoRsegs>
     purge_heap_t;
 
+/**
+  The element of minimum heap for the erase sys.
+*/
+class UpdateUndoRseg {
+ public:
+  explicit UpdateUndoRseg(scn_t scn, trx_rseg_t *rseg)
+      : m_scn(scn), m_rseg(rseg) {
+    ut_ad(!m_rseg || !m_rseg->is_txn);
+  }
+
+  /** Default constructor */
+  UpdateUndoRseg() : UpdateUndoRseg(0, nullptr) {}
+
+  void set_scn(scn_t scn) { m_scn = scn; }
+
+  scn_t get_scn() const { return m_scn; }
+
+  void set_rseg(trx_rseg_t *rseg) { m_rseg = rseg; }
+
+  trx_rseg_t *get_rseg() const { return m_rseg; }
+
+  /** Compare two UpdateUndoRseg based on scn.
+  @param lhs first element to compare
+  @param rhs second element to compare
+  @return true if elem1 > elem2 else false.*/
+  bool operator()(const UpdateUndoRseg &lhs, const UpdateUndoRseg &rhs) {
+    return (lhs.m_scn > rhs.m_scn);
+  }
+
+ private:
+  scn_t m_scn;
+
+  /** Rollback segments of update undo. */
+  trx_rseg_t *m_rseg;
+};
+
+/**
+  Use priority_queue as the minimum heap structure
+  which is order by scn number */
+typedef std::priority_queue<
+    UpdateUndoRseg, std::vector<UpdateUndoRseg, ut::allocator<UpdateUndoRseg>>,
+    UpdateUndoRseg>
+    erase_heap_t;
+
 } /* namespace lizard */
 
 struct txn_space_rseg_slot_t {
   ulint space_slot;
   ulint rseg_slot;
+};
+
+struct txn_cursor_t {
+  /** trx_id that is used to check if the TXN is valid. */
+  trx_id_t trx_id;
+
+  /** TXN address */
+  slot_addr_t txn_addr;
+
+  txn_cursor_t() : trx_id(0), txn_addr() {}
 };
 
 #endif  // lizard0undo0types_h

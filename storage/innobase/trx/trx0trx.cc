@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -311,7 +311,7 @@ struct TrxFactory {
 
     lock_trx_alloc_locks(trx);
 
-    lizard::alloc_cleanout_cursors(trx);
+    lizard::alloc_commit_cleanout(trx);
   }
 
   /** Release resources held by the transaction object.
@@ -373,7 +373,7 @@ struct TrxFactory {
 
     trx->vision.~Vision();
 
-    lizard::release_cleanout_cursors(trx);
+    lizard::release_commit_cleanout(trx);
   }
 
   /** Enforce any invariants here, this is called before the transaction
@@ -767,6 +767,7 @@ static void trx_resurrect_table_ids(trx_t *trx, const trx_undo_ptr_t *undo_ptr,
   mtr_t mtr;
   page_t *undo_page;
   trx_undo_rec_t *undo_rec;
+  bool is_2pp = false;
 
   ut_ad(undo == undo_ptr->insert_undo || undo == undo_ptr->update_undo);
 
@@ -804,7 +805,7 @@ static void trx_resurrect_table_ids(trx_t *trx, const trx_undo_ptr_t *undo_ptr,
     }
 
     trx_undo_rec_get_pars(undo_rec, &type, &cmpl_info, &updated_extern,
-                          &undo_no, &table_id, type_cmpl);
+                          &undo_no, &table_id, &is_2pp, type_cmpl);
     tables.insert(table_id);
 
     undo_rec = trx_undo_get_prev_rec(undo_rec, undo->hdr_page_no,
@@ -1244,6 +1245,9 @@ static trx_rseg_t *get_next_redo_rseg_from_undo_spaces() {
 
     ut_ad(!lizard::fsp_is_txn_tablespace_by_id(undo_space->id()));
 
+    DBUG_EXECUTE_IF("set_same_non_txn_undo_rseg", spaces_slot = 0;
+                    rseg_slot = 0;);
+
     /* Avoid any rseg that resides in a tablespace that has been made
     inactive either explicitly or by being marked for truncate. We do
     not want to wait here on an x_lock for an rseg in an undo tablespace
@@ -1626,7 +1630,7 @@ static bool trx_write_serialisation_history(
                                                    : nullptr;
 
     /** Lizard: txn undo header */
-    commit_mark_t cmmt = COMMIT_MARK_NULL;
+    commit_mark_t cmmt;
     lizard::TxnUndoRsegs elem;
     bool has_collected = lizard::trx_collect_rsegs_for_purge(
         &elem, redo_rseg_undo_ptr, temp_rseg_undo_ptr, txn_rseg_undo_ptr);
@@ -1724,7 +1728,7 @@ static bool trx_write_serialisation_history(
 
     /** Add the rseg into purge queue */
     if (has_collected) {
-      ut_ad(elem.get_scn() != lizard::SCN_NULL);
+      ut_ad(elem.get_scn() != SCN_NULL);
       lizard::trx_add_rsegs_for_purge(cmmt, &elem);
     }
   }
@@ -2128,7 +2132,7 @@ written */
   } else {
     assert_trx_in_recovery(trx);
 
-    lizard::cleanout_rows_at_commit(trx);
+    lizard::cleanout_after_commit(trx, serialised);
     trx_release_impl_and_expl_locks(trx, serialised);
 
     /* Removed the transaction from the list of active transactions.
@@ -2357,7 +2361,7 @@ void trx_commit_low(trx_t *trx, mtr_t *mtr) {
 
     mtr_commit(mtr);
 
-    lizard::trx_cache_tcn(trx);
+    lizard::trx_cache_tcn(trx, serialised);
 
     DBUG_PRINT("trx_commit", ("commit lsn at " LSN_PF, mtr->commit_lsn()));
 

@@ -42,7 +42,7 @@
 # Disable slave's auto_positioning
 --source include/rpl_connection_slave.inc
 --source include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0;
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0 for channel "test";
 --let $use_gtids= 0
 call mtr.add_suppression("An unexpected event sequence was detected by the IO thread");
 call mtr.add_suppression("GTID_LOG_EVENT .* is not expected in an event stream");
@@ -100,9 +100,9 @@ INSERT INTO t1 VALUES (3);
 
 # Restore the slave
 --source include/stop_slave_io.inc
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 RESET MASTER;
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 1;
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 1 for channel "test";
 --let $use_gtids= 1
 
 # Cleanup the master

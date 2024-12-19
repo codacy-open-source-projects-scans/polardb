@@ -190,7 +190,7 @@ if (!$_rpl_change_topology_helper_skip)
   --replace_regex /[0-9]{4}/####/
     if (!$rpl_multi_source)
     {
-      eval CHANGE REPLICATION SOURCE TO SOURCE_HOST = '127.0.0.1', SOURCE_PORT = $_rpl_change_topology_helper_port, SOURCE_USER = 'root', $_rpl_change_topology_helper_position SOURCE_CONNECT_RETRY = 1 FOR CHANNEL '';
+      eval CHANGE REPLICATION SOURCE TO SOURCE_HOST = '127.0.0.1', SOURCE_PORT = $_rpl_change_topology_helper_port, SOURCE_USER = 'root', $_rpl_change_topology_helper_position SOURCE_CONNECT_RETRY = 1 FOR CHANNEL 'test';
     }
     if ($rpl_multi_source)
     {
@@ -208,7 +208,7 @@ if ($_rpl_change_topology_helper_skip)
       {
         if (!$rpl_multi_source)
         {
-          CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 0 FOR CHANNEL '';
+          CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 0 FOR CHANNEL 'test';
         }
         if ($rpl_multi_source)
         {

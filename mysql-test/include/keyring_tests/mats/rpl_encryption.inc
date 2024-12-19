@@ -382,7 +382,7 @@ RESET SLAVE ALL;
 --source include/assert.inc
 if ($AUTO_POSITION) {
   --disable_query_log
-  CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=1;
+  CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=1 for channel "test";
   --enable_query_log
 }
 if (!$AUTO_POSITION) {

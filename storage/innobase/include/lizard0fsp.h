@@ -123,15 +123,15 @@ class LizardTablespace : public Tablespace {
   void file_found(Datafile &file);
 
   /**
-    Interpret the Zeus tablespace filename, path and so on.
+    Interpret the tablespace filename, path and so on.
   */
   bool interpret_file();
 
-  /** Open or create the zeus space
+  /** Open or create space
   @param[in]        create_new_db
   @param[out]       size of files
   @return           DB_SUCCESS        success */
-  dberr_t open_or_create(bool create_new_db, page_no_t *sum_of_zeus_sizes);
+  dberr_t open_or_create(bool create_new_db, page_no_t *sum_of_sizes);
 
   /** Open file */
   dberr_t open_file(Datafile &file);

@@ -1,3 +1,30 @@
+/*****************************************************************************
+
+Copyright (c) 2023, 2024, Alibaba and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License, version 2.0, as published by the
+Free Software Foundation.
+
+This program is also distributed with certain software (including but not
+limited to OpenSSL) that is licensed under separate terms, as designated in a
+particular file or component or in included license documentation. The authors
+of MySQL hereby grant you an additional permission to link the program and
+your derivative works with the separately licensed software that they have
+included with MySQL.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
+for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
+
+*****************************************************************************/
+
+
 //
 // Created by zzy on 2022/7/27.
 //
@@ -386,13 +413,15 @@ err_t Csession::sql_stmt_execute(const PolarXRPC::Sql::StmtExecute &msg) {
     thd->variables.innodb_current_snapshot_gcn = true;
   if (msg.has_snapshot_seq()) {
     thd->variables.innodb_snapshot_gcn = msg.snapshot_seq();
-    thd->owned_vision_gcn.set(
-        MYSQL_CSR_ASSIGNED, thd->variables.innodb_snapshot_gcn, MYSQL_SCN_NULL);
+    thd->owned_vision_gcn = {csr_t::CSR_ASSIGNED,
+                             thd->variables.innodb_snapshot_gcn, SCN_NULL};
   }
   if (msg.has_commit_seq()) {
     thd->variables.innodb_commit_gcn = msg.commit_seq();
-    thd->owned_commit_gcn.set(thd->variables.innodb_commit_gcn,
-                              MYSQL_CSR_ASSIGNED);
+    thd->owned_commit_gcn.assign_from_var(thd->variables.innodb_commit_gcn);
+  }
+  if (msg.has_query_via_flashback_area() && msg.query_via_flashback_area()) {
+    thd->variables.opt_query_via_flashback_area = true;
   }
 #else
   /// 5.7 specific CTS timestamp
@@ -617,13 +646,15 @@ err_t Csession::sql_plan_execute(const PolarXRPC::ExecPlan::ExecPlan &msg) {
     thd->variables.innodb_current_snapshot_gcn = true;
   if (msg.has_snapshot_seq()) {
     thd->variables.innodb_snapshot_gcn = msg.snapshot_seq();
-    thd->owned_vision_gcn.set(
-        MYSQL_CSR_ASSIGNED, thd->variables.innodb_snapshot_gcn, MYSQL_SCN_NULL);
+    thd->owned_vision_gcn = {csr_t::CSR_ASSIGNED,
+                             thd->variables.innodb_snapshot_gcn, SCN_NULL};
   }
   if (msg.has_commit_seq()) {
     thd->variables.innodb_commit_gcn = msg.commit_seq();
-    thd->owned_commit_gcn.set(thd->variables.innodb_commit_gcn,
-                              MYSQL_CSR_ASSIGNED);
+    thd->owned_commit_gcn.assign_from_var(thd->variables.innodb_commit_gcn);
+  }
+  if (msg.has_query_via_flashback_area() && msg.query_via_flashback_area()) {
+    thd->variables.opt_query_via_flashback_area = true;
   }
 #else
   /// 5.7 specific CTS timestamp

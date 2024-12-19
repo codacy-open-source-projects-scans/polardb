@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -4667,7 +4667,7 @@ void lock_print_info_summary(FILE *file) {
   fprintf(file,
           "Purge done for trx's scn < " TRX_ID_FMT " undo n:o < " TRX_ID_FMT
           " state: ",
-          purge_sys->iter.scn, purge_sys->iter.undo_no);
+          purge_sys->iter.ommt.scn, purge_sys->iter.undo_no);
 
   /* Note: We are reading the state without the latch. One because it
   will violate the latching order and two because we are merely querying

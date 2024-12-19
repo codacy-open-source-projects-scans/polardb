@@ -281,9 +281,7 @@ our @DEFAULT_SUITES = qw(
   parts
   perfschema
   query_rewrite_plugins
-  rpl
   rpl_gtid
-  rpl_nogtid
   secondary_engine
   service_status_var_registration
   service_sys_var_registration
@@ -333,9 +331,8 @@ our $opt_valgrind                  = 0;
 our $opt_valgrind_secondary_engine = 0;
 our $opt_verbose                   = 0;
 our $opt_xcluster                  = 1;
-our $xcluster_id_cnt               = 1;
 our $xcluster_info_prefix;
-our $xcluster_bootstrap            = 0;
+our $opt_flashback_area            = 0;
 # Visual Studio produces executables in different sub-directories
 # based on the configuration used to build them. To make life easier,
 # an environment variable or command-line option may be specified to
@@ -590,6 +587,10 @@ sub main {
         }
       }
     }
+  }
+
+  if ($opt_flashback_area) {
+    $opt_suites .= ",flashback_area";
   }
 
   my $mtr_suites = $opt_suites;
@@ -1666,6 +1667,7 @@ sub command_line_setup {
     'sp-protocol'           => \$opt_sp_protocol,
     'view-protocol'         => \$opt_view_protocol,
     'vs-config=s'           => \$opt_vs_config,
+    'flashback-area'        => \$opt_flashback_area,
 
     # Max number of parallel threads to use
     'parallel=s' => \$opt_parallel,
@@ -1947,7 +1949,6 @@ sub command_line_setup {
   }
 
   if ($opt_xcluster) {
-    collect_option('skip-rpl', 1);
     collect_option('skip-ndb', 1);
 
     # force using binlog-format=row
@@ -2245,6 +2246,10 @@ sub command_line_setup {
     push(@opt_extra_mysqld_opt, "--optimizer_trace=enabled=on,one_line=off");
     # Some queries yield big traces:
     push(@opt_extra_mysqld_opt, "--optimizer-trace-max-mem-size=1000000");
+  }
+
+  if ($opt_flashback_area) {
+    push(@opt_extra_mysqld_opt, "--opt_flashback_area=1");
   }
 
   # Check valgrind arguments
@@ -4172,9 +4177,7 @@ sub initialize_servers {
       remove_stale_vardir();
       setup_vardir();
 
-      if (!$opt_xcluster) {
-        mysql_install_db(default_mysqld(), "$opt_vardir/data/");
-      }
+      mysql_install_db(default_mysqld(), "$opt_vardir/data/");
 
       # Save the value of MYSQLD_BOOTSTRAP_CMD before a test with bootstrap
       # options in the opt file runs, so that its original value is restored
@@ -4254,9 +4257,9 @@ sub mysql_install_db {
   my $install_basedir = $mysqld->value('#mtr_basedir');
   my $install_chsdir  = $mysqld->value('character-sets-dir');
   my $install_datadir = $datadir || $mysqld->value('datadir');
+  my $install_server_id = $mysqld->value('server-id');
 
   mtr_report("Installing system database");
-  $xcluster_bootstrap = 0;
 
   my $args;
   mtr_init_args(\$args);
@@ -4403,7 +4406,7 @@ sub mysql_install_db {
   # Add procedures for checking server is restored after testcase
   mtr_tofile($bootstrap_sql_file, mtr_grab_file("include/mtr_check.sql"));
 
-  if ($xcluster_id_cnt == 2 || $xcluster_id_cnt == 3) {
+  if ($install_server_id == 2 || $install_server_id == 3) {
     mtr_tofile($bootstrap_sql_file, "use mysql;\n");
   }
 
@@ -4438,8 +4441,7 @@ sub mysql_install_db {
   if ( $opt_xcluster ) {
     mtr_add_arg($args, "--cluster-id=1");
     mtr_add_arg($args, "--cluster-start-index=1");
-    mtr_add_arg($args, "--cluster-info=%s@%d", $xcluster_info_prefix, $xcluster_id_cnt);
-    $xcluster_id_cnt++;
+    mtr_add_arg($args, "--cluster-info=%s@%d", $xcluster_info_prefix, $install_server_id);
   }
 
   # Log bootstrap command
@@ -5140,7 +5142,7 @@ sub run_testcase ($) {
       }
       last if (defined $mysqld_oldleader);
       $err_cnt++;
-      if ($err_cnt < 5) {
+      if ($err_cnt < $opt_start_timeout) {
         mtr_report("Fail to find old leader, try again...");
       } else {
         mtr_warning("Fail to find old leader after $err_cnt times trying!!!");
@@ -5165,19 +5167,6 @@ sub run_testcase ($) {
       run_query($mysqld_oldleader, $query);
     }
     mtr_verbose("Finish change leader query.");
-    #}
-
-    # only run once
-    if ($xcluster_bootstrap == 0) {
-      #unlink db.opt
-      unlink("$opt_vardir/mysqld.1/data/test/db.opt");
-      my $args_leader;
-      mtr_init_args(\$args_leader);
-      mtr_verbose("Get the leader: " . $mysqld_leader->name());
-      mtr_add_arg($args_leader, "--defaults-file=%s", $path_config_file);
-      mtr_add_arg($args_leader, "--defaults-group-suffix=%s", $mysqld_leader->after('mysqld'));
-      $xcluster_bootstrap= 1;
-    }
   }
 
   # If '--start' or '--start-dirty' given, stop here to let user manually
@@ -6204,7 +6193,7 @@ sub check_expected_crash_and_restart($$) {
               }
               last if (defined $mysqld_oldleader);
               $err_cnt++;
-              if ($err_cnt < 5) {
+              if ($err_cnt < $opt_start_timeout) {
                 mtr_report("Fail to find old leader, try again...");
               } else {
                 mtr_warning("Fail to find old leader after $err_cnt times trying!!!");
@@ -7151,7 +7140,6 @@ sub start_servers($) {
 
   my $server_id = 0;
   # Start mysqlds
-  $xcluster_id_cnt= 1;
   #generate xcluster_info_prefix
   $xcluster_info_prefix= '';
   my $xcluster_info_arr= ();
@@ -7161,7 +7149,6 @@ sub start_servers($) {
   }
   mtr_verbose('xcluster_info_prefix: ' . join(';', @$xcluster_info_arr));
   $xcluster_info_prefix= join(';', @$xcluster_info_arr);
-  $ENV{'XCLUSTER_INFO_1'} = $xcluster_info_prefix.'@1';
 
   foreach my $mysqld (mysqlds()) {
     # Group Replication requires a local port to be open on each server
@@ -7249,7 +7236,6 @@ sub start_servers($) {
     # in the opt file.
     if ($mysqld->{need_reinitialization}) {
       clean_dir($datadir);
-      $xcluster_id_cnt--;
       mysql_install_db($mysqld, $datadir, $bootstrap_opts);
       $tinfo->{'reinitialized'} = 1;
       # Remove the bootstrap.sql file so that a duplicate set of
@@ -7499,6 +7485,8 @@ sub start_mysqltest ($) {
   if ($opt_hypergraph) {
     mtr_add_arg($args, "--hypergraph");
   }
+
+  $ENV{'FLASHBACK_AREA'} = 1 if ($opt_flashback_area);
 
   foreach my $arg (@opt_extra_mysqltest_opt) {
     mtr_add_arg($args, $arg);

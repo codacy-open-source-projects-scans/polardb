@@ -1,8 +1,9 @@
 pipeline {
   agent {
     docker {
-      image 'reg.docker.alibaba-inc.com/polardb_x/mysql_dev:1.0-SNAPSHOT'
+      image 'reg.docker.alibaba-inc.com/polardb_x/mysql_dev:1.1-SNAPSHOT'
       args '-v /home/xiedao.yy/Software:/opt/Software \
+            -v /home/hyy407018/.ssh:/root/.ssh \
             --cap-add=SYS_PTRACE \
             --security-opt seccomp=unconfined \
             --privileged'
@@ -40,19 +41,17 @@ pipeline {
         sh 'cicd/mtr.sh'
       }
     }
-
-    stage('TestCoverage') {
-      steps {
-        sh 'cicd/test_coverage.sh'
-      }
-    }
   }
 
   post {
-    cleanup {
+    always {
       script {
         if (env.TEST_TYPE == 'DAILY_REGRESSION') {
           PostJunitResult()
+        }
+        if (env.TEST_TYPE == 'MERGE_TEST_COVERAGE') {
+          sh 'cicd/test_coverage.sh'
+          archiveArtifacts artifacts: '**/report/**/*', allowEmptyArchive: true
         }
       }
       archiveArtifacts artifacts: "${RELATIVE_CICD_BUILD_ROOT}/result/**", allowEmptyArchive: true

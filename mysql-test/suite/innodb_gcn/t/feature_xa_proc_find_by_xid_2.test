@@ -1,0 +1,99 @@
+source include/have_debug.inc;
+source include/no_ps_protocol.inc;
+
+set global innodb_undo_retention = 900;
+
+create table tt (id int);
+insert into tt values (1);
+
+connect (con_a, localhost, root, , );
+connect (con_b, localhost, root, , );
+connection con_a;
+
+--echo ######################################
+--echo # Case 1: NOT_SUPPORT becase of old txn format
+--echo ######################################
+set session debug = "+d, sim_old_txn_undo_hdr";
+xa start 'ac_fbx2_b1';
+update tt set id = id + 1;
+xa end 'ac_fbx2_b1';
+xa prepare 'ac_fbx2_b1';
+xa commit 'ac_fbx2_b1';
+
+set session debug = "-d, sim_old_txn_undo_hdr";
+--replace_column 2 #
+call dbms_xa.find_by_xid('ac_fbx2_b1', '', 1);
+
+--echo ######################################
+--echo # Case 2: Attached
+--echo ######################################
+set xa_detach_on_prepare = 0;
+xa start 'ac_fbx2_b2';
+update tt set id = id + 1;
+xa end 'ac_fbx2_b2';
+xa prepare 'ac_fbx2_b2';
+
+connection con_b;
+--disable_ps_protocol
+call dbms_xa.find_by_xid('ac_fbx2_b2', '', 1);
+--enable_ps_protocol
+set xa_detach_on_prepare = default;
+
+--echo ######################################
+--echo # Case 3: Detached
+--echo ######################################
+connection con_a;
+disconnect con_a;
+--source include/wait_until_disconnected.inc
+
+connection con_b;
+--let $my_xid = 'ac_fbx2_b2', '', 1
+--let $expect_status = DETACHED_PREPARE
+--source suite/innodb_gcn/include/xa_info_verify.inc
+disconnect con_b;
+
+--echo ######################################
+--echo # Case 4: Commit
+--echo ######################################
+connection default;
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+--let $commit_gcn = `select @base_seq + 100`
+--disable_query_log
+--eval set innodb_commit_seq = $commit_gcn
+--enable_query_log
+xa commit 'ac_fbx2_b2';
+
+--let $expect_gcn= $commit_gcn
+--let $expect_status= COMMIT
+--let $my_xid= 'ac_fbx2_b2','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ######################################
+--echo # Case 5: NOTSTART_OR_FORGET
+--echo ######################################
+--disable_ps_protocol
+call dbms_xa.find_by_xid('ac_fbx2_b5', '', 1);
+--enable_ps_protocol
+
+--echo ######################################
+--echo # Case 6: 128 Bytes XID
+--echo ######################################
+--let $commit_gcn = `select @base_seq + 600`
+xa start 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+update tt set id = id + 1;
+xa end 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+xa prepare 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+--disable_query_log
+--eval set innodb_commit_seq = $commit_gcn
+--enable_query_log
+xa commit 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+--let $expect_gcn= $commit_gcn
+--let $expect_status= COMMIT
+--let $my_xid= 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo # cleanup
+set global innodb_undo_retention = default;
+drop table tt;
+

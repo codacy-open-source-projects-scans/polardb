@@ -8,12 +8,12 @@ Note	####	Storing MySQL user name or password information in the master info rep
 # 1. Configure the channel with GTID_ONLY = 1
 #    Add some data to populate repository tables
 [connection slave]
-CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1, GTID_ONLY = 1;
-include/start_slave.inc
+CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1, GTID_ONLY = 1 for channel "test";
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 CREATE TABLE t1 (a INT PRIMARY KEY);
 INSERT INTO t1 VALUES(1);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 
 ############################################################
 # 2. Restart the replica.
@@ -27,21 +27,21 @@ include/assert.inc [No info exists in the repository table]
 SET @@GLOBAL.replica_parallel_workers = 0;
 Warnings:
 Warning	1287	'0' is deprecated and will be removed in a future release. Please use 1 instead
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 include/assert.inc [There is one worker runnning with id 1]
 
 ############################################################
 # 4. Disable GTID_ONLY
 #    Check the channel has no workers.
-include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO GTID_ONLY = 0;
-include/start_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
+CHANGE REPLICATION SOURCE TO GTID_ONLY = 0 for channel "test";
+include/start_slave.inc [FOR CHANNEL 'test']
 include/assert.inc [There is no worker with an ID]
 
 ############################################################
 # 5. Cleanup
 [connection master]
 DROP TABLE t1;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 SET @@GLOBAL.replica_parallel_workers = NUMBER_OF_WORKERS;
 include/rpl_end.inc

@@ -1,5 +1,5 @@
 /*****************************************************************************
-Copyright (c) 2020, 2022, Oracle and/or its affiliates.
+Copyright (c) 2020, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -263,10 +263,10 @@ bool Instant_ddl_impl<Table>::commit_instant_ddl() {
       ut_ad(dd_table_has_instant_cols(m_new_dd_tab->table()));
 
       for (auto dd_index : *m_new_dd_tab->indexes()) {
-        dd::Properties &p = dd_index->se_private_data();
-        p.set(dd_index_key_strings[DD_INDEX_TRX_ID], m_trx->id);
-        p.set(dd_index_key_strings[DD_INDEX_UBA], m_trx->txn_desc.undo_ptr);
-        p.set(dd_index_key_strings[DD_INDEX_SCN], m_trx->txn_desc.cmmt.scn);
+        dd_index_set_se_private_for_system_cols(
+            dd_index, m_trx->id,
+            txn_info_t{m_trx->txn_desc.cmmt.scn, m_trx->txn_desc.undo_ptr,
+                       m_trx->txn_desc.cmmt.gcn});
       }
 
       row_mysql_lock_data_dictionary(m_trx, UT_LOCATION_HERE);
@@ -286,6 +286,25 @@ bool Instant_ddl_impl<Table>::commit_instant_ddl() {
       dd_set_autoinc(m_new_dd_tab->table().se_private_data(), *m_autoinc);
     }
   }
+#ifdef UNIV_DEBUG
+  /* Lizard-4.0: Validate IFT option of dd_tab stays stable, no matter what
+   * kind of instant ddl. */
+  for (auto dd_index : *m_new_dd_tab->indexes()) {
+    /* Don't assume the index orders are the same, even on
+    CREATE TABLE. This could be called from TRUNCATE path,
+    which would do some adjustment on FULLTEXT index, thus
+    the out-of-sync order */
+    const dict_index_t *index = dd_find_index(m_dict_table, dd_index);
+    ut_ad(index != nullptr);
+    auto old_dd_index = m_old_dd_tab->indexes().begin();
+    for (; (*old_dd_index)->name() != dd_index->name(); ++old_dd_index)
+      ;
+    const dd::Properties &old_options = (*old_dd_index)->options();
+    const dd::Properties &new_options = dd_index->options();
+    ut_ad(!lizard::validate_dd_index_format_match(old_options, index));
+    ut_ad(!lizard::validate_dd_index_format_match(new_options, index));
+  }
+#endif
   return false;
 }
 

@@ -24,7 +24,7 @@ CREATE TABLE t1(i INT);
 #         and execute two empty transactions so that the next two events
 #         from master are skipped on slave.
 #
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 SET GTID_NEXT='MASTER_UUID:2';
 BEGIN;
 COMMIT;
@@ -39,7 +39,7 @@ SET GTID_NEXT=AUTOMATIC;
 [connection master]
 INSERT INTO t1 VALUES (1);
 INSERT INTO t1 VALUES (2);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 #
 # Step 6) Cleanup
 #

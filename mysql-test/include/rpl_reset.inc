@@ -47,10 +47,11 @@
 #
 #     --source include/wait_for_slave_sql_error.inc
 #     --source include/stop_slave_io.inc
-#     RESET REPLICA;
+#     RESET REPLICA for channel 'test';
 
 --let $include_filename= rpl_reset.inc
 --source include/begin_include_file.inc
+--echo rpl_channel_name=$rpl_channel_name
 
 if (!$rpl_debug)
 {

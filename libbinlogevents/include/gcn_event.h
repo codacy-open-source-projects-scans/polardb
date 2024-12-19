@@ -7,14 +7,14 @@ the terms of the GNU General Public License, version 2.0, as published by the
 Free Software Foundation.
 
 This program is also distributed with certain software (including but not
-lzeusited to OpenSSL) that is licensed under separate terms, as designated in a
+limited to OpenSSL) that is licensed under separate terms, as designated in a
 particular file or component or in included license documentation. The authors
 of MySQL hereby grant you an additional permission to link the program and
 your derivative works with the separately licensed software that they have
 included with MySQL.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the zeusplied warranty of MERCHANTABILITY or FITNESS
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
 for more details.
 
@@ -34,7 +34,9 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #define GCN_EVENT_H
 
 #include "control_events.h"
-#include "sql/lizard/lizard_rpl_gcn.h"  // MyGCN...
+#include "sql/lizard/lizard_service.h"  // MyGCN...
+
+class THD;
 
 namespace binary_log {
 /**
@@ -62,14 +64,20 @@ namespace binary_log {
     <td>commit_gcn</td>
     <td>8 byte integer</td>
     <td>Store the Global Query Sequence</td>
+    <td>n_branch</td>
+    <td>2 byte integer</td>
+    <td>Store the Global Query Sequence</td>
+    <td>n_local_branch</td>
+    <td>2 byte integer</td>
+    <td>Store the Global Query Sequence</td>
   </tr>
   </table>
 
 */
 class Gcn_event : public Binary_log_event {
  public:
-  /** Whether there is committed gcn */
-  static const unsigned char FLAG_HAVE_COMMITTED_GCN = 0x01;
+  /** Whether there is gcn */
+  static const unsigned char FLAG_HAVE_GCN = 0x01;
   /** Whether there is snapshot seq passed external */
   static const unsigned char FLAG_HAVE_SNAPSHOT_SEQ = 0x02;
   /** Whether there is committed seq passed external */
@@ -78,24 +86,36 @@ class Gcn_event : public Binary_log_event {
   If the source of the commit_gcn is automatic, the flag will not be set.
   This flag is only meaningful when FLAG_HAVE_COMMITTED_GCN was set. */
   static const unsigned char FLAG_GCN_ASSIGNED = 0x08;
+  /** If it's a proposal GCN at prepare for async commit, the flag will be set.
+  Otherwise it will not be set. */
+  static const unsigned char FLAG_GCN_PROPOSAL = 0x10;
+  /** Whether there is branch count info. */
+  static const unsigned char FLAG_HAVE_BRANCH_COUNT = 0x20;
 
-  static const int FLAGS_LENGTH = 1;
-  static const int COMMITTED_GCN_LENGTH = 8;
+  static const int ENCODED_FLAG_LENGTH = 1;
+  static const int GCN_LENGTH = 8;
+  static const int BRANCH_NUMBER_LENGTH = 2;
 
  public:
   uint8_t flags;
-  uint64_t commit_gcn;
+  uint64_t gcn;
+  xa_branch_t branch;
 
  public:
   // Total length of post header
-  static const int POST_HEADER_LENGTH = FLAGS_LENGTH + COMMITTED_GCN_LENGTH;
+  static const int POST_HEADER_LENGTH = ENCODED_FLAG_LENGTH;
+
+  // Total length of max data body length.
+  static const int MAX_DATA_BODY_LENGTH =
+      GCN_LENGTH + BRANCH_NUMBER_LENGTH + BRANCH_NUMBER_LENGTH;
+
   /**
      Ctor of Gcn_event
 
      The layout of the buffer is as follows
      <pre>
      +----------+---+---+-------+--------------+---------+----------+
-     |flag|commit_gcn|
+     |flag|commit_gcn|n_branch|n_local_branch|
      +----------+---+---+-------+------------------------+----------+
      </pre>
 
@@ -107,7 +127,10 @@ class Gcn_event : public Binary_log_event {
   /**
     Constructor.
   */
-  explicit Gcn_event();
+  explicit Gcn_event(const MyGCN *owned_commit_gcn,
+                     const uint64_t innodb_commit_gcn,
+                     const uint64_t innodb_snapshot_gcn,
+                     const xa_branch_t *owned_xa_branch);
 
 #ifndef HAVE_MYSYS
   // TODO(WL#7684): Implement the method print_event_info and print_long_info
@@ -116,19 +139,15 @@ class Gcn_event : public Binary_log_event {
   void print_long_info(std::ostream &) override {}
 #endif
 
-  bool have_commit_gcn() const { return flags & FLAG_HAVE_COMMITTED_GCN; }
-  bool is_assigned_gcn() const { return flags & FLAG_GCN_ASSIGNED; }
-
-  MyGCN get_commit_gcn() const {
-    MyGCN my_gcn;
-
-    if (have_commit_gcn()) {
-      my_gcn.set(commit_gcn,
-                 is_assigned_gcn() ? MYSQL_CSR_ASSIGNED : MYSQL_CSR_AUTOMATIC);
-    }
-
-    return my_gcn;
+  bool have_gcn() const { return flags & FLAG_HAVE_GCN; }
+  csr_t csr() const {
+    return flags & FLAG_GCN_ASSIGNED ? csr_t::CSR_ASSIGNED
+                                     : csr_t::CSR_AUTOMATIC;
   }
+  bool is_pmmt_gcn() const { return flags & FLAG_GCN_PROPOSAL; }
+  bool is_cmmt_gcn() const { return !is_pmmt_gcn(); }
+
+  bool have_branch_count() const { return flags & FLAG_HAVE_BRANCH_COUNT; }
 };
 
 }  // end namespace binary_log

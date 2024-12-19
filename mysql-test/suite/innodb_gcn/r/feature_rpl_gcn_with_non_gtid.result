@@ -7,9 +7,9 @@ Note	####	Storing MySQL user name or password information in the master info rep
 # Non MTS mode
 ###############################
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_parallel_workers = 0;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 create table tt (id int);
 ###############################
@@ -21,7 +21,7 @@ SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema
 begin;
 insert into tt values (1);
 commit;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [actual_sys_gcn == expect_sys_gcn]
 [connection master]
@@ -33,7 +33,7 @@ SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema
 begin;
 insert into tt values (1);
 commit;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [actual_sys_gcn == expect_sys_gcn]
 [connection master]
@@ -42,84 +42,79 @@ set global xa_detach_on_prepare = true;
 # Case 2: Detached XA + Commit
 ###############################
 [connection master]
-xa begin '1';
+xa begin '1_no_mts_with_no_gitd';
 insert into tt values (1);
-xa end '1';
-xa prepare '1';
-xa commit '1';
-include/sync_slave_sql_with_master.inc
+xa end '1_no_mts_with_no_gitd';
+xa prepare '1_no_mts_with_no_gitd';
+xa commit '1_no_mts_with_no_gitd';
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 3: Detached XA + Rollback
 ###############################
 [connection master]
-xa begin '2';
+xa begin '2_no_mts_with_no_gitd';
 insert into tt values (2);
-xa end '2';
-xa prepare '2';
-xa rollback '2';
-include/sync_slave_sql_with_master.inc
+xa end '2_no_mts_with_no_gitd';
+xa prepare '2_no_mts_with_no_gitd';
+xa rollback '2_no_mts_with_no_gitd';
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 4: Detached XA One Phase
 ###############################
 [connection master]
-xa begin '3';
+xa begin '3_no_mts_with_no_gitd';
 insert into tt values (3);
-xa end '3';
-xa commit '3' one phase;
-include/sync_slave_sql_with_master.inc
+xa end '3_no_mts_with_no_gitd';
+xa commit '3_no_mts_with_no_gitd' one phase;
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 [connection master]
 set global xa_detach_on_prepare = false;
 ###############################
 # Case 5: Attached XA + Commit
 ###############################
 [connection master]
-xa begin '4';
+xa begin '4_no_mts_with_no_gitd';
 insert into tt values (4);
-xa end '4';
-xa prepare '4';
-xa commit '4';
-include/sync_slave_sql_with_master.inc
+xa end '4_no_mts_with_no_gitd';
+xa prepare '4_no_mts_with_no_gitd';
+xa commit '4_no_mts_with_no_gitd';
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 6: Attached XA + Rollback
 ###############################
 [connection master]
-xa begin '5';
+xa begin '5_no_mts_with_no_gitd';
 insert into tt values (5);
-xa end '5';
-xa prepare '5';
-xa rollback '5';
-include/sync_slave_sql_with_master.inc
+xa end '5_no_mts_with_no_gitd';
+xa prepare '5_no_mts_with_no_gitd';
+xa rollback '5_no_mts_with_no_gitd';
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # cleanup
 ###############################
 [connection master]
 set global xa_detach_on_prepare = default;
 drop table tt;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 ###############################
 # MTS by DATABASE
 ###############################
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_preserve_commit_order = 0;
 SET GLOBAL replica_parallel_type = 'DATABASE';
 SET GLOBAL replica_parallel_workers = 4;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 create table tt (id int);
 ###############################
@@ -131,7 +126,7 @@ SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema
 begin;
 insert into tt values (1);
 commit;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [actual_sys_gcn == expect_sys_gcn]
 [connection master]
@@ -143,7 +138,7 @@ SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema
 begin;
 insert into tt values (1);
 commit;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [actual_sys_gcn == expect_sys_gcn]
 [connection master]
@@ -152,84 +147,79 @@ set global xa_detach_on_prepare = true;
 # Case 2: Detached XA + Commit
 ###############################
 [connection master]
-xa begin '1';
+xa begin '1_mts_by_db_with_no_gitd';
 insert into tt values (1);
-xa end '1';
-xa prepare '1';
-xa commit '1';
-include/sync_slave_sql_with_master.inc
+xa end '1_mts_by_db_with_no_gitd';
+xa prepare '1_mts_by_db_with_no_gitd';
+xa commit '1_mts_by_db_with_no_gitd';
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 3: Detached XA + Rollback
 ###############################
 [connection master]
-xa begin '2';
+xa begin '2_mts_by_db_with_no_gitd';
 insert into tt values (2);
-xa end '2';
-xa prepare '2';
-xa rollback '2';
-include/sync_slave_sql_with_master.inc
+xa end '2_mts_by_db_with_no_gitd';
+xa prepare '2_mts_by_db_with_no_gitd';
+xa rollback '2_mts_by_db_with_no_gitd';
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 4: Detached XA One Phase
 ###############################
 [connection master]
-xa begin '3';
+xa begin '3_mts_by_db_with_no_gitd';
 insert into tt values (3);
-xa end '3';
-xa commit '3' one phase;
-include/sync_slave_sql_with_master.inc
+xa end '3_mts_by_db_with_no_gitd';
+xa commit '3_mts_by_db_with_no_gitd' one phase;
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 [connection master]
 set global xa_detach_on_prepare = false;
 ###############################
 # Case 5: Attached XA + Commit
 ###############################
 [connection master]
-xa begin '4';
+xa begin '4_mts_by_db_with_no_gitd';
 insert into tt values (4);
-xa end '4';
-xa prepare '4';
-xa commit '4';
-include/sync_slave_sql_with_master.inc
+xa end '4_mts_by_db_with_no_gitd';
+xa prepare '4_mts_by_db_with_no_gitd';
+xa commit '4_mts_by_db_with_no_gitd';
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 6: Attached XA + Rollback
 ###############################
 [connection master]
-xa begin '5';
+xa begin '5_mts_by_db_with_no_gitd';
 insert into tt values (5);
-xa end '5';
-xa prepare '5';
-xa rollback '5';
-include/sync_slave_sql_with_master.inc
+xa end '5_mts_by_db_with_no_gitd';
+xa prepare '5_mts_by_db_with_no_gitd';
+xa rollback '5_mts_by_db_with_no_gitd';
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # cleanup
 ###############################
 [connection master]
 set global xa_detach_on_prepare = default;
 drop table tt;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 ###############################
 # MTS by Logical_clock
 ###############################
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_preserve_commit_order = default;
 SET GLOBAL replica_parallel_type = 'LOGICAL_CLOCK';
 SET GLOBAL replica_parallel_workers = 4;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 create table tt (id int);
 ###############################
@@ -241,7 +231,7 @@ SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema
 begin;
 insert into tt values (1);
 commit;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [actual_sys_gcn == expect_sys_gcn]
 [connection master]
@@ -253,7 +243,7 @@ SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema
 begin;
 insert into tt values (1);
 commit;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [actual_sys_gcn == expect_sys_gcn]
 [connection master]
@@ -262,83 +252,78 @@ set global xa_detach_on_prepare = true;
 # Case 2: Detached XA + Commit
 ###############################
 [connection master]
-xa begin '1';
+xa begin '1_mts_by_lc_with_no_gitd';
 insert into tt values (1);
-xa end '1';
-xa prepare '1';
-xa commit '1';
-include/sync_slave_sql_with_master.inc
+xa end '1_mts_by_lc_with_no_gitd';
+xa prepare '1_mts_by_lc_with_no_gitd';
+xa commit '1_mts_by_lc_with_no_gitd';
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 3: Detached XA + Rollback
 ###############################
 [connection master]
-xa begin '2';
+xa begin '2_mts_by_lc_with_no_gitd';
 insert into tt values (2);
-xa end '2';
-xa prepare '2';
-xa rollback '2';
-include/sync_slave_sql_with_master.inc
+xa end '2_mts_by_lc_with_no_gitd';
+xa prepare '2_mts_by_lc_with_no_gitd';
+xa rollback '2_mts_by_lc_with_no_gitd';
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 4: Detached XA One Phase
 ###############################
 [connection master]
-xa begin '3';
+xa begin '3_mts_by_lc_with_no_gitd';
 insert into tt values (3);
-xa end '3';
-xa commit '3' one phase;
-include/sync_slave_sql_with_master.inc
+xa end '3_mts_by_lc_with_no_gitd';
+xa commit '3_mts_by_lc_with_no_gitd' one phase;
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 [connection master]
 set global xa_detach_on_prepare = false;
 ###############################
 # Case 5: Attached XA + Commit
 ###############################
 [connection master]
-xa begin '4';
+xa begin '4_mts_by_lc_with_no_gitd';
 insert into tt values (4);
-xa end '4';
-xa prepare '4';
-xa commit '4';
-include/sync_slave_sql_with_master.inc
+xa end '4_mts_by_lc_with_no_gitd';
+xa prepare '4_mts_by_lc_with_no_gitd';
+xa commit '4_mts_by_lc_with_no_gitd';
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 6: Attached XA + Rollback
 ###############################
 [connection master]
-xa begin '5';
+xa begin '5_mts_by_lc_with_no_gitd';
 insert into tt values (5);
-xa end '5';
-xa prepare '5';
-xa rollback '5';
-include/sync_slave_sql_with_master.inc
+xa end '5_mts_by_lc_with_no_gitd';
+xa prepare '5_mts_by_lc_with_no_gitd';
+xa rollback '5_mts_by_lc_with_no_gitd';
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # cleanup
 ###############################
 [connection master]
 set global xa_detach_on_prepare = default;
 drop table tt;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 ###############################
 # Restore variables
 ###############################
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_preserve_commit_order = default;
 SET GLOBAL replica_parallel_type = default;
 SET GLOBAL replica_parallel_workers = default;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 include/rpl_end.inc

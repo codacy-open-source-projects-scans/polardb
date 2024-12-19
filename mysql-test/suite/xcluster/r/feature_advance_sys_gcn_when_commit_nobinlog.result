@@ -1,0 +1,184 @@
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+set sql_log_bin = 0;
+set sql_log_bin = 0;
+create table t1 (id int);
+############################
+# Case: regular transaction, commit
+############################
+set innodb_commit_seq = expect_gcn
+insert into t1 values (1);
+include/assert.inc [expect_gcn == actual_gcn]
+############################
+# Case: regular transaction, rollback
+############################
+begin;
+set innodb_commit_seq = expect_gcn
+insert into t1 values (1);
+rollback;
+include/assert.inc [expect_gcn == actual_gcn]
+############################
+# Case: xa transaction, prepare, detach=on
+############################
+set xa_detach_on_prepare = on;
+xa start 'asgc_nobinlog_b1';
+set innodb_commit_seq = expect_gcn
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b1';
+xa prepare 'asgc_nobinlog_b1';
+############################
+# Case: xa transaction, commit, detach=on
+############################
+set innodb_commit_seq = expect_gcn
+xa commit 'asgc_nobinlog_b1';
+include/assert.inc [expect_gcn == actual_gcn]
+############################
+# Case: xa transaction, prepare, detach=off
+############################
+set xa_detach_on_prepare = off;
+xa start 'asgc_nobinlog_b2';
+set innodb_commit_seq = expect_gcn
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b2';
+xa prepare 'asgc_nobinlog_b2';
+############################
+# Case: xa transaction, commit, detach=on
+############################
+set innodb_commit_seq = expect_gcn
+xa commit 'asgc_nobinlog_b2';
+include/assert.inc [expect_gcn == actual_gcn]
+############################
+# Case: xa transaction, commit one phase
+############################
+set xa_detach_on_prepare = off;
+xa start 'asgc_nobinlog_b3';
+set innodb_commit_seq = expect_gcn
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b3';
+xa commit 'asgc_nobinlog_b3' one phase;
+include/assert.inc [expect_gcn == actual_gcn]
+set xa_detach_on_prepare = default;
+############################
+# Case: xa transaction, ac_prepare, detach=off
+############################
+set xa_detach_on_prepare = off;
+xa start 'asgc_nobinlog_b4';
+set innodb_commit_seq = expect_gcn
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b4';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+connection conn1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection conn1;
+connection conn1;
+############################
+# Case: xa transaction, ac_commit, detach=off
+############################
+connection default;
+set innodb_commit_seq = expect_gcn
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection default;
+connection default;
+include/assert.inc [expect_gcn == actual_gcn]
+connection default;
+connection default;
+include/assert.inc [expect_csr == actual_csr]
+connection default;
+connection default;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection default;
+connection default;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection default;
+connection default;
+connection conn1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection conn1;
+connection conn1;
+connection default;
+set xa_detach_on_prepare = default;
+############################
+# Case: xa transaction, ac_prepare, detach=on
+############################
+connection default;
+set xa_detach_on_prepare = on;
+xa start 'asgc_nobinlog_b5';
+set innodb_commit_seq = expect_gcn
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b5';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+connection conn1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection conn1;
+connection conn1;
+############################
+# Case: xa transaction, ac_commit, detach=on
+############################
+connection default;
+set innodb_commit_seq = expect_gcn
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection default;
+connection default;
+include/assert.inc [expect_gcn == actual_gcn]
+connection default;
+connection default;
+include/assert.inc [expect_csr == actual_csr]
+connection default;
+connection default;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection default;
+connection default;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection default;
+connection default;
+connection conn1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection conn1;
+connection conn1;
+############################
+# Case: xa transaction, rollback, detach=on
+############################
+connection default;
+set xa_detach_on_prepare = on;
+xa start 'asgc_nobinlog_b6';
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b6';
+xa prepare 'asgc_nobinlog_b6';
+set innodb_commit_seq = expect_gcn
+xa rollback 'asgc_nobinlog_b6';
+connection conn1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection conn1;
+connection conn1;
+############################
+# Case: xa transaction, rollback, detach=off
+############################
+connection default;
+set xa_detach_on_prepare = off;
+xa start 'asgc_nobinlog_b7';
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b7';
+xa prepare 'asgc_nobinlog_b7';
+set innodb_commit_seq = expect_gcn
+xa rollback 'asgc_nobinlog_b7';
+connection conn1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection conn1;
+connection conn1;
+connection default;
+set xa_detach_on_prepare = default;
+############################
+# Cleanup
+############################
+disconnect conn1;
+connection default;
+set xa_detach_on_prepare = default;
+set sql_log_bin = on;
+drop table t1;

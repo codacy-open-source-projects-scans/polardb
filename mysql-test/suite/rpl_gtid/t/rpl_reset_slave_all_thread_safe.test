@@ -24,7 +24,7 @@
 # Just wait immediately after entering the function. RESET SLAVE ALL
 # should be blocked by it.
 SET debug_sync = "begin_source_pos_wait SIGNAL wait_func_begin WAIT_FOR wait_func_continue";
---send SELECT source_pos_wait("master-bin.000001", 10000);
+--send SELECT source_pos_wait("master-bin.000001", 10000, 0, "test");
 
 --source extra/rpl_tests/rpl_reset_slave_all_thread_safe.inc
 
@@ -37,7 +37,7 @@ SET debug_sync = "begin_source_pos_wait SIGNAL wait_func_begin WAIT_FOR wait_fun
 # Just wait immediately after entering the function. RESET SLAVE ALL
 # should be blocked by it.
 SET debug_sync = "begin_wait_for_gtid_set SIGNAL wait_func_begin WAIT_FOR wait_func_continue";
---send SELECT wait_until_sql_thread_after_gtids(CONCAT(@@GLOBAL.server_uuid, ":100"))
+--send SELECT wait_until_sql_thread_after_gtids(CONCAT(@@GLOBAL.server_uuid, ":100"), 0, 'test')
 
 --source extra/rpl_tests/rpl_reset_slave_all_thread_safe.inc
 

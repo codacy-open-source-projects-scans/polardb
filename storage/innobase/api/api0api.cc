@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2008, 2022, Oracle and/or its affiliates.
+Copyright (c) 2008, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -707,6 +707,7 @@ static ib_err_t ib_create_cursor(ib_crsr_t *ib_crsr,  /*!< out: InnoDB cursor */
   mem_heap_t *heap;
   ib_cursor_t *cursor;
   ib_err_t err = DB_SUCCESS;
+  const lizard::Snapshot_vision *snapshot_vision = nullptr;
 
   // passing non-null might mean a memleak of old cursor
   ut_ad(*ib_crsr == nullptr);
@@ -746,7 +747,9 @@ static ib_err_t ib_create_cursor(ib_crsr_t *ib_crsr,  /*!< out: InnoDB cursor */
     if (prebuilt->trx != nullptr) {
       ++prebuilt->trx->n_mysql_tables_in_use;
 
-      prebuilt->index_usable = prebuilt->index->is_usable(prebuilt->trx);
+      snapshot_vision = lizard::row_prebuilt_get_snapshot_vision(prebuilt);
+      prebuilt->index_usable =
+          prebuilt->index->is_usable(prebuilt->trx, snapshot_vision);
 
       /* Assign a read view if the transaction does
       not have it yet */

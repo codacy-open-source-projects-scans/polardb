@@ -77,9 +77,9 @@ INSERT INTO t1 VALUES (2);
 --echo #    MASTER TO MASTER_AUTO_POSITION=1.
 --echo #
 --source include/rpl_connection_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION = 1;
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION = 1 for channel "test";
 
-START SLAVE;
+START SLAVE for channel 'test';
 
 --let $slave_io_errno= 13114 # ER_MASTER_FATAL_ERROR_READING_BINLOG
 --source include/wait_for_slave_io_error.inc
@@ -109,7 +109,7 @@ START SLAVE;
 --echo #    MASTER TO MASTER_LOG_POS.
 --echo #
 --replace_result $master_file MASTER_FILE $master_pos MASTER_POS
---eval CHANGE REPLICATION SOURCE TO SOURCE_LOG_FILE = '$master_file', SOURCE_LOG_POS = $master_pos, SOURCE_AUTO_POSITION = 0
+--eval CHANGE REPLICATION SOURCE TO SOURCE_LOG_FILE = '$master_file', SOURCE_LOG_POS = $master_pos, SOURCE_AUTO_POSITION = 0 for channel "test";
 
 --source include/start_slave.inc
 --sync_with_master
@@ -134,7 +134,7 @@ CALL mtr.add_suppression("Got fatal error 1236 from master.*Replicate the missin
 --echo #
 --disable_warnings
 RESET MASTER;
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 --source include/rpl_connection_master.inc
 RESET MASTER;
 --source include/rpl_connection_slave.inc

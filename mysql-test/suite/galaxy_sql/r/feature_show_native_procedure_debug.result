@@ -17,6 +17,7 @@ dbms_consensus	drop_learner	ADMIN_PROC	VARCHAR
 dbms_consensus	drop_prefetch_channel	ADMIN_PROC	LONGLONG
 dbms_consensus	fix_cluster_id	ADMIN_PROC	LONGLONG
 dbms_consensus	fix_matchindex	ADMIN_PROC	VARCHAR, LONGLONG
+dbms_consensus	force_learner_node	ADMIN_PROC	NULL
 dbms_consensus	force_purge_log	ADMIN_PROC	LONGLONG
 dbms_consensus	force_single_mode	ADMIN_PROC	NULL
 dbms_consensus	local_purge_log	ADMIN_PROC	LONGLONG
@@ -38,10 +39,14 @@ dbms_outln	show_outline	ADMIN_PROC	NULL
 dbms_recycle	purge_table	ADMIN_PROC	VARCHAR
 dbms_recycle	restore_table	ADMIN_PROC	VARCHAR, VARCHAR, VARCHAR / VARCHAR
 dbms_recycle	show_tables	ADMIN_PROC	NULL
+dbms_stat	flush_gpp	ADMIN_PROC	NULL
 dbms_trans	returning	TRANS_PROC	VARCHAR, VARCHAR
 dbms_trans	rollback_to_implicit_savepoint	TRANS_PROC	NULL
 dbms_tso	get_timestamp	ADMIN_PROC	VARCHAR, VARCHAR, LONGLONG
 dbms_undo	purge_status	ADMIN_PROC	NULL
+dbms_undo	trunc_status	ADMIN_PROC	NULL
+dbms_xa	ac_commit	TRANS_PROC	VARCHAR, VARCHAR, LONGLONG, LONGLONG, VARCHAR, LONGLONG, LONGLONG
+dbms_xa	ac_prepare	TRANS_PROC	VARCHAR, VARCHAR, LONGLONG, LONGLONG, LONGLONG, LONGLONG
 dbms_xa	advance_gcn_no_flush	ADMIN_PROC	LONGLONG
 dbms_xa	find_by_xid	TRANS_PROC	VARCHAR, VARCHAR, LONGLONG
 dbms_xa	prepare_with_trx_slot	TRANS_PROC	VARCHAR, VARCHAR, LONGLONG
@@ -54,4 +59,5 @@ polarx	changeset_start	ADMIN_PROC	NULL
 polarx	changeset_stats	ADMIN_PROC	NULL
 polarx	changeset_stop	ADMIN_PROC	NULL
 polarx	changeset_times	ADMIN_PROC	NULL
+xrpc	cmd	ADMIN_PROC	VARCHAR
 xrpc	perf_hist	ADMIN_PROC	VARCHAR

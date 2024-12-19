@@ -18,7 +18,7 @@ include/assert.inc ['gtid_executed should be the same on master and slave']
 
 include/diff_tables.inc [master:db.t1, slave:db.t1]
 
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 
 [connection master]
 DROP DATABASE db;

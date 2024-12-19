@@ -10,7 +10,7 @@
 --source include/master-slave.inc
 
 --connection slave
---let $master_uuid= query_get_value(select SOURCE_UUID from performance_schema.replication_connection_status WHERE service_state = 'ON', SOURCE_UUID, 1)
+--let $master_uuid= query_get_value(select SOURCE_UUID from performance_schema.replication_connection_status WHERE CHANNEL_NAME = 'test' and service_state = 'ON', SOURCE_UUID, 1)
 
 --let $gtid_not_committed_wait_set= $master_uuid:3-4
 --let $gtid_committed_and_not_committed_set= $master_uuid:1-6

@@ -36,7 +36,7 @@ source include/have_debug_sync.inc;
 --source include/rpl_connection_slave.inc
 --source include/stop_slave.inc
 # Disabling auto positioning
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0;
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0 for channel "test";
 # Make sync includes to rely on position instead of GTIDs
 --let $use_gtids= 0
 --source include/start_slave_io.inc
@@ -67,8 +67,9 @@ CREATE TABLE t2 (c1 INT) ENGINE=InnoDB;
 # Disable warnings to avoid logging "UNTIL condtion is not supported ..." on MTS
 --disable_warnings
 START SLAVE SQL_THREAD UNTIL
-  RELAY_LOG_FILE= 'slave-relay-bin.000003',
-  RELAY_LOG_POS= 4;
+  RELAY_LOG_FILE= 'slave-relay-bin-test.000003',
+  RELAY_LOG_POS= 4
+  for channel 'test';
 --enable_warnings
 --source include/wait_for_slave_sql_to_stop.inc
 

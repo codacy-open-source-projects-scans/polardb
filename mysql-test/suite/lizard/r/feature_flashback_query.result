@@ -326,18 +326,14 @@ alter table t5 add c3 int after c1;
 select * from t3 as of timestamp @past_timestamps;
 ERROR HY000: The definition of the table required by the flashback query has changed
 alter table t6 add index sec(c2);
-select * from t6 as of timestamp @past_timestamps;
+select * from t6 as of timestamp @past_timestamps force index(primary);
 c1	c2
 1	100
 2	200
 select * from t6 as of timestamp @past_timestamps force index(sec);
-c1	c2
-1	100
-2	200
+ERROR HY000: The definition of the table required by the flashback query has changed
 select c2 from t6 as of timestamp @past_timestamps force index(sec);
-c2
-100
-200
+ERROR HY000: The definition of the table required by the flashback query has changed
 alter table t7 row_format = compressed;
 select * from t7 as of timestamp @past_timestamps;
 ERROR HY000: The definition of the table required by the flashback query has changed

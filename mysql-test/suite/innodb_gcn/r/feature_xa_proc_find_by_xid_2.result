@@ -1,0 +1,58 @@
+set global innodb_undo_retention = 900;
+create table tt (id int);
+insert into tt values (1);
+######################################
+# Case 1: NOT_SUPPORT becase of old txn format
+######################################
+set session debug = "+d, sim_old_txn_undo_hdr";
+xa start 'ac_fbx2_b1';
+update tt set id = id + 1;
+xa end 'ac_fbx2_b1';
+xa prepare 'ac_fbx2_b1';
+xa commit 'ac_fbx2_b1';
+set session debug = "-d, sim_old_txn_undo_hdr";
+call dbms_xa.find_by_xid('ac_fbx2_b1', '', 1);
+STATUS	GCN	CSR	TRX_ID	UBA	N_BRANCH	N_LOCAL_BRANCH	MASTER_TRX_ID	MASTER_UBA
+NOT_SUPPORT	#	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+######################################
+# Case 2: Attached
+######################################
+set xa_detach_on_prepare = 0;
+xa start 'ac_fbx2_b2';
+update tt set id = id + 1;
+xa end 'ac_fbx2_b2';
+xa prepare 'ac_fbx2_b2';
+call dbms_xa.find_by_xid('ac_fbx2_b2', '', 1);
+STATUS	GCN	CSR	TRX_ID	UBA	N_BRANCH	N_LOCAL_BRANCH	MASTER_TRX_ID	MASTER_UBA
+ATTACHED	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+set xa_detach_on_prepare = default;
+######################################
+# Case 3: Detached
+######################################
+include/assert.inc [expect_status == actual_status]
+######################################
+# Case 4: Commit
+######################################
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+xa commit 'ac_fbx2_b2';
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+######################################
+# Case 5: NOTSTART_OR_FORGET
+######################################
+call dbms_xa.find_by_xid('ac_fbx2_b5', '', 1);
+STATUS	GCN	CSR	TRX_ID	UBA	N_BRANCH	N_LOCAL_BRANCH	MASTER_TRX_ID	MASTER_UBA
+NOTSTART_OR_FORGET	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+######################################
+# Case 6: 128 Bytes XID
+######################################
+xa start 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+update tt set id = id + 1;
+xa end 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+xa prepare 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+xa commit 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+# cleanup
+set global innodb_undo_retention = default;
+drop table tt;

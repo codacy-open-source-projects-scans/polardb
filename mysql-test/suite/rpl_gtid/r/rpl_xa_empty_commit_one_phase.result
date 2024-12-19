@@ -16,7 +16,7 @@ XA END 'trx';
 XA COMMIT 'trx' ONE PHASE;
 include/save_binlog_position.inc
 include/assert.inc [Empty transaction, binlog position is the same]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection master]
 #
 # 2) Start with a GTID_NEXT value set manually,
@@ -29,6 +29,6 @@ XA END 'trx';
 XA COMMIT 'trx' ONE PHASE;
 SET @@SESSION.GTID_NEXT= 'AUTOMATIC';
 include/assert.inc [Transaction is present in GTID_EXECUTED]
-include/assert_binlog_events.inc [!GCN # Gtid/SET.* # Query/BEGIN # Query/COMMIT]
-include/sync_slave_sql_with_master.inc
+include/assert_binlog_events.inc [Consensus_log # !GCN # Gtid/SET.* # Query/BEGIN # Query/COMMIT]
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/rpl_end.inc

@@ -1,0 +1,118 @@
+create table t (id int);
+insert into t values (1);
+set xa_detach_on_prepare = on;
+############################
+# Case: Empty XA in transaction cache and rw_trx_list
+#       but rollback implicitly after prepare
+############################
+xa start 'fbx_empty_b1';
+select * from t for update;
+id
+1
+xa end 'fbx_empty_b1';
+xa prepare 'fbx_empty_b1';
+include/assert.inc [expect_status == actual_status]
+xa commit 'fbx_empty_b1';
+include/assert.inc [expect_status == actual_status]
+############################
+# Case: Empty XA in transaction cache and not in rw_trx_list
+############################
+xa start 'fbx_empty_b2';
+xa end 'fbx_empty_b2';
+xa prepare 'fbx_empty_b2';
+include/assert.inc [expect_status == actual_status]
+xa commit 'fbx_empty_b2';
+include/assert.inc [expect_status == actual_status]
+############################
+# Case: Empty Async Commit Info in TXN
+############################
+xa start 'fbx_empty_b3';
+insert into t values (2);
+xa end 'fbx_empty_b3';
+xa prepare 'fbx_empty_b3';
+include/assert.inc [expect_status == actual_status]
+xa commit 'fbx_empty_b3';
+include/assert.inc [expect_status == actual_status]
+############################
+# Case: no use ac_prepare and no use ac_commit
+############################
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+xa start 'fbx_empty_b4';
+insert into t values (2);
+xa end 'fbx_empty_b4';
+xa prepare 'fbx_empty_b4';
+include/assert.inc [expect_status == actual_status]
+xa commit 'fbx_empty_b4';
+include/assert.inc [expect_status == actual_status]
+############################
+# Case: Use ac_prepare not use ac_commit
+############################
+xa start 'fbx_empty_b5';
+insert into t values (2);
+xa end 'fbx_empty_b5';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+xa commit 'fbx_empty_b5';
+include/assert.inc [expect_gcn == actual_gcn]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_csr == actual_csr]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_trx_id == actual_trx_id]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_uba == actual_uba]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_n_branch == actual_n_branch]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+connection con_a;
+connection con_a;
+############################
+# Case: Use ac_commit but no ac_prepare
+############################
+xa start 'fbx_empty_b6';
+insert into t values (2);
+xa end 'fbx_empty_b6';
+xa prepare 'fbx_empty_b6';
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_csr == actual_csr]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_csr == actual_csr]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_n_branch == actual_n_branch]
+connection con_a;
+connection con_a;
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+connection con_a;
+connection con_a;
+disconnect con_a;
+connection default;
+drop table t;

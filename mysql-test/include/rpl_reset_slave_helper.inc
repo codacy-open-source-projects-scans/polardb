@@ -7,17 +7,17 @@ if (!$rpl_reset_slave_all)
   {
     if ($rpl_privilege_checks_user)
     {
-      CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL;
+      CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL for channel "test";
     }
     if ($rpl_gtid_only)
     {
-      CHANGE REPLICATION SOURCE TO GTID_ONLY=0;
+      CHANGE REPLICATION SOURCE TO GTID_ONLY=0 for channel "test";
     }
     if ($rpl_require_row_format)
     {
-      CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT=0;
+      CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT=0 for channel "test";
     }
-    RESET REPLICA;
+    RESET REPLICA for channel 'test';
   }
   if ($rpl_multi_source)
   {

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -780,6 +780,11 @@ struct dtuple_t {
     }
     return false;
   }
+
+  /** Lizard-4.0 virtual GPP_NO field */
+  dfield_t *v_gfield;
+  gpp_no_t read_v_gpp_no() const;
+  gpp_no_t read_s_gpp_no() const;
 };
 
 /** A slot for a field in a big rec vector */

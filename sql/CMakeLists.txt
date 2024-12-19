@@ -1,4 +1,4 @@
-# Copyright (c) 2006, 2022, Oracle and/or its affiliates.
+# Copyright (c) 2006, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -657,7 +657,7 @@ SET(SQL_SHARED_SOURCES
   trans_proc/common.cc
   trans_proc/returning.cc
   trans_proc/returning_parse.cc
-  package/proc_undo_purge.cc
+  package/proc_gpp.cc
   trans_proc/implicit_savepoint.cc
   ccl/ccl_cache.cc
   ccl/ccl.cc
@@ -702,6 +702,7 @@ SET(SQL_SHARED_SOURCES
   timestamp_service.cc
   tso/tso_proc.cc
   lizard/lizard_snapshot.cc
+  lizard/lizard_hb_freezer.cc
   lizard_rpl_binlog_sender.cc
   lizard_rpl_rli.cc
   sql_common_ext.cc
@@ -725,7 +726,10 @@ SET(SQL_SHARED_SOURCES
   keyring/keyring_current_key_id.cc
   inventory/inventory_hint_parse.cc
   inventory/inventory_hint.cc
-  )
+  lizard/undo_proc.cc
+  lizard_sql_class.cc
+  lizard/lizard_service.cc
+)
 
 IF(BUILD_IS_SINGLE_CONFIG)
   GET_PROPERTY(CWD_DEFINITIONS DIRECTORY PROPERTY COMPILE_DEFINITIONS)

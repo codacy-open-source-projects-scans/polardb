@@ -21,13 +21,13 @@ Warnings:
 Warning	1287	'@@replica_parallel_type' is deprecated and will be removed in a future release.
 SET GLOBAL replica_parallel_workers= 8;
 SET GLOBAL replica_preserve_commit_order= ON;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 SET @save_binlog_transaction_dependency_tracking= @@global.binlog_transaction_dependency_tracking;
 SET @@global.binlog_transaction_dependency_tracking = COMMIT_ORDER;
 [connection master]
 CREATE TABLE t1(a INT PRIMARY KEY); CREATE TABLE t2(a INT);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 
 # Block slave sql applier threads
 
@@ -70,13 +70,13 @@ include/assert.inc [No additional transaction is added on slave after first inse
 DROP TABLE t1;
 DROP TABLE t2;
 SET GLOBAL binlog_transaction_dependency_tracking=@save_binlog_transaction_dependency_tracking;
-include/sync_slave_sql_with_master.inc
-include/stop_slave.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_parallel_type= @save_replica_parallel_type;
 Warnings:
 Warning	1287	'@@replica_parallel_type' is deprecated and will be removed in a future release.
 SET GLOBAL replica_parallel_workers= @save_replica_parallel_workers;
 SET GLOBAL replica_preserve_commit_order= @save_replica_preserve_commit_order;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 include/gtid_utils_end.inc
 include/rpl_end.inc

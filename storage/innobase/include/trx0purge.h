@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -65,6 +65,9 @@ static inline fil_addr_t trx_purge_get_log_from_hist(
 /** Initialize in-memory purge structures */
 void trx_purge_sys_mem_create();
 
+void trx_purge_sys_initialize(uint32_t n_purge_threads,
+                              lizard::purge_heap_t *purge_heap);
+
 /** Creates the global purge system control structure and inits the history
 mutex.
 @param[in]      n_purge_threads   number of purge threads
@@ -126,13 +129,13 @@ struct TxnUndoRsegsIterator;
 /** This is the purge pointer/iterator. We need both the undo no and the
 transaction no up to which purge has parsed and applied the records. */
 struct purge_iter_t {
-  purge_iter_t() : scn(), undo_no(), undo_rseg_space(SPACE_UNKNOWN) {
+  purge_iter_t() : ommt(), undo_no(), undo_rseg_space(SPACE_UNKNOWN) {
     // Do nothing
   }
 
   /** Purge has advanced past all transactions whose SCN number is less or equal
    * than this */
-  scn_t scn;
+  commit_order_t ommt;
 
   /** Purge has advanced past all records whose undo number
   is less than this. */
@@ -1088,6 +1091,7 @@ struct trx_purge_t {
   /** The 'purge pointer' which advances during a purge, and which is used in
   history list truncation */
   purge_iter_t limit;
+
 #ifdef UNIV_DEBUG
   /** Indicate 'purge pointer' which have purged already accurately. */
   purge_iter_t done;
@@ -1140,13 +1144,14 @@ struct trx_purge_t {
   Only the purge sys coordinator thread and recover thread can modify it. */
   std::atomic<scn_t> purged_scn;
 
-  utc_t top_undo_us;
-
   /** Similar with purged_scn */
-  Purged_gcn purged_gcn;
+  lizard::Purged_gcn purged_gcn;
 
-  /** Blocked reason of purge sys */
-  lizard::Purge_blocked_stat blocked_stat;
+  /** The transactions whose scn < truncating_list_scn.get_min() have been
+   * truncated. */
+  lizard::min_safe_scn truncating_list_scn;
+
+  void push_purged(const commit_order_t &ommt);
 };
 
 #include "trx0purge.ic"

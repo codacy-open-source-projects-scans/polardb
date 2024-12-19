@@ -1,0 +1,451 @@
+--source include/have_debug.inc
+
+CALL mtr.add_suppression("'innodb-scn-history-interval': unsigned value 0 adjusted to 1");
+
+connection default;
+set global innodb_undo_retention = 0;
+set global innodb_txn_retention = 36000;
+set global innodb_purge_rseg_truncate_frequency = 1;
+set global innodb_undo_log_truncate = 1;
+
+--echo
+--echo ==============================================================
+--echo Test flashback_area across different partition DDL operations.
+--echo All the partitions of a partitioned table have a consistent 
+--echo flashback area option.
+--echo The ALTER TABLE statement will modify the flashback_area
+--echo option only if the whole table needs to be rebuilt.
+--echo ==============================================================
+set opt_flashback_area = 0; 
+set global innodb_undo_retention = 0;
+set global innodb_txn_retention = 36000;
+
+create table t1 (c1 int, c2 int, primary key(c1));
+insert into t1 values (1, 100);
+insert into t1 values (2, 200);
+
+set opt_flashback_area = 0; 
+create table t0 like t1;
+insert into t0 select * from t1;
+
+select * from information_schema.innodb_table_status where schema_name='test';
+
+--echo
+--echo === Partitioning Operations ===
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set @past_timestamps = (select now());
+sleep 2;
+set query_via_flashback_area = 1;
+--error ER_SNAPSHOT_TOO_OLD
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set opt_flashback_area = 1;
+ALTER TABLE t1 PARTITION BY RANGE(c1) (PARTITION p0 VALUES LESS THAN (100), PARTITION p1 VALUES LESS THAN (200));
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_AS_OF_TABLE_DEF_CHANGED
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set @past_timestamps = (select now());
+sleep 2;
+
+set opt_flashback_area = 0;
+ALTER TABLE t1 ADD PARTITION (PARTITION p2 VALUES LESS THAN (300));
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+insert into t1 values (250, 250);
+
+set query_via_flashback_area = 1;
+--error ER_AS_OF_TABLE_DEF_CHANGED
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set query_via_flashback_area = 1;
+--error ER_AS_OF_TABLE_DEF_CHANGED
+select * from t1 as of timestamp @past_timestamps where c1 > 200;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 < 200;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set @past_timestamps = (select now());
+sleep 2;
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 > 200;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 < 200;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set opt_flashback_area = 0;
+ALTER TABLE t1 DROP PARTITION p2;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set opt_flashback_area = 0;
+ALTER TABLE t1 REBUILD PARTITION p0;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_AS_OF_TABLE_DEF_CHANGED
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 > 100;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set @past_timestamps = (select now());
+sleep 2;
+
+set opt_flashback_area = 0;
+ALTER TABLE t1 TRUNCATE PARTITION p0;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_AS_OF_TABLE_DEF_CHANGED
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 > 100;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set @past_timestamps = (select now());
+sleep 2;
+
+set opt_flashback_area = 0;
+ALTER TABLE t1 REORGANIZE PARTITION p0 INTO (PARTITION p0 VALUES LESS THAN (50), PARTITION p2 VALUES LESS THAN (100)) ;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_AS_OF_TABLE_DEF_CHANGED
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 > 100;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set @past_timestamps = (select now());
+sleep 2;
+
+set opt_flashback_area = 0;
+ALTER TABLE t1 ANALYZE PARTITION p0;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set opt_flashback_area = 0;
+ALTER TABLE t1 CHECK PARTITION p0;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set opt_flashback_area = 0;
+ALTER TABLE t1 OPTIMIZE PARTITION p1;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_AS_OF_TABLE_DEF_CHANGED
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set opt_flashback_area = 1;
+ALTER TABLE t1 REPAIR PARTITION p1;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_SNAPSHOT_TOO_OLD
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set opt_flashback_area = 1;
+truncate table t0;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t0
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+--error ER_PARTITION_EXCHANGE_DIFFERENT_OPTION
+ALTER TABLE t1 EXCHANGE PARTITION p1 WITH TABLE t0;
+
+set opt_flashback_area = 1;
+OPTIMIZE TABLE t1;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set @past_timestamps = (select now());
+sleep 2;
+
+insert into t0 values (110, 110);
+insert into t0 values (120, 120);
+insert into t0 values (130, 130);
+insert into t0 values (140, 140);
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set query_via_flashback_area = 1;
+select * from t0 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+ALTER TABLE t1 EXCHANGE PARTITION p1 WITH TABLE t0;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t0
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set query_via_flashback_area = 1;
+select * from t0 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set opt_flashback_area = 0;
+create table t11 like t1;
+insert into t11 select * from t1;
+
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t11
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+ALTER TABLE t1 DISCARD PARTITION p1 TABLESPACE;
+
+FLUSH TABLES t11 FOR EXPORT;
+LET $MYSQLD_DATADIR = `SELECT @@datadir`;
+--copy_file $MYSQLD_DATADIR/test/t11#p#p1.ibd $MYSQLTEST_VARDIR/tmp/t1#p#p1.ibd
+--copy_file $MYSQLD_DATADIR/test/t11#p#p1.cfg $MYSQLTEST_VARDIR/tmp/t1#p#p1.cfg
+UNLOCK TABLES;
+--copy_file $MYSQLTEST_VARDIR/tmp/t1#p#p1.ibd $MYSQLD_DATADIR/test/t1#p#p1.ibd
+--copy_file $MYSQLTEST_VARDIR/tmp/t1#p#p1.cfg $MYSQLD_DATADIR/test/t1#p#p1.cfg
+
+ALTER TABLE t1 IMPORT PARTITION p1 TABLESPACE;
+
+--remove_file $MYSQLTEST_VARDIR/tmp/t1#p#p1.ibd
+--remove_file $MYSQLTEST_VARDIR/tmp/t1#p#p1.cfg
+
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+# cannot see p1
+--error ER_SNAPSHOT_TOO_OLD
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 < 100;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+--source include/kill_and_restart_mysqld.inc
+set global innodb_undo_retention = 0;
+set global innodb_txn_retention = 36000;
+
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set @past_timestamps = (select now());
+sleep 2;
+
+set opt_flashback_area = 0; 
+ALTER TABLE t1 TRUNCATE PARTITION p0, p1, p2;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_SNAPSHOT_TOO_OLD
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set @past_timestamps = (select now());
+sleep 2;
+
+set opt_flashback_area = 1; 
+ALTER TABLE t1 rebuild partition p0, p1, p2;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_SNAPSHOT_TOO_OLD
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set @past_timestamps = (select now());
+sleep 2;
+
+set opt_flashback_area = 0; 
+ALTER TABLE t1 REMOVE PARTITIONING;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_SNAPSHOT_TOO_OLD
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set @past_timestamps = (select now());
+sleep 2;
+
+set opt_flashback_area = 1;
+ALTER TABLE t1 PARTITION BY HASH(c1) PARTITIONS 4;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_AS_OF_TABLE_DEF_CHANGED
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set @past_timestamps = (select now());
+sleep 2;
+
+set opt_flashback_area = 0;
+ALTER TABLE t1 COALESCE PARTITION 2;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_AS_OF_TABLE_DEF_CHANGED
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+--source include/kill_and_restart_mysqld.inc
+set global innodb_undo_retention = 0;
+set global innodb_txn_retention = 36000;
+
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=1
+--source suite/lizard/include/table_has_fba.inc
+
+set @past_timestamps = (select now());
+sleep 2;
+
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set opt_flashback_area = 0;
+ALTER TABLE t1 REMOVE PARTITIONING;
+--let $SCHEMA_NAME=test
+--let $TABLE_NAME=t1
+--let $PARTITION_NAME=
+--let $CONTAIN_FBA=0
+--source suite/lizard/include/table_has_fba.inc
+
+set query_via_flashback_area = 1;
+--error ER_SNAPSHOT_TOO_OLD
+select * from t1 as of timestamp @past_timestamps;
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+
+set opt_flashback_area = default;
+set global innodb_undo_retention = default;
+set global innodb_txn_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;
+set global innodb_undo_log_truncate = default;
+
+connection default;
+
+drop table t0;
+drop table t1;
+drop table t11;

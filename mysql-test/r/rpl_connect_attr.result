@@ -8,12 +8,12 @@ SELECT ATTR_NAME, ATTR_VALUE FROM performance_schema.session_connect_attrs
 WHERE PROCESSLIST_ID = <thread_id> AND
 ATTR_NAME IN ('program_name', '_client_replication_channel_name', '_client_role');
 ATTR_NAME	ATTR_VALUE
-_client_replication_channel_name	NULL
+_client_replication_channel_name	test
 _client_role	binary_log_listener
 program_name	mysqld
 ==== Case 2: mysqlbinlog connection ====
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 [connection master]
 include/stop_dump_threads.inc
 # Start mysqlbinlog

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 Copyright (c) 2008, Google Inc.
 
 Portions of this file contain modifications contributed and copyrighted by
@@ -53,6 +53,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ha_innodb.h"
 #include "ha_prototypes.h"
 #include "handler.h"
+#include "lizard0btr0cur.h"
 #include "lob0lob.h"
 #include "lob0undo.h"
 #include "lock0lock.h"
@@ -80,6 +81,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "lizard0dict.h"
 #include "lizard0gp.h"
 #include "lizard0undo.h"
+#include "lizard0row.h"
+#include "lizard0data0data.h"
 
 /** Maximum number of rows to prefetch; MySQL interface has another parameter */
 constexpr uint32_t SEL_MAX_N_PREFETCH = 16;
@@ -3123,12 +3126,22 @@ non-clustered index. Does the necessary locking.
   dberr_t err;
   trx_t *trx;
 
+  lizard::SCursor *scursor = nullptr;
+
   *out_rec = nullptr;
   trx = thr_get_trx(thr);
 
   row_build_row_ref_in_tuple(prebuilt->clust_ref, rec, sec_index, *offsets);
 
   clust_index = sec_index->table->first_index();
+
+  if (lizard::row_sel_optimistic_guess_clust(
+          clust_index, sec_index, prebuilt->clust_ref, rec,
+          prebuilt->clust_pcur, *offsets, BTR_SEARCH_LEAF, prebuilt->pcur, &scursor, mtr)) {
+    clust_rec = prebuilt->clust_pcur->get_rec();
+    prebuilt->clust_pcur->m_trx_if_known = trx;
+    goto clust_rec_found;
+  }
 
   prebuilt->clust_pcur->open_no_init(clust_index, prebuilt->clust_ref,
                                      PAGE_CUR_LE, BTR_SEARCH_LEAF, 0, mtr,
@@ -3246,6 +3259,13 @@ non-clustered index. Does the necessary locking.
     goto func_exit;
   }
 
+clust_rec_found:
+  if (scursor != nullptr) {
+    page_no_t gpp_no = page_get_page_no(prebuilt->clust_pcur->get_page());
+    scursor->set_gpp_no(gpp_no);
+  }
+     
+  
   *offsets = rec_get_offsets(clust_rec, clust_index, *offsets, ULINT_UNDEFINED,
                              UT_LOCATION_HERE, offset_heap);
 
@@ -4503,7 +4523,7 @@ dberr_t row_search_mvcc(byte *buf, page_cur_mode_t mode,
   assert_lizard_dict_index_check(index);
   assert_lizard_dict_table_check(index->table);
 
-  ut_ad(!pcur->m_cleanout_pages || pcur->m_cleanout_pages->is_empty());
+  ut_ad(!pcur->m_cleanout || pcur->m_cleanout->is_empty());
 
   /* We don't support FTS queries from the HANDLER interfaces, because
   we implemented FTS as reversed inverted index with auxiliary tables.
@@ -4862,7 +4882,7 @@ dberr_t row_search_mvcc(byte *buf, page_cur_mode_t mode,
       trx_assign_read_view(trx);
 
       /* convert ctx to innobase, only set once */
-      if ((err = lizard::prebuilt_bind_flashback_query(prebuilt)) !=
+      if ((err = lizard::row_prebuilt_bind_flashback_query(prebuilt)) !=
           DB_SUCCESS) {
         goto as_of_error;
       }
@@ -6143,7 +6163,7 @@ func_exit:
 
   ut_a(!trx->has_search_latch);
 
-  lizard::row_cleanout_after_read(prebuilt);
+  lizard::cleanout_after_read(prebuilt);
 
   return err;
 }

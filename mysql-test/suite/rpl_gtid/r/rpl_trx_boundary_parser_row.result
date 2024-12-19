@@ -6,7 +6,7 @@ Note	####	Storing MySQL user name or password information in the master info rep
 # Using InnoDB storage engine
 ## Running the test with the SQL thread stopped
 [connection slave]
-include/stop_slave_sql.inc
+include/stop_slave_sql.inc [FOR CHANNEL 'test']
 [connection slave]
 [connection master]
 [connection slave]
@@ -21,10 +21,10 @@ INSERT INTO t2 (i) VALUES (-5);
 INSERT INTO t2 (i) VALUES (-4);
 COMMIT;
 [connection master]
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
-include/stop_slave_io.inc
-include/start_slave_io.inc
+include/stop_slave_io.inc [FOR CHANNEL 'test']
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection slave]
 include/gtid_step_assert_on_retrieved.inc [count=4, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
@@ -41,17 +41,17 @@ INSERT INTO t2 (i) VALUES (-1);
 INSERT INTO t2 (i) VALUES (0);
 COMMIT;
 [connection master]
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
-include/stop_slave_io.inc
-include/start_slave_io.inc
+include/stop_slave_io.inc [FOR CHANNEL 'test']
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection slave]
 include/gtid_step_assert_on_retrieved.inc [count=4, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_gtid_log_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_gtid_log_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -60,22 +60,22 @@ SET @val= 100 * 1 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_gtid_log_event' from @@GLOBAL.debug
 include/gtid_step_assert_on_retrieved.inc [count=1, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection master]
 INSERT INTO t2 VALUES (100 * 1 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert_on_retrieved.inc [count=2, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_query_log_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_query_log_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -84,22 +84,22 @@ SET @val= 100 * 2 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_query_log_event' from @@GLOBAL.debug
 include/gtid_step_assert_on_retrieved.inc [count=1, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection master]
 INSERT INTO t2 VALUES (100 * 2 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert_on_retrieved.inc [count=2, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_table_map_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_table_map_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -108,22 +108,22 @@ SET @val= 100 * 3 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_table_map_event' from @@GLOBAL.debug
 include/gtid_step_assert_on_retrieved.inc [count=1, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection master]
 INSERT INTO t2 VALUES (100 * 3 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert_on_retrieved.inc [count=2, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_xid_log_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_xid_log_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -132,25 +132,25 @@ SET @val= 100 * 4 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_xid_log_event' from @@GLOBAL.debug
 include/gtid_step_assert_on_retrieved.inc [count=2, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection master]
 INSERT INTO t2 VALUES (100 * 4 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert_on_retrieved.inc [count=1, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection master]
 DROP TABLE t1,t2;
 ## Starting and syncing the SQL thread before next round
 [connection slave]
-include/start_slave_sql.inc
+include/start_slave_sql.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 ## Running the test with the SQL thread started
 [connection slave]
 [connection master]
@@ -166,11 +166,11 @@ INSERT INTO t2 (i) VALUES (-5);
 INSERT INTO t2 (i) VALUES (-4);
 COMMIT;
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/diff_tables.inc [master:t1, slave:t1]
 [connection slave]
-include/stop_slave_io.inc
-include/start_slave_io.inc
+include/stop_slave_io.inc [FOR CHANNEL 'test']
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection slave]
 include/gtid_step_assert.inc [count=4, only_count=0]
 [connection master]
@@ -186,17 +186,17 @@ INSERT INTO t2 (i) VALUES (-1);
 INSERT INTO t2 (i) VALUES (0);
 COMMIT;
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/diff_tables.inc [master:t1, slave:t1]
 [connection slave]
-include/stop_slave_io.inc
-include/start_slave_io.inc
+include/stop_slave_io.inc [FOR CHANNEL 'test']
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection slave]
 include/gtid_step_assert.inc [count=4, only_count=0]
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_gtid_log_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_gtid_log_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -205,21 +205,21 @@ SET @val= 100 * 1 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_gtid_log_event' from @@GLOBAL.debug
-include/sync_slave_sql_with_io.inc
+include/sync_slave_sql_with_io.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=1, only_count=0]
 [connection master]
 INSERT INTO t2 VALUES (100 * 1 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=2, only_count=0]
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_query_log_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_query_log_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -228,21 +228,21 @@ SET @val= 100 * 2 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_query_log_event' from @@GLOBAL.debug
-include/sync_slave_sql_with_io.inc
+include/sync_slave_sql_with_io.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=1, only_count=0]
 [connection master]
 INSERT INTO t2 VALUES (100 * 2 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=2, only_count=0]
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_table_map_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_table_map_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -251,21 +251,21 @@ SET @val= 100 * 3 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_table_map_event' from @@GLOBAL.debug
-include/sync_slave_sql_with_io.inc
+include/sync_slave_sql_with_io.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=1, only_count=0]
 [connection master]
 INSERT INTO t2 VALUES (100 * 3 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=2, only_count=0]
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_xid_log_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_xid_log_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -274,41 +274,41 @@ SET @val= 100 * 4 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_xid_log_event' from @@GLOBAL.debug
-include/sync_slave_sql_with_io.inc
+include/sync_slave_sql_with_io.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=2, only_count=0]
 [connection master]
 INSERT INTO t2 VALUES (100 * 4 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=1, only_count=0]
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/diff_tables.inc [master:t1, slave:t1]
 [connection master]
 DROP TABLE t1,t2;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 RESET MASTER;
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 Warnings:
 Warning	1287	'RESET SLAVE' is deprecated and will be removed in a future release. Please use RESET REPLICA instead
 [connection master]
 RESET MASTER;
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 Warnings:
-Note	3084	Replication thread(s) for channel '' are already stopped.
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 0;
-include/start_slave.inc
+Note	3084	Replication thread(s) for channel 'test' are already stopped.
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 0 for channel "test";
+include/start_slave.inc [FOR CHANNEL 'test']
 # Using InnoDB storage engine without auto positioning
 ## Running the test with the SQL thread stopped
 [connection slave]
-include/stop_slave_sql.inc
+include/stop_slave_sql.inc [FOR CHANNEL 'test']
 [connection slave]
 [connection master]
 [connection slave]
@@ -323,10 +323,10 @@ INSERT INTO t2 (i) VALUES (-5);
 INSERT INTO t2 (i) VALUES (-4);
 COMMIT;
 [connection master]
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
-include/stop_slave_io.inc
-include/start_slave_io.inc
+include/stop_slave_io.inc [FOR CHANNEL 'test']
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection slave]
 include/gtid_step_assert_on_retrieved.inc [count=4, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
@@ -343,17 +343,17 @@ INSERT INTO t2 (i) VALUES (-1);
 INSERT INTO t2 (i) VALUES (0);
 COMMIT;
 [connection master]
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
-include/stop_slave_io.inc
-include/start_slave_io.inc
+include/stop_slave_io.inc [FOR CHANNEL 'test']
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection slave]
 include/gtid_step_assert_on_retrieved.inc [count=4, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_gtid_log_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_gtid_log_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -362,22 +362,22 @@ SET @val= 100 * 1 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_gtid_log_event' from @@GLOBAL.debug
 include/gtid_step_assert_on_retrieved.inc [count=1, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection master]
 INSERT INTO t2 VALUES (100 * 1 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert_on_retrieved.inc [count=2, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_query_log_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_query_log_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -386,22 +386,22 @@ SET @val= 100 * 2 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_query_log_event' from @@GLOBAL.debug
 include/gtid_step_assert_on_retrieved.inc [count=1, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection master]
 INSERT INTO t2 VALUES (100 * 2 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert_on_retrieved.inc [count=2, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_table_map_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_table_map_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -410,22 +410,22 @@ SET @val= 100 * 3 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_table_map_event' from @@GLOBAL.debug
 include/gtid_step_assert_on_retrieved.inc [count=1, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection master]
 INSERT INTO t2 VALUES (100 * 3 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert_on_retrieved.inc [count=2, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_xid_log_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_xid_log_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -434,25 +434,25 @@ SET @val= 100 * 4 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_xid_log_event' from @@GLOBAL.debug
 include/gtid_step_assert_on_retrieved.inc [count=2, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection master]
 INSERT INTO t2 VALUES (100 * 4 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert_on_retrieved.inc [count=1, only_count=0]
 Asserting based on SHOW SLAVE STATUS(Retrieved_Gtid_Set)
 [connection master]
 DROP TABLE t1,t2;
 ## Starting and syncing the SQL thread before next round
 [connection slave]
-include/start_slave_sql.inc
+include/start_slave_sql.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 ## Running the test with the SQL thread started
 [connection slave]
 [connection master]
@@ -468,11 +468,11 @@ INSERT INTO t2 (i) VALUES (-5);
 INSERT INTO t2 (i) VALUES (-4);
 COMMIT;
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/diff_tables.inc [master:t1, slave:t1]
 [connection slave]
-include/stop_slave_io.inc
-include/start_slave_io.inc
+include/stop_slave_io.inc [FOR CHANNEL 'test']
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection slave]
 include/gtid_step_assert.inc [count=4, only_count=0]
 [connection master]
@@ -488,17 +488,17 @@ INSERT INTO t2 (i) VALUES (-1);
 INSERT INTO t2 (i) VALUES (0);
 COMMIT;
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/diff_tables.inc [master:t1, slave:t1]
 [connection slave]
-include/stop_slave_io.inc
-include/start_slave_io.inc
+include/stop_slave_io.inc [FOR CHANNEL 'test']
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection slave]
 include/gtid_step_assert.inc [count=4, only_count=0]
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_gtid_log_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_gtid_log_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -507,21 +507,21 @@ SET @val= 100 * 1 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_gtid_log_event' from @@GLOBAL.debug
-include/sync_slave_sql_with_io.inc
+include/sync_slave_sql_with_io.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=1, only_count=0]
 [connection master]
 INSERT INTO t2 VALUES (100 * 1 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=2, only_count=0]
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_query_log_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_query_log_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -530,21 +530,21 @@ SET @val= 100 * 2 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_query_log_event' from @@GLOBAL.debug
-include/sync_slave_sql_with_io.inc
+include/sync_slave_sql_with_io.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=1, only_count=0]
 [connection master]
 INSERT INTO t2 VALUES (100 * 2 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=2, only_count=0]
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_table_map_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_table_map_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -553,21 +553,21 @@ SET @val= 100 * 3 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_table_map_event' from @@GLOBAL.debug
-include/sync_slave_sql_with_io.inc
+include/sync_slave_sql_with_io.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=1, only_count=0]
 [connection master]
 INSERT INTO t2 VALUES (100 * 3 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=2, only_count=0]
 [connection slave]
 [connection master]
 INSERT INTO t1 (info) VALUES ('stop_io_after_reading_xid_log_event');
-include/sync_slave_io_with_master.inc
+include/sync_slave_io_with_master.inc [FOR CHANNEL 'test']
 # Adding debug point 'stop_io_after_reading_xid_log_event' to @@GLOBAL.debug
 [connection master]
 BEGIN;
@@ -576,25 +576,25 @@ SET @val= 100 * 4 + 2;
 INSERT INTO t2 VALUES (@val);
 COMMIT;
 [connection slave]
-include/wait_for_slave_io_to_stop.inc
+include/wait_for_slave_io_to_stop.inc [FOR CHANNEL 'test']
 # Removing debug point 'stop_io_after_reading_xid_log_event' from @@GLOBAL.debug
-include/sync_slave_sql_with_io.inc
+include/sync_slave_sql_with_io.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=2, only_count=0]
 [connection master]
 INSERT INTO t2 VALUES (100 * 4 + 3);
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/gtid_step_assert.inc [count=1, only_count=0]
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/diff_tables.inc [master:t1, slave:t1]
 [connection master]
 DROP TABLE t1,t2;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
-include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 1;
-include/start_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 1 for channel "test";
+include/start_slave.inc [FOR CHANNEL 'test']
 include/rpl_end.inc

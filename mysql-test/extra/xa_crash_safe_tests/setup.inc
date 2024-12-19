@@ -163,6 +163,6 @@ if ($rpl_group_replication != 1) {
 }
 
 # Initialize constants to be used with `assert_binlog_events.inc`
---let $empty_event_sequence = ()
---let $view_change = Gtid # Query/BEGIN # View_change # Query/COMMIT
+--let $empty_event_sequence = Consensus_log # Consensus_empty
+--let $view_change = Consensus_log # !GCN # Gtid # Query/BEGIN # View_change # Query/COMMIT
 --let $xa_start_end = Query/XA START $xid # Table_map # Write_rows # Query/XA END $xid

@@ -1,5 +1,6 @@
 --source include/have_debug.inc
 
+SET optimizer_trace="enabled=on";
 use test;
 create table p(
   id int primary key,

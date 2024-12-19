@@ -154,8 +154,10 @@ alter table t5 add c3 int after c1;
 select * from t3 as of timestamp @past_timestamps;
 
 alter table t6 add index sec(c2);
-select * from t6 as of timestamp @past_timestamps;
+select * from t6 as of timestamp @past_timestamps force index(primary);
+--error ER_AS_OF_TABLE_DEF_CHANGED
 select * from t6 as of timestamp @past_timestamps force index(sec);
+--error ER_AS_OF_TABLE_DEF_CHANGED
 select c2 from t6 as of timestamp @past_timestamps force index(sec);
 
 alter table t7 row_format = compressed;

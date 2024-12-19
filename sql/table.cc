@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2000, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -3291,6 +3291,8 @@ int open_table_from_share(THD *thd, TABLE_SHARE *share, const char *alias,
   }
   /* Clone Entity guard */
   outparam->entity_guard = im::guard_clone(share->entity_guard, root);
+
+  outparam->flashback_area = share->flashback_area;
 
   /* Increment the opened_tables counter, only when open flags set. */
   if (db_stat) thd->status_var.opened_tables++;

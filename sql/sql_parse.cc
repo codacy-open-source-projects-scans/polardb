@@ -1,4 +1,4 @@
-/* Copyright (c) 1999, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 1999, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -196,7 +196,10 @@
 #include "sql/recycle_bin/recycle.h"
 #include "sql/recycle_bin/recycle_parse.h"
 #include "sql/xa/lizard_xa_trx.h"
+
 #include "sql/inventory/inventory_hint.h"
+#include "sql/lizard/lizard_hb_freezer.h"
+#include "sql/lizard_sql_class.h"
 
 namespace resourcegroups {
 class Resource_group;
@@ -3235,6 +3238,8 @@ int mysql_execute_command(THD *thd, bool first_level) {
           Returning success without producing any errors in this case.
         */
         binlog_gtid_end_transaction(thd);
+        /* Lizard: DROP TRIGGER IF EXISTS might forget to reset it. */
+        thd->reset_gcn_variables();
         return 0;
       }
 
@@ -3374,6 +3379,8 @@ int mysql_execute_command(THD *thd, bool first_level) {
     the slave in case the outside transaction rolls back.
   */
   if (stmt_causes_implicit_commit(thd, CF_IMPLICIT_COMMIT_BEGIN)) {
+    /** Implicit Commit might reset all lizard THD vars. Backup and restore it. */
+    lizard::GCN_context_backup gcn_ctx_backup(thd);
     /*
       Note that this should never happen inside of stored functions
       or triggers as all such statements prohibited there.
@@ -3519,7 +3526,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
 
   lizard::simulate_snapshot_clause(thd, all_tables);
 
-  if (lizard::xa::cn_heartbeat_timeout_freeze_updating(lex)) {
+  if (lizard::cn_heartbeat_timeout_freeze_updating(lex)) {
     goto error;
   }
 
@@ -4420,15 +4427,13 @@ int mysql_execute_command(THD *thd, bool first_level) {
       if (!handle_reload_request(thd, lex->type, first_table,
                                  &write_to_binlog)) {
         {
-/// @attention a hack to pass mysql-test
-#ifndef NDEBUG
+          //append empty log for crash recover
           if (thd->variables.opt_consensus_safe_for_reset_master &&
               consensus_ptr && consensus_ptr->getLog()) {
             alisql::LogEntry entry1;
             consensus_ptr->getLog()->getEmptyEntry(entry1);
             consensus_ptr->replicateLog(entry1);
           }
-#endif
         }
 
         /*

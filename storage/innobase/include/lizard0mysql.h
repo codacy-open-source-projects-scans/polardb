@@ -11,7 +11,7 @@ struct row_prebuilt_t;
 namespace lizard {
 
 /** Whether to enable use as of query (true by default) */
-extern bool srv_force_normal_query_if_fbq;
+extern bool srv_flashback_query_enable;
 
 /** The max tolerable lease time of a snapshot */
 extern ulint srv_scn_valid_volumn;
@@ -27,7 +27,7 @@ struct asof_query_context_t {
   bool m_is_assigned;
 
   /** Snapshot vision that is used by asof query. */
-  Snapshot_vision *m_snapshot_vision;
+  const Snapshot_vision *m_snapshot_vision;
 
   /** TODO: ban constructor <16-10-20, zanye.zjy> */
   explicit asof_query_context_t()
@@ -39,7 +39,7 @@ struct asof_query_context_t {
 
   bool is_asof_query() const { return m_snapshot_vision != nullptr; }
 
-  Snapshot_vision *snapshot_vision() const { return m_snapshot_vision; }
+  const Snapshot_vision *snapshot_vision() const { return m_snapshot_vision; }
 
   bool is_asof_scn() const {
     return m_snapshot_vision &&
@@ -50,7 +50,7 @@ struct asof_query_context_t {
            m_snapshot_vision->type() == Snapshot_type::AS_OF_GCN;
   }
 
-  void assign_vision(Snapshot_vision *v) {
+  void assign_vision(const Snapshot_vision *v) {
     ut_ad(v && v->is_vision());
     m_snapshot_vision = v;
     /** Only set once */
@@ -80,7 +80,7 @@ struct asof_query_context_t {
                                 ERROR: DB_AS_OF_INTERNAL,
   DB_SNAPSHOT_OUT_OF_RANGE, DB_AS_OF_TABLE_DEF_CHANGED
 */
-dberr_t prebuilt_bind_flashback_query(row_prebuilt_t *prebuilt);
+dberr_t row_prebuilt_bind_flashback_query(row_prebuilt_t *prebuilt);
 
 /**
   Reset row_prebuilt_t::m_scn_query, query block level.
@@ -89,7 +89,18 @@ dberr_t prebuilt_bind_flashback_query(row_prebuilt_t *prebuilt);
 
   @return           dberr_t     DB_SUCCESS, or DB_SNAPSHOT_OUT_OF_RANGE.
 */
-dberr_t prebuilt_unbind_flashback_query(row_prebuilt_t *prebuilt);
+dberr_t row_prebuilt_unbind_flashback_query(row_prebuilt_t *prebuilt);
+
+/**
+  Get Snapshot_vison from prebuilt
+
+  @param[in]        prebuilt    row_prebuilt_t
+
+  @return           snapshot_vision if has,
+                    nullptr if hasn't
+*/
+extern const lizard::Snapshot_vision *row_prebuilt_get_snapshot_vision(
+    const row_prebuilt_t *prebuilt);
 
 extern int convert_timestamp_to_scn(THD *thd, utc_t utc, scn_t *scn);
 }  // namespace lizard

@@ -1,3 +1,30 @@
+/*****************************************************************************
+
+Copyright (c) 2023, 2024, Alibaba and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License, version 2.0, as published by the
+Free Software Foundation.
+
+This program is also distributed with certain software (including but not
+limited to OpenSSL) that is licensed under separate terms, as designated in a
+particular file or component or in included license documentation. The authors
+of MySQL hereby grant you an additional permission to link the program and
+your derivative works with the separately licensed software that they have
+included with MySQL.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
+for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
+
+*****************************************************************************/
+
+
 //
 // Created by zzy on 2022/8/25.
 //
@@ -5,6 +32,7 @@
 #include <cstring>
 
 #include "plugin/polarx_rpc/global_defines.h"
+#include "plugin/polarx_rpc/polarx_rpc.h"
 #include "plugin/polarx_rpc/utility/perf.h"
 
 #include "sql/sql_class.h"
@@ -217,6 +245,55 @@ void Cmd_perf_hist::send_result(THD *thd, bool error) {
         "all\", \"decode\", \"schedule\", \"run\", \"timer\", "
         "\"cleanup\", \"fin\", \"auth\", \"all\" or \"reset\".",
         system_charset_info);
+    if (protocol->end_row()) return;
+  }
+
+  my_eof(thd);
+}
+
+Proc *Proc_cmd::instance() {
+  static auto *proc = new Proc_cmd(key_memory_package);
+  return proc;
+}
+
+#ifdef MYSQL8PLUS
+Sql_cmd *Proc_cmd::evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const {
+#else
+Sql_cmd *Proc_cmd::evoke_cmd(THD *thd, List<Item> *list) const {
+#endif
+  return new (thd->mem_root) Cmd_cmd(thd, list, this);
+}
+
+bool Cmd_cmd::pc_execute(THD *) {
+  /// get cmd name
+#ifdef MYSQL8PLUS
+  auto it = m_list->begin();
+  auto name_item = dynamic_cast<Item_string *>(*(it++));
+#else
+  List_iterator_fast<Item> it(*m_list);
+  auto name_item = dynamic_cast<Item_string *>(it++);
+#endif
+  String *name = name_item->val_str(nullptr);
+  if (!name->is_empty()) name_ = name->ptr();
+  return false;
+}
+
+void Cmd_cmd::send_result(THD *thd, bool error) {
+  Protocol *protocol = thd->get_protocol();
+
+  /* No need to proceed if error occurred */
+  if (error) return;
+
+  if (m_proc->send_result_metadata(thd)) return;
+
+  if (0 == ::strcasecmp(name_.c_str(), "clear cache")) {
+    clear_xrpc_cache();
+    protocol->start_row();
+    protocol->store("ok", system_charset_info);
+    if (protocol->end_row()) return;
+  } else {
+    protocol->start_row();
+    protocol->store("Param should be \"clear cache\".", system_charset_info);
     if (protocol->end_row()) return;
   }
 

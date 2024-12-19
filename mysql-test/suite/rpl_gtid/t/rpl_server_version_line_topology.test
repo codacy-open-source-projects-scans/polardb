@@ -120,7 +120,7 @@ CREATE TABLE t1 (a INT);
 INSERT INTO t1 VALUES (1);
 
 # sync server_3 with server_2
---let $rpl_channel_name =
+--let $rpl_channel_name = 'test'
 --let $sync_slave_connection = server_3
 --source include/sync_slave_sql_with_master.inc
 --let $sync_slave_connection =

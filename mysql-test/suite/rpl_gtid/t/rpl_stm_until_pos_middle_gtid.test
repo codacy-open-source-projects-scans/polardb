@@ -38,6 +38,8 @@
 --source include/rpl_connection_master.inc
 --let $master_file= query_get_value(SHOW MASTER STATUS, File, 1)
 --let $master_pos= query_get_value(SHOW MASTER STATUS, Position, 1)
+# skip consensus_log_event gcn
+--let $master_pos = query_get_value("select $master_pos + 82 as master_pos", master_pos, 1)
 --inc $master_pos
 
 # Create a table in the master (one event without GTIDS, two with GTIDS)
@@ -59,7 +61,7 @@ COMMIT;
 --replace_result $master_file MASTER_FILE $master_pos MASTER_POS
 # Disable warnings to avoid logging "UNTIL condtion is not supported ..." on MTS
 --disable_warnings
-eval START SLAVE SQL_THREAD UNTIL SOURCE_LOG_FILE = "$master_file", SOURCE_LOG_POS = $master_pos;
+eval START SLAVE SQL_THREAD UNTIL SOURCE_LOG_FILE = "$master_file", SOURCE_LOG_POS = $master_pos for channel 'test';
 --enable_warnings
 
 --echo # Wait until SQL thread reaches last master binlog file

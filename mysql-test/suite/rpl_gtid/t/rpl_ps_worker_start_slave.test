@@ -43,7 +43,7 @@ CREATE TABLE t1 (a INT UNIQUE);
 
 # Scenario 1: single-threaded slave
 # Scenario 2: multi-threaded slave
---let $ps_table = performance_schema.replication_applier_status_by_worker
+--let $ps_table = performance_schema.replication_applier_status_by_worker  where channel_name = "test"
 --let $scenario = 1
 while ($scenario < 3)
 {

@@ -49,7 +49,7 @@ while ($i <= $number_of_channels)
   # First channel name should be default channel with empty name.
   if ($i == 1)
   {
-    --let $rpl_channel_name=''
+    --let $rpl_channel_name='test'
   }
   --replace_result $master_port port
   --eval CHANGE REPLICATION SOURCE TO SOURCE_USER='root', SOURCE_PORT= $master_port, SOURCE_HOST='localhost' FOR CHANNEL $rpl_channel_name

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -31,6 +31,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
  *******************************************************/
 
 #include "mtr0log.h"
+#include "lizard0dict.h"
+#include "lizard0mtr0log.h"
 
 #ifndef UNIV_HOTBACKUP
 #include "buf0buf.h"
@@ -49,8 +51,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 @param[in]  end_ptr  buffer end
 @param[out] index    own: dummy index
 @return parsed record end, NULL if not a complete record */
-static byte *mlog_parse_index_8029(byte *ptr, const byte *end_ptr,
-                                   dict_index_t **index);
+[[nodiscard]] static byte *mlog_parse_index_v1(byte *ptr, const byte *end_ptr,
+                                               dict_index_t **index);
 
 /** Catenates n bytes to the mtr log.
 @param[in] mtr Mini-transaction
@@ -523,10 +525,13 @@ constexpr size_t inst_col_info_size = 6;
 @param[in]   is_comp       true if COMP
 @param[in]   is_versioned  if table has row versions
 @param[in]   is_instant    true if table has INSTANT cols
+@param[in]   is_sec_lfields  true if secondary index lizard fields extra flag
+                             need to be logged
 @param[out]  size_needed   total size needed on REDO LOG */
 static void log_index_get_size_needed(const dict_index_t *index, size_t size,
                                       uint16_t n, bool is_comp,
                                       bool is_versioned, bool is_instant,
+                                      bool is_sec_lfields,
                                       size_t &size_needed) {
   auto size_for_versioned_fields = [](const dict_index_t *ind) {
     size_t _size = 0;
@@ -550,6 +555,10 @@ static void log_index_get_size_needed(const dict_index_t *index, size_t size,
 
   /* 1 byte to log flag */
   size_needed += 1;
+
+  /* 1 byte to log secondary index lizard fields extra flag. */
+  if (is_sec_lfields)
+    size_needed += 1;
 
   if (!is_versioned && !is_comp) {
     return;
@@ -676,11 +685,12 @@ template <typename F>
 @param[in]  n             number of fields
 @param[in]  is_versioned  true if table has row versions
 @param[in,out]  f         vector of fields with versions
+@param[in]  changed_order array indicating fields changed position
 @param[in]  log_ptr       log buffer pointer
 @param[in]  func          callback to check size reopen log buffer */
 static bool log_index_fields(const dict_index_t *index, uint16_t n,
                              bool is_versioned, std::vector<dict_field_t *> &f,
-                             byte *&log_ptr, F &func) {
+                             bool *changed_order, byte *&log_ptr, F &func) {
   /* Write metadata for each field. Log the fields in their logical order. */
   for (size_t i = 0; i < n; i++) {
     dict_field_t *field = index->get_field(i);
@@ -705,7 +715,8 @@ static bool log_index_fields(const dict_index_t *index, uint16_t n,
     log_ptr += 2;
 
     if (is_versioned) {
-      if (col->is_instant_added() || col->is_instant_dropped()) {
+      if (col->is_instant_added() || col->is_instant_dropped() ||
+          changed_order[i]) {
         f.push_back(field);
       }
     }
@@ -747,7 +758,7 @@ static bool log_index_versioned_fields(const std::vector<dict_field_t *> &f,
            | 16th bit indicates add version info follows. */
     uint16_t phy_pos = field->get_phy_pos();
 
-    ut_ad(field->col->is_instant_added() || field->col->is_instant_dropped());
+    /* It also might be accompanying column order change (!added&&!dropped) */
 
     if (field->col->is_instant_added()) {
       /* Set 16th bit in phy_pos to indicate presence of version added */
@@ -793,21 +804,35 @@ bool mlog_open_and_write_index(mtr_t *mtr, const byte *rec,
   const bool is_instant = index->has_instant_cols();
   const bool is_versioned = index->has_row_versions();
   const bool is_comp = dict_table_is_comp(index->table);
+  const bool is_leaf = page_is_leaf(page_align(rec));
 
   const byte *log_start;
   const byte *log_end;
 
   uint16_t n = is_versioned ? index->get_n_total_fields()
                             : dict_index_get_n_fields(index);
+
+  uint8_t n_sec_lfields;
+  uint8_t sl_extra_flag;
+  lizard::get_sec_lfields_extra_flag(index, sl_extra_flag, n_sec_lfields);
+  bool is_sec_lfields = false;
+  if (!is_leaf) {
+    /* Lizard-4.0: For non-leaf page, sec lizard fields should be ignored. */
+    n -= n_sec_lfields;
+  } else if (n_sec_lfields) {
+    is_sec_lfields = true;
+  }
+
   /* For spatial index, on non-leaf page, we just keep
   2 fields, MBR and page no. */
-  if (dict_index_is_spatial(index) && !page_is_leaf(page_align(rec))) {
+  if (dict_index_is_spatial(index) && !is_leaf) {
     n = DICT_INDEX_SPATIAL_NODEPTR_SIZE;
+    ut_ad(n_sec_lfields == 0);
   }
 
   size_t size_needed = 0;
   log_index_get_size_needed(index, size, n, is_comp, is_versioned, is_instant,
-                            size_needed);
+                            is_sec_lfields, size_needed);
   size_t total = size_needed;
   size_t alloc = total;
   if (alloc > mtr_buf_t::MAX_DATA_SIZE) {
@@ -824,14 +849,23 @@ bool mlog_open_and_write_index(mtr_t *mtr, const byte *rec,
 
   log_ptr = mlog_write_initial_log_record_fast(rec, type, log_ptr, mtr);
 
-  uint8_t index_log_version = INDEX_LOG_VERSION;
+  uint8_t index_log_version = INDEX_LOG_VERSION_CURRENT;
+  DBUG_EXECUTE_IF("invalid_index_log_version",
+                  index_log_version = INDEX_LOG_VERSION_MAX + 1;);
   log_index_log_version(index_log_version, log_ptr);
 
   uint8_t flag = 0;
   if (is_instant) SET_INSTANT(flag);
   if (is_versioned) SET_VERSIONED(flag);
   if (is_comp) SET_COMPACT(flag);
+  if (is_sec_lfields) {
+    ut_ad(!is_versioned && !is_instant);
+    SET_SEC_LFILEDS(flag);
+  }
+
   log_index_flag(flag, log_ptr);
+
+  lizard::log_index_sec_lfields_extra_flag(flag, sl_extra_flag, log_ptr);
 
   log_index_column_counts(index, n, rec, is_comp, is_versioned, is_instant,
                           log_ptr);
@@ -850,20 +884,52 @@ bool mlog_open_and_write_index(mtr_t *mtr, const byte *rec,
     return true;
   };
 
+  /* Ordinal position of an existing field can't be changed with INSTANT
+  algorithm. But when it is combined with ADD/DROP COLUMN, ordinal position
+  of a filed can be changed. This bool array of size #fields in index,
+  represents if ordinal position of an existing filed is changed. */
+  bool *fields_with_changed_order = nullptr;
+  if (is_versioned) {
+    fields_with_changed_order = new bool[n];
+    memset(fields_with_changed_order, false, (sizeof(bool) * n));
+
+    uint16_t phy_pos = 0;
+    for (size_t i = 0; i < n; i++) {
+      dict_field_t *field = index->get_field(i);
+      const dict_col_t *col = field->col;
+
+      if (col->is_instant_added() || col->is_instant_dropped()) {
+        continue;
+      } else if (col->get_phy_pos() >= phy_pos) {
+        phy_pos = col->get_phy_pos();
+      } else {
+        fields_with_changed_order[i] = true;
+      }
+    }
+  }
+
   if (is_comp) {
     /* Write fields info. */
     if (!log_index_fields(index, n, is_versioned, instant_fields_to_log,
-                          log_ptr, f)) {
+                          fields_with_changed_order, log_ptr, f)) {
+      if (is_versioned) {
+        delete[] fields_with_changed_order;
+      }
       return false;
     }
   } else if (is_versioned) {
     for (size_t i = 0; i < n; i++) {
       dict_field_t *field = index->get_field(i);
       const dict_col_t *col = field->col;
-      if (col->is_instant_added() || col->is_instant_dropped()) {
+      if (col->is_instant_added() || col->is_instant_dropped() ||
+          fields_with_changed_order[i]) {
         instant_fields_to_log.push_back(field);
       }
     }
+  }
+
+  if (is_versioned) {
+    delete[] fields_with_changed_order;
   }
 
   if (!instant_fields_to_log.empty()) {
@@ -921,16 +987,19 @@ static byte *read_1_bytes(byte *ptr, const byte *end_ptr, uint8_t &val) {
 @param[in]   is_comp       true if COMP
 @param[in]   is_versioned  true if table has row versions
 @param[in]   is_instant    true if table has INSTANT cols
+@param[in]   n_sec_lfields number of secondary index lizard fields
 @param[out]  n             number of index fields
 @param[out]  n_uniq        n_uniq for index
 @param[out]  inst_cols     number of column before first instant add was done.
 @return pointer to buffer. */
 static byte *parse_index_column_counts(byte *ptr, const byte *end_ptr,
                                        bool is_comp, bool is_versioned,
-                                       bool is_instant, uint16_t &n,
-                                       uint16_t &n_uniq, uint16_t &inst_cols) {
+                                       bool is_instant, uint8_t n_sec_lfields,
+                                       uint16_t &n, uint16_t &n_uniq,
+                                       uint16_t &inst_cols) {
   if (!is_versioned && !is_comp) {
-    n = n_uniq = 1;
+    n_uniq = 1;
+    n = n_uniq + n_sec_lfields;
     inst_cols = 0;
     return ptr;
   }
@@ -966,14 +1035,16 @@ static byte *parse_index_column_counts(byte *ptr, const byte *end_ptr,
 @param[in]       ptr      pointer to buffer
 @param[in]       end_ptr  pointer to end of buffer
 @param[in]       n        number of fields
+@param[in]       n_sec_lfields  number of secondary index lizard fields
 @param[in]       n_uniq   n_uniq
 @param[in]       is_versioned  true if table has row versions
 @param[in,out]   ind      dummy index
 @param[in,out]   table    dummy table
 @return pointer to log buffer */
 static byte *parse_index_fields(byte *ptr, const byte *end_ptr, uint16_t n,
-                                uint16_t n_uniq, bool is_versioned,
-                                dict_index_t *&ind, dict_table_t *&table) {
+                                uint8_t n_sec_lfields, uint16_t n_uniq,
+                                bool is_versioned, dict_index_t *&ind,
+                                dict_table_t *&table) {
   for (size_t i = 0; i < n; i++) {
     /* For redundant, col len metadata isn't needed for recovery as it is
     part of record itself. */
@@ -1005,7 +1076,8 @@ static byte *parse_index_fields(byte *ptr, const byte *end_ptr, uint16_t n,
   dict_table_add_system_columns(table, table->heap);
 
   /* Identify DB_TRX_ID and DB_ROLL_PTR in the index. */
-  if (is_versioned || (n_uniq != n)) {
+  /* Lizard-4.0 revision: Ignore the posible gpp column. */
+  if (is_versioned || (n_uniq != n - n_sec_lfields)) {
     size_t i = 0;
     i = DATA_TRX_ID - 1 + n_uniq;
     ut_a(DATA_TRX_ID_LEN == ind->get_col(i)->len);
@@ -1115,7 +1187,6 @@ static void update_instant_info(instant_fields_list_t f, dict_index_t *index) {
   for (auto field : f) {
     bool is_added = field.v_added != UINT8_UNDEFINED;
     bool is_dropped = field.v_dropped != UINT8_UNDEFINED;
-    ut_ad(is_added || is_dropped);
 
     dict_col_t *col = index->fields[field.logical_pos].col;
 
@@ -1188,13 +1259,27 @@ byte *mlog_parse_index(byte *ptr, const byte *end_ptr, dict_index_t **index) {
     return nullptr;
   }
 
-  ut_a(index_log_version <= INDEX_LOG_VERSION);
-  if (index_log_version == 0) {
-    return mlog_parse_index_8029(ptr, end_ptr, index);
+  byte *ret = nullptr;
+  switch (index_log_version) {
+    case INDEX_LOG_VERSION_CURRENT:
+      ret = mlog_parse_index_v1(ptr, end_ptr, index);
+      break;
+    case INDEX_LOG_VERSION_0:
+      /* INDEX_LOG_VERSION_0 is used in 8.0.29 and in 8.0.30 REDO log format
+      has changed which expects REDOs from < 8.0.30 to be logically empty. Thus
+      we shall never reach here. */
+      ut_error;
+    default:
+      ib::fatal(UT_LOCATION_HERE, ER_IB_INDEX_LOG_VERSION_MISMATCH,
+                (unsigned int)index_log_version,
+                (unsigned int)INDEX_LOG_VERSION_MAX);
   }
 
-  ut_ad(index_log_version == INDEX_LOG_VERSION);
+  return ret;
+}
 
+static byte *mlog_parse_index_v1(byte *ptr, const byte *end_ptr,
+                                 dict_index_t **index) {
   /* Read the 1 byte flag */
   uint8_t flag = 0;
   ptr = parse_index_flag(ptr, end_ptr, flag);
@@ -1206,12 +1291,20 @@ byte *mlog_parse_index(byte *ptr, const byte *end_ptr, dict_index_t **index) {
   const bool is_versioned = IS_VERSIONED(flag);
   const bool is_instant = IS_INSTANT(flag);
 
+  uint8_t sl_extra_flag, n_sec_lfields;
+  ptr = lizard::parse_index_lfields_extra_flag(flag, ptr, end_ptr,
+                                               sl_extra_flag, n_sec_lfields);
+  if (ptr == nullptr) {
+    return nullptr;
+  }
+
   /* Read n and n_uniq */
   uint16_t n = 0;
   uint16_t n_uniq = 0;
   uint16_t inst_cols = 0;
-  ptr = parse_index_column_counts(ptr, end_ptr, is_comp, is_versioned,
-                                  is_instant, n, n_uniq, inst_cols);
+  ptr =
+      parse_index_column_counts(ptr, end_ptr, is_comp, is_versioned, is_instant,
+                                n_sec_lfields, n, n_uniq, inst_cols);
   if (ptr == nullptr) {
     return ptr;
   }
@@ -1232,14 +1325,16 @@ byte *mlog_parse_index(byte *ptr, const byte *end_ptr, dict_index_t **index) {
                             RECOVERY_INDEX_TABLE_NAME, DICT_HDR_SPACE, 0, n);
   ind->table = table;
   ind->n_uniq = (unsigned int)n_uniq;
-  if (n_uniq != n) {
+  /* Lizard-4.0 revision: Ignore all secondary index lizard fields. */
+  if (n_uniq != n - n_sec_lfields) {
     ut_a(n_uniq + DATA_ROLL_PTR <= n);
     ind->type = DICT_CLUSTERED;
   }
 
   if (is_comp) {
     /* Read each index field info */
-    ptr = parse_index_fields(ptr, end_ptr, n, n_uniq, is_versioned, ind, table);
+    ptr = parse_index_fields(ptr, end_ptr, n, n_sec_lfields, n_uniq,
+                             is_versioned, ind, table);
     if (ptr == nullptr) {
       *index = ind;
       return ptr;
@@ -1285,9 +1380,6 @@ byte *mlog_parse_index(byte *ptr, const byte *end_ptr, dict_index_t **index) {
         field->col->set_phy_pos(phy_pos);
         phy_pos_bitmap[phy_pos] = true;
       } else {
-        ut_ad(field->col->is_instant_added() ||
-              field->col->is_instant_dropped());
-
         if (field->col->is_instant_added() &&
             !field->col->is_instant_dropped()) {
           shift_count--;
@@ -1310,287 +1402,6 @@ byte *mlog_parse_index(byte *ptr, const byte *end_ptr, dict_index_t **index) {
     ind->set_instant_nullable(new_n_nullable);
   }
 
-  table->is_system_table = false;
-
-  if (is_instant || is_versioned) {
-    if (is_versioned) {
-      ut_ad(ind->has_row_versions());
-      ind->create_fields_array();
-    }
-    if (is_instant) {
-      ind->table->set_upgraded_instant();
-    }
-    ind->type = DICT_CLUSTERED;
-    ind->create_nullables(table->current_row_version);
-  }
-
-  /* avoid ut_ad(index->cached) in dict_index_get_n_unique_in_tree */
-  ind->cached = true;
-  *index = ind;
-  return (ptr);
-}
-
-/** Parse the fields with versions.
-@param[in]   ptr       pointer to buffer
-@param[in]   end_ptr   pointer to end of buffer
-@param[out]  f         vector of fields with versions
-@param[out]  crv       current row version
-@param[out]  n_dropped number of dropped columns */
-static byte *parse_index_versioned_fields_8029(byte *ptr, const byte *end_ptr,
-                                               instant_fields_list_t &f,
-                                               uint16_t &crv,
-                                               size_t &n_dropped) {
-  uint16_t n_inst = 0;
-  ptr = read_2_bytes(ptr, end_ptr, n_inst);
-  if (ptr == nullptr) return (nullptr);
-  ut_ad(n_inst > 0);
-
-  for (auto i = n_inst; i > 0; --i) {
-    Field_instant_info info;
-
-    ptr = read_2_bytes(ptr, end_ptr, info.phy_pos);
-    if (ptr == nullptr) return (nullptr);
-
-    if ((info.phy_pos & 0x8000) != 0) {
-      info.phy_pos &= ~0x8000;
-
-      /* Read v_added */
-      ptr = read_1_bytes(ptr, end_ptr, info.v_added);
-      if (ptr == nullptr) return (nullptr);
-      ut_ad(info.v_added != UINT8_UNDEFINED);
-      crv = std::max(crv, (uint16_t)info.v_added);
-    }
-
-    if ((info.phy_pos & 0x4000) != 0) {
-      info.phy_pos &= ~0x4000;
-
-      /* Read v_dropped */
-      ptr = read_1_bytes(ptr, end_ptr, info.v_dropped);
-      if (ptr == nullptr) return (nullptr);
-      ut_ad(info.v_dropped != UINT8_UNDEFINED);
-      crv = std::max(crv, (uint16_t)info.v_dropped);
-      n_dropped++;
-    }
-
-    ut_ad((info.phy_pos & 0xC000) == 0);
-
-    f.push_back(info);
-  }
-
-  return (ptr);
-}
-
-/** Update the version info for the columns.
-NOTE : fields are logged in their physical order so with the help of phy_pos,
-it's easy to locate them.
-@param[in]      f      fields with versions
-@param[in,out]  index  dummy index */
-static void update_instant_info_8029(instant_fields_list_t f,
-                                     dict_index_t *index) {
-  if (f.empty()) {
-    return;
-  }
-
-  size_t n_added = 0;
-  size_t n_dropped = 0;
-
-  for (auto field : f) {
-    dict_col_t *col = index->fields[field.phy_pos].col;
-    bool is_added = field.v_added != UINT8_UNDEFINED;
-    bool is_dropped = field.v_dropped != UINT8_UNDEFINED;
-    ut_ad(is_added || is_dropped);
-
-    if (is_added) {
-      col->set_version_added(field.v_added);
-      n_added++;
-    }
-
-    if (is_dropped) {
-      col->set_version_dropped(field.v_dropped);
-      n_dropped++;
-    }
-
-    col->set_phy_pos(field.phy_pos);
-  }
-
-  index->table->initial_col_count -= n_added;
-  index->table->current_col_count -= n_dropped;
-}
-
-/** Parse index fields.
-@param[in]       ptr      pointer to buffer
-@param[in]       end_ptr  pointer to end of buffer
-@param[in]       n        number of fields
-@param[in]       n_uniq   n_uniq
-@param[in]       is_versioned  true if table has row versions
-@param[in,out]   ind      dummy index
-@param[in,out]   table    dummy table
-@return pointer to log buffer */
-static byte *parse_index_fields_8029(byte *ptr, const byte *end_ptr, uint16_t n,
-                                     uint16_t n_uniq, bool is_versioned,
-                                     dict_index_t *&ind, dict_table_t *&table) {
-  for (size_t i = 0; i < n; i++) {
-    /* For redundant, col len metadata isn't needed for recovery as it is
-    part of record itself. */
-    uint16_t len = 0;
-    ptr = read_2_bytes(ptr, end_ptr, len);
-    if (ptr == nullptr) {
-      return (nullptr);
-    }
-
-    uint32_t phy_pos = UINT32_UNDEFINED;
-    uint8_t v_added = UINT8_UNDEFINED;
-    uint8_t v_dropped = UINT8_UNDEFINED;
-
-    /* The high-order bit of len is the NOT NULL flag;
-    the rest is 0 or 0x7fff for variable-length fields,
-    and 1..0x7ffe for fixed-length fields. */
-    dict_mem_table_add_col(
-        table, nullptr, nullptr,
-        ((len + 1) & 0x7fff) <= 1 ? DATA_BINARY : DATA_FIXBINARY,
-        len & 0x8000 ? DATA_NOT_NULL : 0, len & 0x7fff, true, phy_pos, v_added,
-        v_dropped);
-
-    /* The is_ascending flag does not matter during
-    redo log apply, because we do not compare for
-    "less than" or "greater than". */
-    dict_index_add_col(ind, table, table->get_col(i), 0, true);
-  }
-
-  dict_table_add_system_columns(table, table->heap);
-
-  /* Identify DB_TRX_ID and DB_ROLL_PTR in the index. */
-  if (is_versioned || (n_uniq != n)) {
-    size_t i = 0;
-    i = DATA_TRX_ID - 1 + n_uniq;
-    ut_a(DATA_TRX_ID_LEN == ind->get_col(i)->len);
-    ind->fields[i].col = &table->cols[n + DATA_TRX_ID];
-    ind->fields[i].col->set_phy_pos(table->cols[i].get_phy_pos());
-
-    i = DATA_ROLL_PTR - 1 + n_uniq;
-    ut_a(DATA_ROLL_PTR_LEN == ind->get_col(i)->len);
-    ind->fields[i].col = &table->cols[n + DATA_ROLL_PTR];
-    ind->fields[i].col->set_phy_pos(table->cols[i].get_phy_pos());
-
-    i = DATA_SCN_ID - 1 + n_uniq;
-    ut_a(DATA_SCN_ID_LEN == ind->get_col(i)->len);
-    ind->fields[i].col = &table->cols[n + DATA_SCN_ID];
-    ind->fields[i].col->set_phy_pos(table->cols[i].get_phy_pos());
-
-    i = DATA_UNDO_PTR - 1 + n_uniq;
-    ut_a(DATA_UNDO_PTR_LEN == ind->get_col(i)->len);
-    ind->fields[i].col = &table->cols[n + DATA_UNDO_PTR];
-    ind->fields[i].col->set_phy_pos(table->cols[i].get_phy_pos());
-
-    i = DATA_GCN_ID - 1 + n_uniq;
-    ut_a(DATA_GCN_ID_LEN == ind->get_col(i)->len);
-    ind->fields[i].col = &table->cols[n + DATA_GCN_ID];
-    ind->fields[i].col->set_phy_pos(table->cols[i].get_phy_pos());
-  }
-
-  table->initial_col_count = table->current_col_count = table->total_col_count =
-      n;
-  return ptr;
-}
-
-static byte *mlog_parse_index_8029(byte *ptr, const byte *end_ptr,
-                                   dict_index_t **index) {
-  /* Read the 1 byte flag */
-  uint8_t flag = 0;
-  ptr = parse_index_flag(ptr, end_ptr, flag);
-  if (ptr == nullptr) {
-    return nullptr;
-  }
-
-  const bool is_comp = IS_COMPACT(flag);
-  const bool is_versioned = IS_VERSIONED(flag);
-  const bool is_instant = IS_INSTANT(flag);
-
-  if (is_versioned) {
-    ib::info(ER_IB_MSG_PARSE_OLD_REDO_INDEX_VERSION);
-  }
-
-  /* Read n and n_uniq */
-  uint16_t n = 0;
-  uint16_t n_uniq = 0;
-  uint16_t inst_cols = 0;
-  ptr = parse_index_column_counts(ptr, end_ptr, is_comp, is_versioned,
-                                  is_instant, n, n_uniq, inst_cols);
-  if (ptr == nullptr) {
-    return ptr;
-  }
-  ut_ad(inst_cols == 0 || is_instant);
-
-  /* Create a dummy dict_table_t */
-  dict_table_t *table =
-      dict_mem_table_create(RECOVERY_INDEX_TABLE_NAME, DICT_HDR_SPACE, n, 0, 0,
-                            is_comp ? DICT_TF_COMPACT : 0, 0);
-
-  if (inst_cols > 0) {
-    table->set_instant_cols(inst_cols);
-  }
-
-  /* Create a dummy dict_index_t */
-  dict_index_t *ind =
-      dict_mem_index_create(RECOVERY_INDEX_TABLE_NAME,
-                            RECOVERY_INDEX_TABLE_NAME, DICT_HDR_SPACE, 0, n);
-  ind->table = table;
-  ind->n_uniq = (unsigned int)n_uniq;
-  if (n_uniq != n) {
-    ut_a(n_uniq + DATA_ROLL_PTR <= n);
-    ind->type = DICT_CLUSTERED;
-  }
-
-  if (is_comp) {
-    /* Read each index field info */
-    ptr = parse_index_fields_8029(ptr, end_ptr, n, n_uniq, is_versioned, ind,
-                                  table);
-    if (ptr == nullptr) {
-      *index = ind;
-      return ptr;
-    }
-  } else if (is_versioned) {
-    /* Populate dummy cols/fields and link them */
-    populate_dummy_fields(ind, table, n IF_DEBUG(, is_comp));
-  }
-
-  size_t n_dropped = 0;
-  if (is_versioned) {
-    /* Read the fields with version added/dropped */
-    instant_fields_list_t f;
-    uint16_t current_row_version = 0;
-    ptr = parse_index_versioned_fields_8029(ptr, end_ptr, f,
-                                            current_row_version, n_dropped);
-    if (ptr == nullptr) {
-      *index = ind;
-      return (ptr);
-    }
-    ind->table->current_row_version = current_row_version;
-
-    /* Update fields INSTANT info */
-    update_instant_info_8029(f, ind);
-    f.clear();
-
-    /* For the remaining columns, update physical pos */
-    for (size_t i = 0; i < ind->n_def; i++) {
-      dict_field_t *field = ind->get_field(i);
-      if (field->col->get_phy_pos() == UINT32_UNDEFINED) {
-        field->col->set_phy_pos(i);
-      }
-    }
-
-    ind->row_versions = true;
-  }
-
-  /* For upgraded table from v1, set following */
-  if (inst_cols > 0) {
-    ind->instant_cols = true;
-    ind->n_instant_nullable =
-        ind->get_n_nullable_before(ind->get_instant_fields());
-  }
-
-  ind->n_fields = n - n_dropped;
-  ind->n_total_fields = n;
   table->is_system_table = false;
 
   if (is_instant || is_versioned) {

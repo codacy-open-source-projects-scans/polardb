@@ -1,4 +1,4 @@
-/* Copyright (c) 2005, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2005, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -524,6 +524,7 @@ class Relay_log_info : public Rpl_info {
       char const *param_privilege_checks_username,
       char const *param_privilege_checks_hostname);
 
+  void set_privilege_checks_user();
   /**
     Checks the validity and integrity of the data related to
     `PRIVILEGE_CHECKS_USER`, specifically the user name and the user
@@ -2170,6 +2171,9 @@ class Relay_log_info : public Rpl_info {
 
  private:
   friend lizard::Begin_events_before_gtid_manager;
+
+  char consensus_privilege_checks_username[PRIV_CHECKS_USERNAME_LENGTH + 4];
+  char consensus_privilege_checks_hostname[PRIV_CHECKS_USERNAME_LENGTH + 4];
 };
 
 /**

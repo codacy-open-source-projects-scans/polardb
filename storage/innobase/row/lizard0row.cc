@@ -46,8 +46,14 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "row0ins.h"
 #include "row0log.h"
 #include "row0mysql.h"
+#include "row0purge.h"
 #include "row0row.h"
+#include "row0undo.h"
 #include "row0upd.h"
+
+#include "lizard0data0data.h"
+#include "lizard0btr0cur.h"
+#include "lizard0dict0mem.h"
 
 #ifdef UNIV_DEBUG
 extern void page_zip_header_cmp(const page_zip_des_t *, const byte *);
@@ -102,6 +108,103 @@ void ins_alloc_lizard_fields(ins_node_t *node) {
   dfield_set_data(dfield, ptr, DATA_GCN_ID_LEN);
 }
 
+/**
+   Allocate row buffers for GPP_NO field of insert node.
+
+   @param[in]      node      Insert node
+*/
+void ins_alloc_gpp_field(ins_node_t *node) {
+  ut_d(dict_table_t *table = nullptr);
+  byte *ptr = nullptr;
+  dtuple_t *row = nullptr;
+  mem_heap_t *heap = nullptr;
+  dfield_t *dfield = nullptr;
+  ut_ad(node);
+
+  row = node->row;
+  ut_d(table = node->table);
+  heap = node->entry_sys_heap;
+
+  ut_ad(row && table && heap);
+  ut_ad(dtuple_get_n_fields(row) == table->get_n_cols());
+
+  ptr = static_cast<byte *>(mem_heap_zalloc(heap, DATA_GPP_NO_LEN));
+
+  dfield = dtuple_get_v_gfield(row);
+  dfield_set_data(dfield, ptr, DATA_GPP_NO_LEN);
+  node->gpp_no_buf = ptr;
+}
+
+/**
+ * Write GPP_NO after primary key insert.
+ *
+ * @param[in/out]	insert node
+ * @param[in]		index
+ * @param[in]		index entry
+ * @param[in]		row
+ */
+void row_ins_clust_write_gpp_no(ins_node_t *node, const dict_index_t *index,
+                                dtuple_t *entry, const dtuple_t *row) {
+  ut_ad(index->is_clustered());
+  ut_ad(node);
+  ut_ad(node->index == index);
+  ut_ad(node->entry == entry);
+  ut_ad(node->row == row);
+
+  /** Have inserted on primary key. */
+  ut_ad(node->gpp_no != 0);
+
+  mach_write_to_4(node->gpp_no_buf, node->gpp_no);
+
+  ut_ad(row->read_v_gpp_no() == node->gpp_no);
+  ut_ad(entry->read_v_gpp_no() == node->gpp_no);
+}
+
+/**
+ * Debug assert GPP_NO is valid when inserting second index.
+ * Attention: Use macro instead of using it directly.
+ *
+ * @param[in]	  insert node
+ * @param[in]		index
+ * @param[in]		index entry
+ * @param[in]		row
+ */
+void row_ins_sec_assert_gpp_no(ins_node_t *node, const dict_index_t *index,
+                               dtuple_t *entry, const dtuple_t *row) {
+  ut_ad(!index->is_clustered());
+  ut_ad(node);
+  ut_ad(node->index == index);
+  ut_ad(node->entry == entry);
+  ut_ad(node->row == row);
+
+  /** Have inserted on primary key. */
+  ut_ad(node->gpp_no != 0);
+
+  ut_ad(entry->read_v_gpp_no() != 0);
+  ut_ad(row->read_v_gpp_no() == entry->read_v_gpp_no());
+  if (index->n_s_gfields > 0) {
+    ut_ad(entry->read_s_gpp_no() == entry->read_v_gpp_no());
+  }
+  return;
+}
+
+/**
+ * Write GPP_NO after primary key insert or just assert it for sec index.
+ *
+ * @param[in/out]	insert node
+ * @param[in]		index
+ * @param[in]		index entry
+ * @param[in]		row
+ */
+void row_ins_index_write_gpp_no(ins_node_t *node, const dict_index_t *index,
+                                dtuple_t *entry, const dtuple_t *row) {
+  if (index->is_clustered()) {
+    row_ins_clust_write_gpp_no(node, index, entry, row);
+  } else {
+    lizard_row_ins_sec_assert_gpp_no(node, index, entry, row);
+  }
+}
+
 /*=============================================================================*/
 /* lizard record update */
 /*=============================================================================*/
@@ -114,9 +217,9 @@ void ins_alloc_lizard_fields(ins_node_t *node) {
 */
 void row_upd_index_entry_lizard_field(que_thr_t *thr, dtuple_t *entry,
                                       dict_index_t *index) {
-  dfield_t *dfield;
-  byte *ptr;
-  ulint pos;
+  dfield_t *dfield = nullptr;
+  byte *ptr = nullptr;
+  ulint pos = 0;
   const txn_desc_t *txn_desc = nullptr;
 
   ut_ad(thr && entry && index);
@@ -136,15 +239,19 @@ void row_upd_index_entry_lizard_field(que_thr_t *thr, dtuple_t *entry,
   dfield = dtuple_get_nth_field(entry, pos);
   ptr = static_cast<byte *>(dfield_get_data(dfield));
   trx_write_scn(ptr, txn_desc);
+  pos++;
 
   /** 2. Populate UBA */
-  pos = index->get_sys_col_pos(DATA_UNDO_PTR);
+  ut_ad(pos == index->get_sys_col_pos(DATA_UNDO_PTR));
+
   dfield = dtuple_get_nth_field(entry, pos);
   ptr = static_cast<byte *>(dfield_get_data(dfield));
   trx_write_undo_ptr(ptr, txn_desc);
+  pos++;
 
   /** 3. Populate GCN */
-  pos = index->get_sys_col_pos(DATA_GCN_ID);
+  ut_ad(pos == index->get_sys_col_pos(DATA_GCN_ID));
+
   dfield = dtuple_get_nth_field(entry, pos);
   ptr = static_cast<byte *>(dfield_get_data(dfield));
   trx_write_gcn(ptr, txn_desc);
@@ -165,6 +272,7 @@ byte *row_get_scn_ptr_in_rec(rec_t *rec, const dict_index_t *index,
   ut_ad(index->is_clustered());
 
   scn_pos = index->get_sys_col_pos(DATA_SCN_ID);
+  ut_ad(rec_offs_n_fields(offsets) >= scn_pos + DATA_N_LIZARD_COLS);
   field =
       const_cast<byte *>(rec_get_nth_field(index, rec, offsets, scn_pos, &len));
 
@@ -286,6 +394,16 @@ void row_upd_rec_lizard_fields_in_cleanout(rec_t *rec, page_zip_des_t *page_zip,
                                 txn_rec->undo_ptr, txn_rec->gcn);
 }
 
+	void row_upd_rec_gpp_no_in_cleanout(rec_t *rec, page_zip_des_t *page_zip,
+                                    const dict_index_t *index,
+                                    const ulint gpp_no_offset,
+                                    const gpp_no_t gpp_no) {
+  ut_ad(!index->is_clustered());
+  ut_ad(!page_zip);
+  row_write_gpp_no(rec, index, gpp_no_offset, gpp_no);
+}
+
+
 /**
   Updates the scn and undo_ptr field in a clustered index record in
   database recovery.
@@ -336,6 +454,18 @@ void row_upd_rec_lizard_fields_in_recovery(rec_t *rec, page_zip_des_t *page_zip,
     row_upd_rec_write_scn_and_undo_ptr(field, scn, undo_ptr, gcn);
   }
 }
+/**
+ * Update gpp no field in secondary index record in database recovery.
+ * @param[in]      rec			record
+ * @param[in]      page_zip
+ * @param[in]      gpp no
+ * @param[in]      gpp offset		gpp no position in rec */
+void row_upd_rec_gpp_fields_in_recovery(rec_t *rec, page_zip_des_t *page_zip,
+                                        page_no_t gpp_no, ulint gpp_offset) {
+  ut_ad(!page_zip);
+
+  mach_write_to_4(rec + gpp_offset, gpp_no);
+}
 
 /**
   Validate the scn and undo_ptr fields in record.
@@ -364,6 +494,226 @@ bool validate_lizard_fields_in_record(const dict_index_t *index,
   ut_a(len == DATA_GCN_ID_LEN);
 
   return true;
+}
+
+/**
+   Allocate row buffers for GPP_NO field of update node's old row.
+
+   @param[in]      node      Insert node
+*/
+void upd_alloc_gpp_field_for_old_row(upd_node_t *node) {
+  ut_d(dict_table_t *table = nullptr);
+  byte *ptr = nullptr;
+  dtuple_t *row = nullptr;
+  mem_heap_t *heap = nullptr;
+  dfield_t *dfield = nullptr;
+  ut_ad(node);
+  ut_d(table = node->table);
+  heap = node->heap;
+
+  /* For old row, Set gpp_no to FIL_NULL. */
+  row = node->row;
+  ut_ad(row);
+  ut_ad(dtuple_get_n_fields(row) == table->get_n_cols());
+
+  ptr = static_cast<byte *>(mem_heap_zalloc(heap, DATA_GPP_NO_LEN));
+  dfield = dtuple_get_v_gfield(row);
+  dfield_set_data(dfield, ptr, DATA_GPP_NO_LEN);
+  mach_write_to_4(ptr, FIL_NULL);
+  ut_ad(node->row->read_v_gpp_no() == FIL_NULL);
+}
+
+/**
+   Allocate row buffers for GPP_NO field of update node's new row.
+
+   @param[in]      node      Insert node
+*/
+void upd_alloc_gpp_field_for_new_row(upd_node_t *node) {
+  ut_d(dict_table_t *table = nullptr);
+  byte *ptr = nullptr;
+  dtuple_t *row = nullptr;
+  mem_heap_t *heap = nullptr;
+  dfield_t *dfield = nullptr;
+  ut_ad(node);
+  ut_d(table = node->table);
+  heap = node->heap;
+
+  /* For update row, link it with node->gpp_no_buf. */
+  row = node->upd_row;
+  ut_ad(row && table && heap);
+  ut_ad(dtuple_get_n_fields(row) == table->get_n_cols());
+
+  ptr = static_cast<byte *>(mem_heap_zalloc(heap, DATA_GPP_NO_LEN));
+
+  dfield = dtuple_get_v_gfield(row);
+  dfield_set_data(dfield, ptr, DATA_GPP_NO_LEN);
+  node->gpp_no_buf = ptr;
+}
+
+/**
+ * Write GPP_NO after primary key update.
+ *
+ * @param[in/out]	upd node
+ * @param[in]		index
+ * @param[in]   index entry
+ * @param[in]		upd_row
+ */
+void row_upd_clust_write_gpp_no(upd_node_t *node, const dict_index_t *index,
+                                dtuple_t *entry, const dtuple_t *upd_row) {
+  ut_ad(index->is_clustered());
+  ut_ad(node);
+  ut_ad(node->upd_row == upd_row);
+  ut_ad(node->row->read_v_gpp_no() == FIL_NULL);
+
+  /** Have inserted on primary key. */
+  ut_ad(node->gpp_no != 0);
+
+  mach_write_to_4(node->gpp_no_buf, node->gpp_no);
+
+  ut_ad(upd_row->read_v_gpp_no() == node->gpp_no);
+  ut_ad(!entry || entry->read_v_gpp_no() == node->gpp_no);
+}
+
+/**
+ * Debug assert GPP_NO is valid when updating second index.
+ * Attention: Use macro instead of using it directly.
+ *
+ * @param[in]	  upd node
+ * @param[in]		index
+ * @param[in]   index entry
+ * @param[in]		upd_row
+ */
+void row_upd_sec_assert_gpp_no(upd_node_t *node, const dict_index_t *index,
+                               dtuple_t *entry, const dtuple_t *upd_row) {
+  ut_ad(!index->is_clustered());
+  ut_ad(node);
+  ut_ad(node->upd_row == upd_row);
+  ut_ad(node->row->read_v_gpp_no() == FIL_NULL);
+
+  /** Have inserted on primary key. */
+  ut_ad(node->gpp_no != 0);
+  ut_ad(entry->read_v_gpp_no() != 0);
+  ut_ad(upd_row->read_v_gpp_no() == entry->read_v_gpp_no());
+  if (index->n_s_gfields > 0) {
+    ut_ad(entry->read_s_gpp_no() == entry->read_v_gpp_no());
+  }
+}
+
+/*=============================================================================*/
+/* lizard record row log */
+/*=============================================================================*/
+/**
+   Allocate row buffers for GPP_NO field when applying row log table
+
+   @param[in/out]   row
+   @param[in]       heap
+*/
+void row_log_table_alloc_gpp_field(dtuple_t *row, mem_heap_t *heap) {
+  byte *ptr = nullptr;
+  dfield_t *dfield = nullptr;
+
+  ut_ad(row && heap);
+  ptr = static_cast<byte *>(mem_heap_zalloc(heap, DATA_GPP_NO_LEN));
+  dfield = dtuple_get_v_gfield(row);
+  dfield_set_data(dfield, ptr, DATA_GPP_NO_LEN);
+}
+
+/**
+ * Write GPP_NO after row log table apply.
+ *
+ * @param[in]		gpp_no
+ * @param[in]		index
+ * @param[in/out]	row
+ */
+void row_log_table_clust_write_gpp_no(const gpp_no_t &gpp_no,
+                                      const dict_index_t *index,
+                                      const dtuple_t *row) {
+  ut_ad(index->is_clustered());
+  ut_ad(row->v_gfield->data != nullptr);
+
+  /** Have inserted on primary key. */
+  ut_ad(gpp_no != 0);
+
+  mach_write_to_4((byte *)row->v_gfield->data, gpp_no);
+
+  ut_ad(row->read_v_gpp_no() == gpp_no);
+}
+
+/**
+ * Assert GPP_NO is valid when applying row log table in secondary index.
+ *
+ * @param[in]		index
+ * @param[in]   index entry
+ * @param[in]		row
+ * @param[in]		gpp_no
+ */
+void row_log_table_sec_assert_gpp_no(const dict_index_t *index, dtuple_t *entry,
+                                     const dtuple_t *row,
+                                     const gpp_no_t &gpp_no) {
+  ut_ad(!index->is_clustered());
+  /** Have inserted on primary key. */
+  ut_ad(gpp_no != 0);
+  ut_ad(entry->read_v_gpp_no() == gpp_no);
+  ut_ad(row->read_v_gpp_no() == gpp_no);
+  if (index->n_s_gfields > 0) {
+    ut_ad(entry->read_s_gpp_no() == gpp_no);
+  }
+}
+
+/*=============================================================================*/
+/* lizard record row undo */
+/*=============================================================================*/
+/**
+   Allocate row buffers for GPP_NO field for undo node.
+
+   @param[in]       node      Undo node
+*/
+void row_undo_alloc_gpp_field(undo_node_t *node) {
+  ut_d(dict_table_t *table = nullptr);
+  byte *ptr = nullptr;
+  dtuple_t *row = nullptr;
+  mem_heap_t *heap = nullptr;
+  dfield_t *dfield = nullptr;
+  ut_ad(node);
+
+  row = node->row;
+  ut_d(table = node->table);
+  heap = node->heap;
+
+  ut_ad(row && table && heap);
+  ptr = static_cast<byte *>(mem_heap_zalloc(heap, DATA_GPP_NO_LEN));
+  dfield = dtuple_get_v_gfield(row);
+  dfield_set_data(dfield, ptr, DATA_GPP_NO_LEN);
+  mach_write_to_4(ptr, FIL_NULL);
+  ut_ad(node->row->read_v_gpp_no() == FIL_NULL);
+}
+
+/*=============================================================================*/
+/* lizard record row purge */
+/*=============================================================================*/
+/**
+   Allocate row buffers for GPP_NO field for purge node.
+
+   @param[in]       node      Purge node
+*/
+void row_purge_alloc_gpp_field(purge_node_t *node) {
+  ut_d(dict_table_t *table = nullptr);
+  byte *ptr = nullptr;
+  dtuple_t *row = nullptr;
+  mem_heap_t *heap = nullptr;
+  dfield_t *dfield = nullptr;
+  ut_ad(node);
+
+  row = node->row;
+  ut_d(table = node->table);
+  heap = node->heap;
+
+  ut_ad(row && table && heap);
+  ptr = static_cast<byte *>(mem_heap_zalloc(heap, DATA_GPP_NO_LEN));
+  dfield = dtuple_get_v_gfield(row);
+  dfield_set_data(dfield, ptr, DATA_GPP_NO_LEN);
+  mach_write_to_4(ptr, FIL_NULL);
+  ut_ad(node->row->read_v_gpp_no() == FIL_NULL);
 }
 
 /*=============================================================================*/
@@ -430,22 +780,6 @@ gcn_t row_get_rec_gcn(const rec_t *rec, const dict_index_t *index,
 }
 
 /**
-  Read the undo ptr state from record
-
-  @param[in]      rec         record
-  @param[in]      index       dict_index_t, must be cluster index
-  @param[in]      offsets     rec_get_offsets(rec, index)
-
-  @retval         scn id
-*/
-bool row_get_rec_undo_ptr_is_active(const rec_t *rec, const dict_index_t *index,
-                                    const ulint *offsets) {
-  undo_ptr_t undo_ptr = row_get_rec_undo_ptr(rec, index, offsets);
-
-  return undo_ptr_is_active(undo_ptr);
-}
-
-/**
   Get the relative offset in record by offsets
   @param[in]      index
   @param[in]      type
@@ -453,26 +787,51 @@ bool row_get_rec_undo_ptr_is_active(const rec_t *rec, const dict_index_t *index,
 */
 ulint row_get_lizard_offset(const dict_index_t *index, ulint type,
                             const ulint *offsets) {
-  ulint pos;
-  ulint offset;
-  ulint len;
+  ulint offset = 0;
   ut_ad(index->is_clustered());
   ut_ad(!index->table->is_intrinsic());
 
-  pos = index->get_sys_col_pos(type);
-  ut_ad(pos == index->n_uniq + type - 1);
+  offset = index->trx_id_offset;
+  if (!offset) {
+    offset = row_get_trx_id_offset(index, offsets);
+   }
+  
+  switch (type) {
+    case DATA_GCN_ID:
+      offset += DATA_UNDO_PTR_LEN;
+      [[fallthrough]];
 
-  offset = rec_get_nth_field_offs(index, offsets, pos, &len);
+    case DATA_UNDO_PTR:
+      offset += DATA_SCN_ID_LEN;
+      [[fallthrough]];
+
+    case DATA_SCN_ID:
+      offset += DATA_ROLL_PTR_LEN + DATA_TRX_ID_LEN;
+      break;
+
+    default:
+      ut_ad(0);
+  }
+
+#if defined UNIV_DEBUG
+  ulint len;
+  ulint d_pos = index->get_sys_col_pos(type);
+  ut_a(d_pos == index->n_uniq + type - 1);
+  ulint d_offset = rec_get_nth_field_offs(index, offsets, d_pos, &len);
+
   if (type == DATA_SCN_ID) {
     ut_ad(len == DATA_SCN_ID_LEN);
-  } else if (type == DATA_UNDO_PTR) {
+   } else if (type == DATA_UNDO_PTR) {
     ut_ad(len == DATA_UNDO_PTR_LEN);
-  } else if (type == DATA_GCN_ID) {
+   } else if (type == DATA_GCN_ID) {
     ut_ad(len == DATA_GCN_ID_LEN);
-  } else {
+   } else {
     ut_ad(0);
-  }
-  return offset;
+   }
+   ut_ad(d_offset == offset);
+#endif
+
+   return offset;
 }
 
 /**
@@ -503,6 +862,74 @@ void row_get_txn_rec(const rec_t *rec, const dict_index_t *index,
   txn_rec->undo_ptr = trx_read_undo_ptr(rec + offset);
   offset += DATA_UNDO_PTR_LEN;
   txn_rec->gcn = trx_read_gcn(rec + offset);
+}
+
+/**
+ * Retrieves the offset of the GPP number in a record
+ *
+ * @param[in] index   Dictionary index object, non-clustered
+ * @param[in] offsets Array of field offsets
+ * @return            Returns the offset of the GPP number within the record
+ */
+ulint row_get_gpp_no_offset(const dict_index_t *index, const ulint *offsets) {
+  ulint pos;
+  ulint offset;
+  ulint len;
+  ut_ad(!index->is_clustered());
+  ut_ad(index->n_fields == offsets[1]);
+  ut_ad(index->n_s_gfields > 0);
+
+  /** The GPP NO resides on the last field of the index. */
+  pos = index->n_fields - 1;
+
+  offset = rec_get_nth_field_offs(index, offsets, pos, &len);
+  ut_ad(len == DATA_GPP_NO_LEN);
+
+  return offset;
+}
+
+/**
+ * Retrieves the GPP Number from a record
+ *
+ * @param[in] rec     Pointer to the record
+ * @param[in] index   Pointer to the dictionary index object, non-clustered
+ * @param[in] offsets Record field offsets array
+ * @return            Returns the GPP Number from the record
+ */
+gpp_no_t row_get_gpp_no(const rec_t *rec, const dict_index_t *index,
+                        const ulint *offsets, ulint &gpp_no_offset) {
+  ut_ad(!index->is_clustered());
+  ut_ad(index->n_s_gfields > 0);
+  assert_lizard_dict_index_check(index);
+
+  gpp_no_offset = row_get_gpp_no_offset(index, offsets);
+
+  return mach_read_from_4(rec + gpp_no_offset);
+}
+
+void row_write_gpp_no(rec_t *rec, const dict_index_t *index,
+                      const ulint gpp_no_offset, const gpp_no_t gpp_no) {
+  ut_ad(!index->is_clustered());
+  ut_ad(index->n_s_gfields > 0);
+  assert_lizard_dict_index_check(index);
+  mach_write_to_4(rec + gpp_no_offset, gpp_no);
+}
+
+/**
+ * Assert GPP_NO is valid for multi-valued sec index.
+ *
+ * @param[in]		index
+ * @param[in]		multi-value entry
+ */
+void row_sec_multi_value_assert_gpp_no(const dict_index_t *index,
+                                       const dtuple_t *mv_entry) {
+  ut_ad(!index->is_clustered());
+  ut_d(gpp_no_t gpp_no = mv_entry->read_v_gpp_no());
+  ut_ad(gpp_no != 0 && gpp_no != FIL_NULL);
+
+  if (index->n_s_gfields > 0) {
+    ut_ad(mv_entry->read_s_gpp_no() == gpp_no);
+  }
 }
 
 /**
@@ -621,14 +1048,14 @@ void row_lizard_cleanout_when_modify_rec(const trx_id_t trx_id, rec_t *rec,
   ut_ad(index->is_clustered());
   ut_ad(!index->table->is_intrinsic());
 
-  lizard::row_get_txn_rec(rec, index, offsets, &rec_txn);
+  row_get_txn_rec(rec, index, offsets, &rec_txn);
 
   /** lookup the scn by UBA address */
-  lizard::txn_rec_real_state_by_misc(&rec_txn, &cleanout);
+  txn_rec_real_state_by_misc(&rec_txn, &cleanout);
 
   if (cleanout) {
     ut_ad(mtr_memo_contains_flagged(mtr, block, MTR_MEMO_PAGE_X_FIX));
-    lizard::row_upd_rec_lizard_fields_in_cleanout(
+    row_upd_rec_lizard_fields_in_cleanout(
         const_cast<rec_t *>(rec),
         const_cast<page_zip_des_t *>(buf_block_get_page_zip(block)), index,
         offsets, &rec_txn);
@@ -664,9 +1091,9 @@ bool row_is_committed(trx_id_t trx_id, const rec_t *rec,
   }
 
   txn_rec_t txn_rec;
-  lizard::row_get_txn_rec(rec, index, offsets, &txn_rec);
+  row_get_txn_rec(rec, index, offsets, &txn_rec);
 
-  return !lizard::txn_rec_real_state_by_misc(&txn_rec);
+  return !txn_rec_real_state_by_misc(&txn_rec);
 }
 
 /**
@@ -707,503 +1134,140 @@ byte *row_upd_parse_lizard_vals(const byte *ptr, const byte *end_ptr,
   return const_cast<byte *>(ptr);
 }
 
+/*=============================================================================*/
+/* lizard row guess on gpp */
+/*=============================================================================*/
+
 /**
-  Collect the page which need to cleanout
+ * When attempting to select a secondary index record, this operation tries to
+ * position a persistent cursor on the corresponding clustered index record
+ * using the gpp_no value retrieved from the secondary index record.
+ *
+ * @param[in]     clust_idx       Clustered index
+ * @param[in]     sec_idx         Secondary index
+ * @param[in]     clust_ref       Reference tuple for the clustered index
+ * @param[in]     sec_rec         Secondary index record
+ * @param[in,out] clust_pcur      Persistent cursor for the clustered index
+ * @param[out]    sec_offsets     Offsets array for the secondary record
+ * @param[in]     mode            latching mode
+ * @param[in]     pcur            Persistent cursor for the secondary index
+ * @param[in]     cursor          Point to Cursor for the secondary index
+ * @param[in]     mtr             Mini-transaction handle
+ * @return        True if successful positioning, False otherwise
+ */
+bool row_sel_optimistic_guess_clust(dict_index_t *clust_idx,
+                                    dict_index_t *sec_idx, dtuple_t *clust_ref,
+                                    const rec_t *sec_rec,
+                                    btr_pcur_t *clust_pcur, ulint *sec_offsets,
+                                    ulint mode,
+                                    btr_pcur_t *pcur,
+                                    SCursor **scursor,
+                                    mtr_t *mtr) {
+  ut_ad(!sec_idx->is_clustered());
+  ut_ad(mode == BTR_SEARCH_LEAF);
 
-  @param[in]        trx_id
-  @param[in]        txn_rec         txn description and state
-  @param[in]        rec             current rec
-  @param[in]        index           cluster index
-  @parma[in]        offsets         rec_get_offsets(rec, index)
-  @param[in/out]    pcur            cursor
-
-  @retval           true            collected
-  @retval           false           didn't collect
-*/
-
-bool row_cleanout_collect(trx_id_t trx_id, txn_rec_t &txn_rec, const rec_t *rec,
-                          const dict_index_t *index, const ulint *offsets,
-                          btr_pcur_t *pcur) {
-  if (cleanout_mode == CLEANOUT_BY_CURSOR) {
-    if (!pcur || pcur->m_cleanout_cursors == nullptr) return false;
-  } else {
-    if (!pcur || pcur->m_cleanout_pages == nullptr) return false;
+  if (!index_scan_guess_clust_enabled || sec_idx->n_s_gfields == 0) {
+    return false;
   }
 
-  /** If disabled, skip it. */
-  if (opt_cleanout_disable) return false;
+  ut_ad(sec_offsets);
 
-  assert_row_lizard_valid(rec, index, offsets);
-  ut_ad(index->is_clustered());
-  ut_ad(index == pcur->get_btr_cur()->index);
-  ut_ad(rec == pcur->get_rec());
+  ulint gpp_no_offset = 0;
+  bool hit = btr_cur_guess_clust_by_gpp(clust_idx, sec_idx, clust_ref, sec_rec,
+                                        clust_pcur, sec_offsets, mode, gpp_no_offset ,mtr);
 
-  page_no_t page_no = page_get_page_no(pcur->get_page());
-  ut_ad(page_no == page_get_page_no(page_align(rec)));
-
-  if (cleanout_mode == CLEANOUT_BY_CURSOR) {
-    Cursor cursor(pcur->get_block()->get_page_id());
-    cursor.store_position(pcur);
-    pcur->m_cleanout_cursors->push_cursor(cursor);
-    pcur->m_cleanout_cursors->push_trx(trx_id, txn_rec);
-
-    lizard_stats.cleanout_cursor_collect.inc();
-
-  } else {
-    page_id_t page_id(dict_index_get_space(index), page_no);
-
-    pcur->m_cleanout_pages->push_page(page_id, index);
-    pcur->m_cleanout_pages->push_trx(trx_id, txn_rec);
-
-    lizard_stats.cleanout_page_collect.inc();
+  /* Try to add the cursor into scan_cleanout. */
+  if(!hit && scursor && pcur->m_cleanout){
+    *scursor = pcur->m_cleanout ->acquire_for_gpp(pcur, gpp_no_offset);
   }
-
-  return true;
+  
+  index_scan_guess_clust_stat(hit);
+  return hit;
 }
 
 /**
-  Collect the cursor which need to cache by tcn.
+ * When attempting to purge a secondary index record, this operation tries to
+ * position a persistent cursor on the corresponding clustered index record
+ * using the gpp_no value retrieved from the secondary index record.
+ *
+ * @param[in]     clust_idx       Clustered index
+ * @param[in]     sec_idx         Secondary index
+ * @param[in]     clust_ref       Reference tuple for the clustered index
+ * @param[in]     sec_rec         Secondary index record
+ * @param[in,out] clust_pcur      Persistent cursor for the clustered index
+ * @param[out]    sec_offsets     Offsets array for the secondary record
+ * @param[in]     mode            latching mode
+ * @param[in]     mtr             Mini-transaction handle
+ * @return        True if successful positioning, False otherwise
+ */
+bool row_purge_optimistic_guess_clust(dict_index_t *clust_idx,
+                                      dict_index_t *sec_idx,
+                                      dtuple_t *clust_ref, const rec_t *sec_rec,
+                                      btr_pcur_t *clust_pcur,
+                                      ulint *sec_offsets, ulint mode,
+                                      mtr_t *mtr) {
+  ut_ad(!sec_idx->is_clustered());
+  ut_ad(mode == BTR_SEARCH_LEAF);
 
-  @param[in]        trx_id
-  @param[in]        txn_rec         txn description and state
-  @param[in]        rec             current rec
-  @param[in]        index           cluster index
-  @parma[in]        offsets         rec_get_offsets(rec, index)
-  @param[in/out]    pcur            cursor
+  if (!index_purge_guess_clust_enabled || sec_idx->n_s_gfields == 0) {
+    return false;
+  }
 
-  @retval           true            collected
-  @retval           false           didn't collect
-*/
-
-bool tcn_collect(trx_id_t trx_id, txn_rec_t &txn_rec, const rec_t *rec,
-                 const dict_index_t *index, const ulint *offsets,
-                 btr_pcur_t *pcur) {
-  if (!pcur || pcur->m_cleanout_cursors == nullptr) return false;
-
-  /** If disabled, skip it. */
-  if (opt_cleanout_disable) return false;
-
-  assert_row_lizard_valid(rec, index, offsets);
-  ut_ad(index->is_clustered());
-  // pcur->get_page_cur()->index might be nullptr for now.
-  // ut_ad(index == pcur->get_page_cur()->index);
-  ut_ad(rec == pcur->get_rec());
-
-  ut_d(page_no_t page_no = page_get_page_no(pcur->get_page()));
-  ut_ad(page_no == page_get_page_no(page_align(rec)));
-
-  Cursor cursor(true, pcur->get_block()->get_page_id());
-  cursor.store_position(pcur);
-  pcur->m_cleanout_cursors->push_cursor_by_page(cursor, trx_id, txn_rec);
-
-  return true;
-}
-
-/** Page cleanout operation */
-struct Cleanout {
-  Cleanout(const Txn_commits *txns) : m_txns(txns) {}
-
-  ulint operator()(Cursor &cursor) {
-    bool restored = false;
-    ulint cleaned = 0;
-
-    rec_t *rec = nullptr;
-    dict_index_t *index = nullptr;
-    buf_block_t *block = nullptr;
-    ulint *offsets = nullptr;
-    mem_heap_t *heap = nullptr;
-
-    trx_id_t trx_id;
-    txn_rec_t txn_rec;
-
-    mtr_t mtr;
-
-    mtr.start();
-    if (!opt_cleanout_write_redo) mtr.set_log_mode(MTR_LOG_NO_REDO);
-
-    if (!(restored = cursor.restore_position(&mtr, UT_LOCATION_HERE)))
-      goto mtr_end;
-
-    rec = const_cast<rec_t *>(cursor.get_rec());
-    index = const_cast<dict_index_t *>(cursor.get_index());
-    block = const_cast<buf_block_t *>(cursor.get_block());
-
-    heap = mem_heap_create(UNIV_PAGE_SIZE + 200, UT_LOCATION_HERE);
-
-    if (!cursor.used_by_tcn()) {
-      /** Normal cleanout */
-      if (page_rec_is_user_rec(rec)) {
-        offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
+  mem_heap_t *heap = nullptr;
+  ulint offsets_[REC_OFFS_NORMAL_SIZE];
+  rec_offs_init(offsets_);
+  if (!sec_offsets) {
+    sec_offsets = rec_get_offsets(sec_rec, sec_idx, offsets_, ULINT_UNDEFINED,
                                   UT_LOCATION_HERE, &heap);
-        trx_id = row_get_rec_trx_id(rec, index, offsets);
-
-        /** If trx state is active ,try to cleanout */
-        if (row_get_rec_undo_ptr_is_active(rec, index, offsets)) {
-          auto it = m_txns->find(trx_id);
-          if (it != m_txns->end()) {
-            txn_rec = it->second;
-            /** Modify the scn and undo ptr */
-            row_upd_rec_lizard_fields_in_cleanout(
-                rec, buf_block_get_page_zip(block), index, offsets, &txn_rec);
-
-            /** Write the redo log */
-            btr_cur_upd_lizard_fields_clust_rec_log(rec, index, &txn_rec, &mtr);
-
-            cleaned++;
-          }
-        }
-      }
-    } else {
-      /** Cache tcn */
-      if (block->cache_tcn == nullptr) {
-        allocate_block_tcn(block);
-      }
-      for (auto it : *(cursor.txns())) {
-        tcn_t value(it.second);
-        block->cache_tcn->insert(value);
-        TCN_CACHE_AGGR(BLOCK_LEVEL, EVICT);
-      }
-    }
-
-  mtr_end:
-    mtr.commit();
-
-    if (heap) mem_heap_free(heap);
-    return cleaned;
   }
+  ulint gpp_no_offset = 0;
+  bool hit = btr_cur_guess_clust_by_gpp(clust_idx, sec_idx, clust_ref, sec_rec,
+                                        clust_pcur, sec_offsets, mode, gpp_no_offset ,mtr);
 
-  /**
-    Cleanout the page
+  index_purge_guess_clust_stat(hit);
 
-    @param[in]  page      target page
-
-    @retval     count     the records count that cleaned.
-  */
-  ulint operator()(const Page &cpage) {
-    dict_index_t *index = nullptr;
-    buf_block_t *block = nullptr;
-    ulint *offsets = nullptr;
-    mem_heap_t *heap = nullptr;
-    buf_frame_t *page = nullptr;
-    ulint savepoint;
-    ulint scaned = 0;
-    ulint cleaned = 0;
-    rec_t *rec;
-    trx_id_t trx_id;
-    txn_rec_t txn_rec;
-    mtr_t mtr;
-
-    ulint scan_limit = cleanout_max_scans_on_page;
-    ulint clean_limit = cleanout_max_cleans_on_page;
-
-    mtr.start();
-    if (!opt_cleanout_write_redo) mtr.set_log_mode(MTR_LOG_NO_REDO);
-
-    index = const_cast<dict_index_t *>(cpage.index());
-    ut_ad(index);
-
-    const page_id_t page_id = cpage.page();
-    const page_size_t page_size = dict_table_page_size(index->table);
-
-    savepoint = mtr_set_savepoint(&mtr);
-    mtr_s_lock(dict_index_get_lock(index), &mtr, UT_LOCATION_HERE);
-
-    /**
-       Revision 1:
-
-       Fetch mode changed from PEEK_IF_IN_POOL to POSSIBLY_FREED,
-       Maybe the page was freed by purge system or other logic,
-       so if we got block through page_id directly other than searching tree,
-       the block maybe is under freed state.
-    */
-    block =
-        buf_page_get_gen(page_id, page_size, RW_X_LATCH, NULL,
-                         Page_fetch::POSSIBLY_FREED, UT_LOCATION_HERE, &mtr);
-
-    mtr_release_s_latch_at_savepoint(&mtr, savepoint,
-                                     dict_index_get_lock(index));
-
-    /** Maybe miss in the buffer pool */
-    if (block == nullptr) goto mtr_end;
-
-    page = buf_block_get_frame(block);
-    ut_ad(page);
-
-    /** Maybe it has been freed */
-    if (!page_is_leaf(page) || fil_page_get_type(page) != FIL_PAGE_INDEX ||
-        btr_page_get_index_id(page) != index->id)
-      goto mtr_end;
-
-    heap = mem_heap_create(UNIV_PAGE_SIZE + 200, UT_LOCATION_HERE);
-    rec = page_rec_get_next(page_get_infimum_rec(page));
-
-    while (page_rec_is_user_rec(rec)) {
-      scaned++;
-      /** Pass the limit of scan records */
-      if (scan_limit > 0 && scaned > scan_limit) goto mtr_end;
-
-      offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
-                                UT_LOCATION_HERE, &heap);
-      trx_id = row_get_rec_trx_id(rec, index, offsets);
-
-      /** If trx state is active , try to cleanout */
-      if (row_get_rec_undo_ptr_is_active(rec, index, offsets)) {
-        auto it = m_txns->find(trx_id);
-        if (it != m_txns->end()) {
-          txn_rec = it->second;
-          ut_a(txn_rec.gcn != GCN_NULL);
-          /** Modify the scn and undo ptr */
-          row_upd_rec_lizard_fields_in_cleanout(
-              rec, buf_block_get_page_zip(block), index, offsets, &txn_rec);
-          /** Write the redo log */
-          btr_cur_upd_lizard_fields_clust_rec_log(rec, index, &txn_rec, &mtr);
-          cleaned++;
-
-          /** Pass the limit of clean records */
-          if (cleaned > clean_limit) goto mtr_end;
-        }
-      }
-      rec = page_rec_get_next(rec);
-    }
-  mtr_end:
-    mtr.commit();
-
-    if (heap) mem_heap_free(heap);
-    return cleaned;
+  if (heap) {
+    mem_heap_free(heap);
   }
-
-  /** All the committed txn information */
-  const Txn_commits *m_txns;
-};
-
-/** Commit page cleanout operation */
-struct CommitCleanout {
-  CommitCleanout(const txn_rec_t &txn_rec) : m_txn_rec(txn_rec) {}
-
-  ulint operator()(Cursor &cursor) {
-    ulint cleaned = 0;
-    mem_heap_t *heap = nullptr;
-
-    mtr_t mtr;
-
-    mtr.start();
-
-    if (cursor.restore_position(&mtr, UT_LOCATION_HERE)) {
-      ulint *offsets = nullptr;
-
-      auto rec = const_cast<rec_t *>(cursor.get_rec());
-      auto index = const_cast<dict_index_t *>(cursor.get_index());
-      auto block = const_cast<buf_block_t *>(cursor.get_block());
-
-      heap = mem_heap_create(256, UT_LOCATION_HERE);
-      ut_a(heap);
-
-      // Once the restore is successful, we can assume that that the
-      // physical location of this record has not changed.
-      ut_a(page_rec_is_user_rec(rec));
-
-      offsets = rec_get_offsets(rec, index, offsets, ULINT_UNDEFINED,
-                                UT_LOCATION_HERE, &heap);
-      auto undo_ptr = row_get_rec_undo_ptr(rec, index, offsets);
-      auto trx_id = row_get_rec_trx_id(rec, index, offsets);
-
-      if (m_txn_rec.trx_id == trx_id) {
-        if (undo_ptr_is_active(undo_ptr)) {
-          ut_a(undo_ptr_get_csr(undo_ptr) == CSR_AUTOMATIC);
-          ut_a(undo_ptr_get_addr(m_txn_rec.undo_ptr) ==
-               undo_ptr_get_addr(undo_ptr));
-
-          row_upd_rec_lizard_fields_in_cleanout(
-              rec, buf_block_get_page_zip(block), index, offsets, &m_txn_rec);
-
-          btr_cur_upd_lizard_fields_clust_rec_log(rec, index, &m_txn_rec, &mtr);
-
-          cleaned = 1;
-        } else {
-          ut_a(undo_ptr_get_addr(m_txn_rec.undo_ptr) ==
-               undo_ptr_get_addr(undo_ptr));
-          ut_a(m_txn_rec.scn == row_get_rec_scn_id(rec, index, offsets));
-        }
-      }
-    }
-
-    mtr.commit();
-
-    if (heap) {
-      mem_heap_free(heap);
-    }
-
-    return cleaned;
-  }
-
-  // All the committed txn information
-  const txn_rec_t &m_txn_rec;
-};
-
-/**
-  Cleanout all the pages in one cursor
-
-  @param[in]      pages       page container
-
-  @retval         count       cleaned records count
-*/
-static ulint row_cleanout_pages(Cleanout_pages *pages) {
-  Cleanout op(pages->txns());
-  return pages->iterate_page<Cleanout>(op);
+  return hit;
 }
 
 /**
-  Cleanout all the cursors once
+ * When attempting to lock a secondary index record, this operation tries to
+ * position a persistent cursor on the corresponding clustered index record
+ * using the gpp_no value retrieved from the secondary index record.
+ *
+ * @param[in]     clust_idx       Clustered index
+ * @param[in]     sec_idx         Secondary index
+ * @param[in]     clust_ref       Reference tuple for the clustered index
+ * @param[in]     sec_rec         Secondary index record
+ * @param[in,out] clust_pcur      Persistent cursor for the clustered index
+ * @param[out]    sec_offsets     Offsets array for the secondary record
+ * @param[in]     mode            latching mode
+ * @param[in]     mtr             Mini-transaction handle
+ * @return        True if successful positioning, False otherwise
+ */
+bool row_lock_optimistic_guess_clust(dict_index_t *clust_idx,
+                                     const dict_index_t *sec_idx,
+                                     dtuple_t *clust_ref, const rec_t *sec_rec,
+                                     btr_pcur_t *clust_pcur,
+                                     const ulint *sec_offsets, ulint mode,
+                                     mtr_t *mtr) {
+  ut_ad(!sec_idx->is_clustered());
+  ut_ad(mode == BTR_SEARCH_LEAF);
 
-  @param[in]      pages       page container
-
-  @retval         count       cleaned records count
-*/
-static ulint row_cleanout_cursors(Cleanout_cursors *cursors) {
-  Cleanout op(cursors->txns());
-  return cursors->iterate_cursor<Cleanout>(op);
-}
-
-/**
-  Commit clean out rows.
-
-  @param[in]      cursors     rows collected
-  @param[in]      txn_rec     trx information
-
-  @retval         count       cleaned records count
-*/
-static ulint commit_cleanout_cursors(Cleanout_cursors *cursors,
-                                     const txn_rec_t &txn_rec) {
-  CommitCleanout op(txn_rec);
-  return cursors->iterate_cursor<CommitCleanout>(op);
-}
-
-/**
-  After search row complete, do the cleanout.
-
-  @param[in]      prebuilt
-
-  @retval         count       cleaned records count
-*/
-ulint row_cleanout_after_read(row_prebuilt_t *prebuilt) {
-  ulint cleaned = 0;
-  ut_ad(prebuilt);
-  btr_pcur_t *pcur;
-
-  /** cursor maybe fixed on prebuilt->pcur or prebuilt->clust_pcur */
-
-  /** Find the collected and need cleanout pages or cursors */
-  pcur = prebuilt->pcur;
-  if (pcur && pcur->m_cleanout_pages) {
-    cleaned += row_cleanout_pages(pcur->m_cleanout_pages);
-    pcur->m_cleanout_pages->init();
+  if (!index_lock_guess_clust_enabled || sec_idx->n_s_gfields == 0) {
+    return false;
   }
 
-  if (pcur && pcur->m_cleanout_cursors) {
-    cleaned += row_cleanout_cursors(pcur->m_cleanout_cursors);
-    pcur->m_cleanout_cursors->init();
-  }
+  ut_ad(sec_offsets);
+  ulint gpp_no_offset = 0;
+  bool hit = btr_cur_guess_clust_by_gpp(clust_idx, sec_idx, clust_ref, sec_rec,
+                                        clust_pcur, sec_offsets, mode, gpp_no_offset , mtr);
 
-  pcur = prebuilt->clust_pcur;
-  if (pcur && pcur->m_cleanout_pages) {
-    cleaned += row_cleanout_pages(pcur->m_cleanout_pages);
-    pcur->m_cleanout_pages->init();
-  }
+  index_lock_guess_clust_stat(hit);
 
-  if (pcur && pcur->m_cleanout_cursors) {
-    cleaned += row_cleanout_cursors(pcur->m_cleanout_cursors);
-    pcur->m_cleanout_cursors->init();
-  }
-
-  if (cleaned > 0) lizard_stats.cleanout_record_clean.add(cleaned);
-
-  return cleaned;
-}
-
-/**
-  Collect rows updated in current transaction.
-
-  @param[in]        thr             current session
-  @param[in]        cursor          btr cursor
-  @param[in]        rec             current rec
-  @param[in]        flags           mode flags for btr_cur operations
-*/
-void commit_cleanout_collect(que_thr_t *thr, btr_cur_t *cursor, rec_t *rec,
-                             ulint flags) {
-  if (commit_cleanout_max_rows == 0) {
-    return;
-  }
-
-  /** Skip the collection if the transaction does not require undo logging or if
-   * system fields should be retained. */
-  if ((flags & BTR_KEEP_SYS_FLAG) || (flags & BTR_NO_UNDO_LOG_FLAG)) {
-    return;
-  }
-
-  // In dict_persist_to_dd_table_buffer, no thr allocated,
-  // Now we skip those background tasks.
-  if (thr == nullptr) {
-    return;
-  }
-
-  trx_t *trx = thr_get_trx(thr);
-  ut_a(trx);
-
-  // Skip purge trx, or temp table.
-  if (trx->id == 0) {
-    ut_ad(strlen(trx->op_info) == 0 || strcmp(trx->op_info, "purge trx") == 0);
-    return;
-  }
-
-  auto block = btr_cur_get_block(cursor);
-  auto page = buf_block_get_frame(block);
-  auto leaf = page_is_leaf(page);
-  auto index = cursor->index;
-
-  if (leaf && index->is_clustered() && !index->table->is_temporary() &&
-      !dict_index_is_ibuf(index)) {
-    ut_ad(rec != nullptr);
-    ut_ad(rec == btr_cur_get_rec(cursor) /* update */ ||
-          rec == page_rec_get_next(btr_cur_get_rec(cursor)) /* insert */);
-    ut_ad(page_rec_is_user_rec(rec));
-    ut_ad(trx->cleanout_cursors != nullptr);
-
-    /** Ensure that the commit cleanout operation is under the protection of the
-     * transaction table locks, unless the table is permanent in dict sys. */
-    ut_ad(dict_sys->is_permanent_table(index->table) ||
-          lock_table_has_locks(index->table));
-
-    if (trx->cleanout_cursors->cursor_count() < commit_cleanout_max_rows) {
-      Cursor cursor(block->get_page_id());
-      cursor.store_position(index, block, rec);
-      trx->cleanout_cursors->push_cursor(cursor);
-    } else if (stat_enabled) {
-      lizard_stats.commit_cleanout_skip.inc();
-    }
-  }
-}
-
-/**
-  Cleanout rows at transaction commit.
-
-  @param[in]        trx             current transation
-  @param[in]        txn_rec         trx info
-*/
-void commit_cleanout_do(trx_t *trx, const txn_rec_t &txn_rec) {
-  ut_ad(trx != nullptr);
-  ut_ad(trx->id == txn_rec.trx_id);
-  ut_ad(!undo_ptr_is_active(txn_rec.undo_ptr));
-  ut_ad(trx->cleanout_cursors->cursor_count() > 0);
-
-  ulint collects = trx->cleanout_cursors->cursor_count();
-  ulint cleaned = commit_cleanout_cursors(trx->cleanout_cursors, txn_rec);
-
-  trx->cleanout_cursors->init();
-
-  if (stat_enabled) {
-    lizard_stats.commit_cleanout_collects.add(collects);
-    lizard_stats.commit_cleanout_cleaned.add(cleaned);
-  }
+  return hit;
 }
 
 #if defined UNIV_DEBUG || defined LIZARD_DEBUG
@@ -1221,26 +1285,11 @@ void commit_cleanout_do(trx_t *trx, const txn_rec_t &txn_rec) {
 */
 bool row_scn_initial(const rec_t *rec, const dict_index_t *index,
                      const ulint *offsets) {
-  scn_id_t scn = row_get_rec_scn_id(rec, index, offsets);
-  ut_a(scn == SCN_NULL);
+  txn_rec_t txn_rec;
+  row_get_txn_rec(rec, index, offsets, &txn_rec);
 
-  gcn_t gcn = row_get_rec_gcn(rec, index, offsets);
-  ut_a(gcn == GCN_NULL);
-  return true;
-}
-
-/**
-  Debug the undo_ptr state in record is active state
-  @param[in]      rec       record
-  @param[in]      index     cluster index
-  @parma[in]      offsets   rec_get_offsets(rec, index)
-
-  @retval         true      Success
-*/
-bool row_undo_ptr_is_active(const rec_t *rec, const dict_index_t *index,
-                            const ulint *offsets) {
-  bool is_active = row_get_rec_undo_ptr_is_active(rec, index, offsets);
-  ut_a(is_active);
+  ut_a(txn_rec.scn == SCN_NULL);
+  ut_a(txn_rec.gcn == GCN_NULL);
   return true;
 }
 
@@ -1254,11 +1303,8 @@ bool row_undo_ptr_is_active(const rec_t *rec, const dict_index_t *index,
 */
 bool row_lizard_valid(const rec_t *rec, const dict_index_t *index,
                       const ulint *offsets) {
-  scn_id_t scn;
-  undo_ptr_t undo_ptr;
-  gcn_t gcn;
-  bool is_active;
   undo_addr_t undo_addr;
+  txn_rec_t txn_rec;
   ulint comp;
 
   /** If we are in recovery, we don't make a validation, because purge
@@ -1274,20 +1320,16 @@ bool row_lizard_valid(const rec_t *rec, const dict_index_t *index,
     Skip the non-compact record
   */
   if (comp && rec_get_status(rec) == REC_STATUS_ORDINARY) {
-    scn = row_get_rec_scn_id(rec, index, offsets);
-    undo_ptr = row_get_rec_undo_ptr(rec, index, offsets);
-    gcn = row_get_rec_gcn(rec, index, offsets);
+    row_get_txn_rec(rec, index, offsets, &txn_rec);
 
-    is_active = row_get_rec_undo_ptr_is_active(rec, index, offsets);
-
-    undo_decode_undo_ptr(undo_ptr, &undo_addr);
+    undo_decode_undo_ptr(txn_rec.undo_ptr, &undo_addr);
 
     /** UBA is valid */
     undo_addr_validation(&undo_addr, index);
 
     /** Scn and trx state are matched */
-    ut_a(is_active == (scn == SCN_NULL));
-    ut_a(is_active == (gcn == GCN_NULL));
+    ut_a(txn_rec.is_active() == (txn_rec.scn == SCN_NULL));
+    ut_a(txn_rec.is_active() == (txn_rec.gcn == GCN_NULL));
   }
   return true;
 }
@@ -1302,11 +1344,8 @@ bool row_lizard_valid(const rec_t *rec, const dict_index_t *index,
 */
 bool row_lizard_has_cleanout(const rec_t *rec, const dict_index_t *index,
                              const ulint *offsets) {
-  scn_id_t scn;
-  undo_ptr_t undo_ptr;
-  gcn_t gcn;
-  bool is_active;
   undo_addr_t undo_addr;
+  txn_rec_t txn_rec;
 
   if (!index->is_clustered() || index->table->is_intrinsic()) return true;
 
@@ -1314,21 +1353,15 @@ bool row_lizard_has_cleanout(const rec_t *rec, const dict_index_t *index,
     Skip the REC_STATUS_NODE_PTR, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM
   */
   if (rec_get_status(rec) == REC_STATUS_ORDINARY) {
-    scn = row_get_rec_scn_id(rec, index, offsets);
-    undo_ptr = row_get_rec_undo_ptr(rec, index, offsets);
-    gcn = row_get_rec_gcn(rec, index, offsets);
-
-    is_active = row_get_rec_undo_ptr_is_active(rec, index, offsets);
-
-    undo_decode_undo_ptr(undo_ptr, &undo_addr);
-
+    row_get_txn_rec(rec, index, offsets, &txn_rec);
+    undo_decode_undo_ptr(txn_rec.undo_ptr, &undo_addr);
     /** UBA is valid */
     undo_addr_validation(&undo_addr, index);
     /** commit */
-    ut_a(!is_active);
+    ut_a(txn_rec.is_committed());
     /** valid scn */
-    ut_a(scn != SCN_NULL);
-    ut_a(gcn != GCN_NULL);
+    ut_a(txn_rec.scn != SCN_NULL);
+    ut_a(txn_rec.gcn != GCN_NULL);
   }
   return true;
 }

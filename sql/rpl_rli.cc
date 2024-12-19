@@ -1,4 +1,4 @@
-/* Copyright (c) 2006, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2006, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -78,6 +78,7 @@
 #include "thr_mutex.h"
 
 #include "sql/consensus_log_manager.h"  // ConsensusLogManager
+#include "sql/bl_consensus_log.h"
 
 class Item;
 
@@ -262,6 +263,8 @@ Relay_log_info::Relay_log_info(bool is_slave_recovery,
   rpl_filter = nullptr;
   applier_reader = nullptr;
   m_consensus_index_buf = nullptr;
+  consensus_privilege_checks_username[0] = '\0';
+  consensus_privilege_checks_hostname[0] = '\0';
 }
 
 /**
@@ -2295,6 +2298,11 @@ bool Relay_log_info::read_info(Rpl_info_handler *from) {
 
   if (lines >= LINES_IN_RELAY_LOG_INFO_WITH_CONSENSUS_APPLY_INDEX) {
     if (!!from->get_info(&temp_consensus_apply_index, 0UL)) return true;
+  } else if (lines != LINES_IN_RELAY_LOG_INFO_WITH_CONSENSUS_APPLY_INDEX
+             && from->get_number_info() == LINES_IN_RELAY_LOG_INFO_WITH_CONSENSUS_APPLY_INDEX + 1) {
+    //NOTE:: do not depend lines from table when position not match, use the last column instead
+    from->set_read_cursor(LINES_IN_RELAY_LOG_INFO_WITH_CONSENSUS_APPLY_INDEX);
+    if (!!from->get_info(&temp_consensus_apply_index, 0UL)) return true;
   } else {
     // If the file contains the TYPE, then the VALUE is mandatory.
     if (lines >=
@@ -2323,6 +2331,29 @@ bool Relay_log_info::read_info(Rpl_info_handler *from) {
         "than_255_replication_privilege_checks_hostname_more_than255");
     hostname = temp_privilege_checks_hostname;
   });
+
+  //As innodb has not bootup, we should not set_privilege_checks_user here from 
+  //the followe call stack:
+  //  mysqld_main->init_server_components->ReplicaInitializer::init_replica
+  //    ->create_slave_info_objects->load_mi_and_rli_from_repositories
+  //    ->rli_init_info->read_info->set_privilege_checks_user
+  //move set_privilege_checks_user into xpaxos_set_privilege_checks_user()
+  if (consensus_ptr == nullptr
+      && username != nullptr
+      && hostname != nullptr
+      && (strlen(username) > 0 || strlen(hostname) > 0)) {
+    if (strlen(username) > 0)
+      memcpy(consensus_privilege_checks_username, username, strlen(username) + 1);
+    if (strlen(hostname) > 0)
+      memcpy(consensus_privilege_checks_hostname, hostname, strlen(hostname) + 1);
+    xp::info(ER_XP_RECOVERY)
+        << "skip set_privilege_checks_user for"
+        <<" channel: " << channel
+        <<", username: " << username
+        <<", hostname: " << hostname;
+
+    return false;
+  }
   enum_priv_checks_status error = set_privilege_checks_user(username, hostname);
   if (!!error) {
     set_privilege_checks_user_corrupted(true);
@@ -2332,6 +2363,26 @@ bool Relay_log_info::read_info(Rpl_info_handler *from) {
   }
 
   return false;
+}
+
+void Relay_log_info::set_privilege_checks_user() {
+  if (consensus_ptr != nullptr 
+      && (strlen(consensus_privilege_checks_username) > 0 || strlen(consensus_privilege_checks_hostname) > 0)) {
+    xp::info(ER_XP_RECOVERY)
+        << "do set_privilege_checks_user now for"
+        <<" channel: " << get_channel()
+        <<", username: " << consensus_privilege_checks_username
+        <<", hostname: " << consensus_privilege_checks_hostname;
+    enum_priv_checks_status status = set_privilege_checks_user(
+        consensus_privilege_checks_username, consensus_privilege_checks_hostname);
+    if (!!status) {
+      set_privilege_checks_user_corrupted(true);
+      report_privilege_check_error(WARNING_LEVEL, status, false, get_channel(), consensus_privilege_checks_username,
+                                  consensus_privilege_checks_hostname);
+    }
+    consensus_privilege_checks_username[0] = '\0';
+    consensus_privilege_checks_hostname[0] = '\0';
+  }
 }
 
 bool Relay_log_info::set_info_search_keys(Rpl_info_handler *to) {

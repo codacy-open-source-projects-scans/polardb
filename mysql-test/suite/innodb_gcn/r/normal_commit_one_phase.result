@@ -1,4 +1,5 @@
 SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+set global innodb_undo_retention = 9000;
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 (
 id INT NOT NULL,
@@ -40,3 +41,4 @@ id	value
 2	UPDATED!
 3	UPDATED!
 DROP TABLE t1;
+set global innodb_undo_retention = default;

@@ -284,6 +284,8 @@ The following options may be given as the first argument:
  --cluster-current-term=# 
  Cluster nodes current term  information
  --cluster-dump-meta Cluster dump meta
+ --cluster-follower-force-recover-index=# 
+ Cluster restore from follower set apply index point
  --cluster-force-change-meta 
  Cluster force to change meta
  --cluster-force-recover-index=# 
@@ -418,6 +420,8 @@ The following options may be given as the first argument:
  compression, 2: zstd compression) threshold checksum,    
  if ip:port is *:* it means set option to entire
  cluster.
+ --consensus-mts-force-apply-index=# 
+ Update consensus_apply_index in slave_relay_log_info
  --consensus-new-follower-threshold[=#] 
  Max delay index to allow a learner becomes a follower
  --consensus-old-compact-mode 
@@ -439,11 +443,15 @@ The following options may be given as the first argument:
  prefetch window size
  --consensus-replicate-with-cache-log 
  set server to replicate with cache log
+ --consensus-reset-mts-info 
+ reset mts info when force change meta
  --consensus-safe-for-reset-master 
  insert Consensus_empty event into binblog after reset
  master
  --consensus-send-timeout=# 
  Consensus send packet timeout
+ --consensus-stop-apply-index[=#] 
+ member stop apply index
  --consensus-sync-follower-meta-interva[=#] 
  Interval of leader sync follower's meta for learner
  source
@@ -1007,9 +1015,15 @@ The following options may be given as the first argument:
  --opt-enable-rds-priv-strategy 
  When this option is enabled,it will protect reserved
  account and privileges
+ --opt-flashback-area 
+ Enable flashback area when a new table is created. 
  --opt-force-index-pct-cached 
  force cached table index in memory when estimate query
  cost
+ --opt-index-format-gpp-enabled 
+ When this option is enabled,it will add gpp column on
+ secondary index if suitable.
+ (Defaults to on; use --skip-opt-index-format-gpp-enabled to disable.)
  --opt-indexstat     When this option is enabled,it will accumulate the index
  statistics
  (Defaults to on; use --skip-opt-indexstat to disable.)
@@ -1438,6 +1452,9 @@ The following options may be given as the first argument:
  Allocation block size for query parsing and execution
  --query-prealloc-size=# 
  Persistent buffer for query parsing and execution
+ --query-via-flashback-area 
+ Whether queries should be executed via the flashback area
+ of the table during a transaction. 
  --range-alloc-block-size=# 
  Allocation block size for storing ranges during
  optimization
@@ -2133,6 +2150,7 @@ chroot (No default value)
 client-endpoint-ip (No default value)
 cluster-current-term 0
 cluster-dump-meta FALSE
+cluster-follower-force-recover-index 0
 cluster-force-change-meta FALSE
 cluster-force-recover-index 0
 cluster-force-single-mode FALSE
@@ -2188,6 +2206,7 @@ consensus-max-log-size 20971520
 consensus-max-packet-size 131072
 consensus-min-delay-index 5000
 consensus-msg-compress-option (No default value)
+consensus-mts-force-apply-index 0
 consensus-new-follower-threshold 10000
 consensus-old-compact-mode TRUE
 consensus-optimistic-heartbeat FALSE
@@ -2197,8 +2216,10 @@ consensus-prefetch-fast-fetch FALSE
 consensus-prefetch-wakeup-ratio 2
 consensus-prefetch-window-size 10
 consensus-replicate-with-cache-log FALSE
+consensus-reset-mts-info FALSE
 consensus-safe-for-reset-master FALSE
 consensus-send-timeout 0
+consensus-stop-apply-index 0
 consensus-sync-follower-meta-interva 1
 consensus-worker-thread-cnt 3
 consensuslog-revise TRUE
@@ -2369,7 +2390,9 @@ old-alter-table FALSE
 old-style-user-limits FALSE
 only-report-warning-when-skip-sequence TRUE
 opt-enable-rds-priv-strategy FALSE
+opt-flashback-area FALSE
 opt-force-index-pct-cached FALSE
+opt-index-format-gpp-enabled TRUE
 opt-indexstat TRUE
 opt-outline-enabled TRUE
 opt-tablestat TRUE
@@ -2509,6 +2532,7 @@ profiling-history-size 15
 protocol-compression-algorithms zlib,zstd,uncompressed
 query-alloc-block-size 8192
 query-prealloc-size 8192
+query-via-flashback-area FALSE
 range-alloc-block-size 4096
 range-optimizer-max-mem-size 8388608
 rds-audit-log-buffer-size 8388608

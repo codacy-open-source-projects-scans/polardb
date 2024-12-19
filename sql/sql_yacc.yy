@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2000, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -170,7 +170,6 @@ Note: YYTHD is passed as an argument to yyparse(), and subsequently to yylex().
 #include "violite.h"
 
 #include "sql/package/package_interface.h"  // find_native_proc_and_evoke
-#include "lizard_iface.h"
 
 #include "sql/item_sequence_func.h"              // Item_func_nextval, Item_func_currval
 #include "sql/sql_sequence.h"                    // Sql_cmd_create_sequence

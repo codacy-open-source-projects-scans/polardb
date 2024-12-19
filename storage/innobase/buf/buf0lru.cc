@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -2047,8 +2047,6 @@ void buf_LRU_block_free_non_file_page(buf_block_t *block) {
     block->page.size.copy_from(page_size_t(block->page.size.logical(),
                                            block->page.size.logical(), false));
   }
-
-  lizard::deallocate_block_tcn(block);
 
 #ifndef UNIV_HOTBACKUP
   buf_page_prepare_for_free(&block->page);

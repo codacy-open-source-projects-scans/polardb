@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -237,6 +237,7 @@ static inline void row_build_row_ref_fast(dtuple_t *ref, const ulint *map,
     const rec_t *rec,           /*!< in: record in a secondary index */
     const dict_index_t *index,  /*!< in: secondary index */
     dict_index_t **clust_index, /*!< out: clustered index */
+    const ulint *offsets,       /*!< in: rec_get_offsets(rec, index) */
     mtr_t *mtr);                /*!< in: mtr */
 
 /** Parse the integer data from specified data, which could be

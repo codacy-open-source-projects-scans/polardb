@@ -258,8 +258,10 @@ fi
 
 server_suffix="-""$server_suffix"
 
-if [[ x"$build_type" = x"RelWithDebInfo" ]] || [[ x"$build_type" = x"Release" ]]; then
-  COMMON_FLAGS="-O3 -g -D_FORTIFY_SOURCE=2  "
+if [[ x"$build_type" = x"RelWithDebInfo" ]]; then
+  COMMON_FLAGS="-O3 -g -D_FORTIFY_SOURCE=2"
+elif [[ x"$build_type" = x"Release" ]]; then
+  COMMON_FLAGS="-O3 -g -D_FORTIFY_SOURCE=2 -s"
 elif [[ x"$build_type" = x"Debug" ]]; then
   COMMON_FLAGS="-O0 -g3 -fstack-protector-strong"
 fi
@@ -365,10 +367,15 @@ else
       -DWITH_VALGRIND=$valg              \
       -DWITH_BOOST="./extra/boost/boost_1_77_0.tar.bz2" \
       -DDOWNLOAD_BOOST=0                \
-      -DWITH_TESTS=0
+      -DWITH_UNIT_TESTS=$debug           \
+      -DWITH_TESTS=$debug
 fi
 
-make -j 40 install
+make -j $(nproc) install
+
+if [[ x"$build_type" = x"Release" ]]; then
+  rm -rf $dest_dir/mysql-test
+fi
 
 if [ x$initialize_type != x"none" ]; then
   initialize

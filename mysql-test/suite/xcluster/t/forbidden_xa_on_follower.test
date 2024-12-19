@@ -1,0 +1,39 @@
+# XA support in XCluster, Smoke Test
+
+--source include/not_valgrind.inc
+--source include/not_windows.inc
+--source include/have_binlog_format_row.inc
+--source include/have_log_bin.inc
+--source include/have_debug.inc
+
+--connect (conn1_a, 127.0.0.1, root, , test, $MYPORT_1)
+--connection conn1_a
+
+USE test;
+CREATE TABLE xa_test_table (c1 int primary key, c2 int) ENGINE=INNODB;
+
+XA START 'xid1';
+INSERT INTO xa_test_table VALUE (1,1);
+XA END 'xid1';
+XA PREPARE 'xid1';
+
+xa recover;
+sleep 10;
+
+--connect (connection_to_another_follower, 127.0.0.1, root, , test, $MYPORT_3)
+SELECT * FROM xa_test_table;
+
+xa recover;
+
+--error ER_CONSENSUS_FOLLOWER_NOT_ALLOWED
+XA START 'xid_exec_xa_on_follower';
+
+--error ER_CONSENSUS_FOLLOWER_NOT_ALLOWED
+XA COMMIT 'xid1';
+
+--error ER_CONSENSUS_FOLLOWER_NOT_ALLOWED
+XA ROLLBACK 'xid1';
+
+--connection conn1_a
+XA COMMIT 'xid1';
+drop table xa_test_table;

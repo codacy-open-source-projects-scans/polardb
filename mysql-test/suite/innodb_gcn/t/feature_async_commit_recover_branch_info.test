@@ -1,0 +1,37 @@
+--source include/not_valgrind.inc
+--source include/have_debug.inc
+--source include/have_debug_sync.inc
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+
+CREATE TABLE t1 (c1 INT PRIMARY KEY);
+
+--let $xid = 'ac_recv_branch_info','' ,1
+--let $gcn = `select @base_seq + 100`
+
+--connect(con1, localhost, root,,)
+--connection con1
+--eval XA START $xid
+INSERT INTO t1 VALUES (1);
+--eval XA END $xid
+
+--let $auxiliary_connection = default
+--let $statement_connection = con1
+--let $statement = CALL DBMS_XA.AC_PREPARE($xid, 2, 2, $gcn)
+--let $sync_point = before_set_prepared_in_tc
+--let $skip_echo_statement = 1
+--source include/execute_to_conditional_timestamp_sync_point.inc
+--source include/kill_mysqld.inc
+--source extra/xa_crash_safe_tests/cleanup_connection.inc
+
+--source include/start_mysqld.inc
+
+--let $my_xid= $xid
+--let $expect_n_branch = 2
+--let $expect_n_local_branch = 2
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+XA RECOVER;
+
+--eval XA ROLLBACK $xid
+
+DROP TABLE t1;

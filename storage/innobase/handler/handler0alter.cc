@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2005, 2022, Oracle and/or its affiliates.
+Copyright (c) 2005, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -1375,7 +1375,8 @@ the metadata which would not result in failure
 template <typename Table>
 static void dd_commit_inplace_alter_table(
     const alter_table_old_info_t &old_info, dict_table_t *new_table,
-    const Table *old_dd_tab, Table *new_dd_tab);
+    const Table *old_dd_tab, Table *new_dd_tab,
+    const lizard::Ha_ddl_policy *ddl_policy);
 
 /** Update metadata in commit phase when the alter table does
 no change to the table
@@ -1630,7 +1631,8 @@ bool ha_innobase::commit_inplace_alter_table(TABLE *altered_table,
     }
 
     dd_commit_inplace_alter_table<dd::Table>(old_info, ctx->new_table,
-                                             old_dd_tab, new_dd_tab);
+                                             old_dd_tab, new_dd_tab,
+                                             ha_alter_info->ddl_policy);
     if (!ctx->need_rebuild()) {
       dd_commit_inplace_update_instant_meta(ctx->new_table, old_dd_tab,
                                             new_dd_tab);
@@ -2635,18 +2637,16 @@ static void innobase_create_index_def(const TABLE *altered_table,
   index_def->m_name = mem_heap_strdup(heap, key->name);
   index_def->m_rebuild = new_clustered;
 
+  ulint dd_key_num =
+      key_number + ((altered_table->s->primary_key == MAX_KEY) ? 1 : 0);
+  const auto *dd_index_auto =
+      (index_def->m_key_number != ULINT_UNDEFINED)
+          ? const_cast<const Table *>(new_dd_tab)->indexes()[dd_key_num]
+          : nullptr;
+  const dd::Index *dd_index = get_dd_index(dd_index_auto);
+
   /* If this is a spatial index, we need to fetch the SRID */
   if (key->flags & HA_SPATIAL) {
-    ulint dd_key_num =
-        key_number + ((altered_table->s->primary_key == MAX_KEY) ? 1 : 0);
-
-    const auto *dd_index_auto =
-        (index_def->m_key_number != ULINT_UNDEFINED)
-            ? const_cast<const Table *>(new_dd_tab)->indexes()[dd_key_num]
-            : nullptr;
-
-    const dd::Index *dd_index = get_dd_index(dd_index_auto);
-
     if (dd_index != nullptr) {
       ut_ad(dd_index->name() == key->name);
       /* Spatial index indexes on only one column */
@@ -4259,7 +4259,8 @@ the metadata which would not result in failure
 template <typename Table>
 static void dd_commit_inplace_alter_table(
     const alter_table_old_info_t &old_info, dict_table_t *new_table,
-    const Table *old_dd_tab, Table *new_dd_tab) {
+    const Table *old_dd_tab, Table *new_dd_tab,
+    const lizard::Ha_ddl_policy *ddl_policy) {
   if (new_table->is_temporary()) {
     /* No need to fill in metadata for temporary tables,
     which would not be stored in Global DD */
@@ -4307,7 +4308,7 @@ static void dd_commit_inplace_alter_table(
 
   new_table->dd_space_id = dd_space_id;
 
-  dd_write_table(dd_space_id, new_dd_tab, new_table);
+  dd_write_table(dd_space_id, new_dd_tab, new_table, ddl_policy);
 
   /* If this table is discarded, we need to set this to both dd::Table
   and dd::Tablespace. */
@@ -4803,9 +4804,9 @@ template <typename Table>
 
     dict_sys_mutex_exit();
 
-    error = row_create_table_for_mysql(ctx->new_table, compression,
-                                       ha_alter_info->create_info, ctx->trx,
-                                       nullptr);
+    error = row_create_table_for_mysql(
+        ctx->new_table, compression, ha_alter_info->create_info, ctx->trx,
+        nullptr, ha_alter_info->ddl_policy, &old_dd_tab->table());
 
     dict_sys_mutex_enter();
 
@@ -4918,7 +4919,8 @@ template <typename Table>
     }
 
     ctx->add_index[a] =
-        ddl::create_index(ctx->trx, ctx->new_table, &index_defs[a], add_v);
+        ddl::create_index(ctx->trx, ctx->new_table, &index_defs[a], add_v,
+                          ha_alter_info->ddl_policy);
 
     add_key_nums[a] = index_defs[a].m_key_number;
 
@@ -5024,7 +5026,8 @@ template <typename Table>
     the trx_t::dict_operation flag on success. */
 
     dict_sys_mutex_exit();
-    error = fts_create_index_tables(ctx->trx, fts_index);
+    error =
+        fts_create_index_tables(ctx->trx, fts_index, ha_alter_info->ddl_policy);
     dict_sys_mutex_enter();
 
     DBUG_EXECUTE_IF("innodb_test_fail_after_fts_index_table",
@@ -5044,7 +5047,8 @@ template <typename Table>
 
       if (!exist_fts_common) {
         error = fts_create_common_tables(ctx->trx, ctx->new_table,
-                                         user_table->name.m_name, true);
+                                         user_table->name.m_name, true,
+                                         ha_alter_info->ddl_policy);
 
         DBUG_EXECUTE_IF("innodb_test_fail_after_fts_common_table",
                         error = DB_LOCK_WAIT_TIMEOUT;);
@@ -8311,10 +8315,12 @@ class alter_part {
   @param[in]    file_per_table  Current value of innodb_file_per_table
   @param[in]    autoinc         Next AUTOINC value to use
   @param[in]    autoextend_size Value of AUTOEXTEND_SIZE for this tablespace
+  @param[in]    ddl_policy      DDL policy from handler
   @return 0 or error number */
   int create(const dd::Table *part_table, const char *part_name,
              dd::Partition *dd_part, TABLE *table, const char *tablespace,
-             bool file_per_table, uint64_t autoinc, uint64_t autoextend_size);
+             bool file_per_table, uint64_t autoinc, uint64_t autoextend_size,
+             lizard::Ha_ddl_policy *ddl_policy);
 
  protected:
   /** InnoDB transaction, nullptr if not used */
@@ -8370,7 +8376,8 @@ bool alter_part::build_partition_name(const dd::Partition *dd_part, bool temp,
 int alter_part::create(const dd::Table *old_part_table, const char *part_name,
                        dd::Partition *dd_part, TABLE *table,
                        const char *tablespace, bool file_per_table,
-                       uint64_t autoinc, uint64_t autoextend_size) {
+                       uint64_t autoinc, uint64_t autoextend_size,
+                       lizard::Ha_ddl_policy *ddl_policy) {
   ut_ad(m_state == PART_TO_BE_ADDED || m_state == PART_CHANGED);
 
   dd::Table &dd_table = dd_part->table();
@@ -8418,7 +8425,7 @@ int alter_part::create(const dd::Table *old_part_table, const char *part_name,
 
   return (innobase_basic_ddl::create_impl<dd::Partition>(
       current_thd, part_name, table, &create_info, dd_part, file_per_table,
-      false, false, 0, 0, old_part_table));
+      false, false, 0, 0, old_part_table, ddl_policy));
 }
 
 typedef std::vector<alter_part *, ut::allocator<alter_part *>> alter_part_array;
@@ -8784,10 +8791,11 @@ class alter_part_add : public alter_part {
     dd::get_implicit_tablespace_options(current_thd, &part_table,
                                         &autoextend_size);
 
-    int error =
-        create(dd_table_has_instant_cols(part_table) ? &part_table : nullptr,
-               part_name, new_part, altered_table, m_tablespace,
-               m_file_per_table, m_autoinc, autoextend_size);
+    bool inherit_metadata = dd_table_has_instant_cols(part_table) ||
+                            m_ha_alter_info->ddl_policy->should_inherit();
+    int error = create(inherit_metadata ? &part_table : nullptr, part_name,
+                       new_part, altered_table, m_tablespace, m_file_per_table,
+                       m_autoinc, autoextend_size, m_ha_alter_info->ddl_policy);
 
     if (error == 0 && alter_parts::need_copy(m_ha_alter_info)) {
       /* If partition belongs to table with instant columns, copy instant
@@ -9200,10 +9208,12 @@ int alter_part_change::prepare(TABLE *altered_table,
   dd::get_implicit_tablespace_options(current_thd, &part_table,
                                       &autoextend_size);
 
-  int error =
-      create(dd_table_has_instant_cols(part_table) ? &part_table : nullptr,
-             part_name, new_part, altered_table, m_tablespace, m_file_per_table,
-             m_autoinc, autoextend_size);
+  bool inherit_metadata = dd_table_has_instant_cols(part_table) ||
+                          m_ha_alter_info->ddl_policy->should_inherit();
+
+  int error = create(inherit_metadata ? &part_table : nullptr, part_name,
+                     new_part, altered_table, m_tablespace, m_file_per_table,
+                     m_autoinc, autoextend_size, m_ha_alter_info->ddl_policy);
 
   if (error == 0) {
     dict_sys_mutex_enter();
@@ -10580,7 +10590,8 @@ end:
         }
 
         dd_commit_inplace_alter_table(ctx_parts->m_old_info[i], ctx->new_table,
-                                      old_part, new_part);
+                                      old_part, new_part,
+                                      ha_alter_info->ddl_policy);
       }
 
       ++i;
@@ -10915,6 +10926,12 @@ int ha_innopart::exchange_partition_low(uint part_id, dd::Table *part_table,
     return true;
   }
 
+  if (lizard::dd_table_options_has_fba(&part_table->options()) !=
+      lizard::dd_table_options_has_fba(&swap_table->options())) {
+    my_error(ER_PARTITION_EXCHANGE_DIFFERENT_OPTION, MYF(0), "FLASHBACK_AREA");
+    return true;
+  }
+
   /* Find the specified dd::Partition object */
   uint id = 0;
   dd::Partition *dd_part = nullptr;
@@ -11040,18 +11057,11 @@ int ha_innopart::exchange_partition_low(uint part_id, dd::Table *part_table,
       swap_index->se_private_data().clear();
       swap_index->set_se_private_data(*p_se_data);
     }
-  }
-#ifdef UNIV_DEBUG
-  for (s_iter = swap_indexes.begin(), pt_iter = part_table_indexes.begin();
-       s_iter < swap_indexes.end() && pt_iter < part_table_indexes.end();
-       pt_iter++, s_iter++) {
-    auto part_table_index = *pt_iter;
-    auto swap_index = *s_iter;
 
-    ut_ad(part_table_index->options().raw_string() ==
-          swap_index->options().raw_string());
+    /* Lizard-4.0: IFT option should be exchanged. */
+    lizard::dd_exchange_index_format(part_index->options(),
+                                     swap_index->options());
   }
-#endif
 
   /* Swap the se_private_data and options of the two tables.
   Only the max autoinc should be set to both tables */
@@ -11087,6 +11097,10 @@ int ha_innopart::exchange_partition_low(uint part_id, dd::Table *part_table,
   }
 
   dd_part_adjust_table_id(part_table);
+
+  /** Swap the flashback area between partition and table */
+  lizard::dd_exchange_table_fba(dd_part->table().options(),
+                                swap_table->options());
 
 func_exit:
   free(swap_name);

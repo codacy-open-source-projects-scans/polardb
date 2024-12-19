@@ -1,0 +1,61 @@
+--disable_warnings
+DROP TABLE IF EXISTS c5;
+--enable_warnings
+
+CREATE TABLE c5 (
+id double(10,2) NOT NULL,
+tfloat float(12,2),
+tdecimal decimal(10,2),
+value VARCHAR(50) NOT NULL,
+PRIMARY KEY (id, tfloat, tdecimal)
+) ENGINE=InnoDB;
+
+call polarx.changeset_start('c5');
+call polarx.changeset_fetch('c5');
+
+insert into c5 values (1.1, 50.1, 75.85, "a");
+insert into c5 values (1.1, 50.1, 39.29, "a");
+insert into c5 values (1.1, 50.1, 43.39, "a");
+insert into c5 values (1.1, 0.8, 94.91, "a");
+insert into c5 values (1.1, 0.8, 52.48, "a");
+insert into c5 values (1.1, 0.8, 12.94, "a");
+insert into c5 values (1.1, 100.1, 24.58, "a");
+insert into c5 values (1.1, 100.1, 53.48, "a");
+insert into c5 values (1.1, 100.1, 23.48, "a");
+
+insert into c5 values (2.2, 95.43, 259.47, "b");
+insert into c5 values (2.2, 95.43, 258.49, "b");
+insert into c5 values (2.2, 95.43, 19.54, "b");
+insert into c5 values (2.2, 2473.1, 589.90, "b");
+insert into c5 values (2.2, 2473.1, 298.85, "b");
+insert into c5 values (2.2, 2473.1, 986.68, "b");
+insert into c5 values (2.2, 478.1, 29.58, "b");
+insert into c5 values (2.2, 478.1, 965.89, "b");
+insert into c5 values (2.2, 478.1, 592.85, "b");
+
+insert into c5 values (3.3, 458.3, 47.47, "c");
+insert into c5 values (3.3, 458.3, 49.48, "c");
+insert into c5 values (3.3, 458.3, 329.17, "c");
+insert into c5 values (3.3, 548.4, 8584.1, "c");
+insert into c5 values (3.3, 548.4, 19.48, "c");
+insert into c5 values (3.3, 548.4, 548.4, "c");
+insert into c5 values (3.3, 925.5, 49.87, "c");
+insert into c5 values (3.3, 925.5, 55.48, "c");
+insert into c5 values (3.3, 925.5, 25.97, "c");
+
+select * from c5;
+
+call polarx.changeset_stats('c5');
+call polarx.changeset_fetch('c5');
+
+update c5 set value = "d";
+
+call polarx.changeset_stats('c5');
+call polarx.changeset_fetch('c5');
+call polarx.changeset_stats('c5');
+call polarx.changeset_finish('c5');
+call polarx.changeset_stats('c5');
+
+select * from c5;
+
+DROP TABLE IF EXISTS c5;

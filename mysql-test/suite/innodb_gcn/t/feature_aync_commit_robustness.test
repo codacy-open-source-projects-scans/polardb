@@ -1,0 +1,142 @@
+--connection default
+create table t (id int);
+insert into t values (1);
+
+connect (con_a, localhost, root, , );
+--connection con_a
+set xa_detach_on_prepare = on;
+
+--echo ############################
+--echo # Case: Empty XA in transaction cache and rw_trx_list
+--echo #       but rollback implicitly after prepare
+--echo ############################
+xa start 'fbx_empty_b1';
+select * from t for update;
+xa end 'fbx_empty_b1';
+
+xa prepare 'fbx_empty_b1';
+--let $my_xid= 'fbx_empty_b1', '', 1
+--let $expect_status= NOTSTART_OR_FORGET
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+xa commit 'fbx_empty_b1';
+--let $my_xid= 'fbx_empty_b1', '', 1
+--let $expect_status= NOTSTART_OR_FORGET
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ############################
+--echo # Case: Empty XA in transaction cache and not in rw_trx_list
+--echo ############################
+xa start 'fbx_empty_b2';
+xa end 'fbx_empty_b2';
+
+xa prepare 'fbx_empty_b2';
+--let $my_xid= 'fbx_empty_b2', '', 1
+--let $expect_status= NOTSTART_OR_FORGET
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+xa commit 'fbx_empty_b2';
+--let $my_xid= 'fbx_empty_b2', '', 1
+--let $expect_status= NOTSTART_OR_FORGET
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ############################
+--echo # Case: Empty Async Commit Info in TXN
+--echo ############################
+xa start 'fbx_empty_b3';
+insert into t values (2);
+xa end 'fbx_empty_b3';
+
+# Use "XA PREPARE" but not ac_prepare
+xa prepare 'fbx_empty_b3';
+--let $my_xid= 'fbx_empty_b3', '', 1
+--let $expect_status= DETACHED_PREPARE
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+xa commit 'fbx_empty_b3';
+--let $my_xid= 'fbx_empty_b3', '', 1
+--let $expect_status= COMMIT
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ############################
+--echo # Case: no use ac_prepare and no use ac_commit
+--echo ############################
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+--let $gcn = `select @base_seq + 100`
+
+xa start 'fbx_empty_b4';
+insert into t values (2);
+xa end 'fbx_empty_b4';
+
+# Use "XA PREPARE" but not ac_prepare
+xa prepare 'fbx_empty_b4';
+--let $my_xid= 'fbx_empty_b4', '', 1
+--let $expect_status= DETACHED_PREPARE
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+xa commit 'fbx_empty_b4';
+--let $my_xid= 'fbx_empty_b4', '', 1
+--let $expect_status= COMMIT
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ############################
+--echo # Case: Use ac_prepare not use ac_commit
+--echo ############################
+--let $gcn = `select @base_seq + 200`
+
+xa start 'fbx_empty_b5';
+insert into t values (2);
+xa end 'fbx_empty_b5';
+
+--let $my_xid='fbx_empty_b5', '', 1
+--let $ac_args=2,2,$gcn
+--let $expect_gcn=$gcn
+--let $ac_conn=con_a
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+--let $server_uuid= $ac_prepare_uuid
+
+# Use "XA COMMIT" but not ac_commit
+xa commit 'fbx_empty_b5';
+--let $my_xid='fbx_empty_b5', '', 1
+--let $expect_gcn= $gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $expect_trx_id= $ac_prepare_trx_id
+--let $expect_uba= $ac_prepare_uba
+--let $expect_m_trx_id= 0
+--let $expect_m_uba= 0
+--let $expect_n_branch= 2
+--let $expect_n_local_branch= 2
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ############################
+--echo # Case: Use ac_commit but no ac_prepare
+--echo ############################
+--let $gcn = `select @base_seq + 300`
+
+xa start 'fbx_empty_b6';
+insert into t values (2);
+xa end 'fbx_empty_b6';
+
+xa prepare 'fbx_empty_b6';
+
+--let $my_xid='fbx_empty_b6','',1
+--let $m_phyid= $ac_prepare_trx_id, $ac_prepare_uba
+--let $expect_gcn= $gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $expect_m_trx_id= $ac_prepare_trx_id
+--let $expect_m_uba= $ac_prepare_uba
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+--let $my_xid='fbx_empty_b6', '', 1
+--let $expect_gcn= $gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $expect_m_trx_id= $ac_prepare_trx_id
+--let $expect_m_uba= $ac_prepare_uba
+--let $expect_n_branch= NULL
+--let $expect_n_local_branch= NULL
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+disconnect con_a;
+
+--connection default
+drop table t;

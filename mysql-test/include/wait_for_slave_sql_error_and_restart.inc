@@ -53,7 +53,7 @@ if (!$slave_sql_error)
 
 if (!$rpl_channel_name)
 {
-  --let $rpl_channel_name= ''
+  --let $rpl_channel_name= 'test'
 }
 
 --replace_regex /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9][0-9][0-9][0-9][-+Z][0-9:]* *[0-9]* *\[/DATE_TIME [/

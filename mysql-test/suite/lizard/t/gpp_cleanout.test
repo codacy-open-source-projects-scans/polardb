@@ -1,0 +1,65 @@
+--echo #
+--echo # Test online gpp cleanout.
+--echo #
+
+--let $orig_opt_index_format_gpp_enabled = `SELECT @@global.opt_index_format_gpp_enabled`
+--let $orig_innodb_lizard_stat_enabled= `SELECT @@global.innodb_lizard_stat_enabled`
+--let $orig_innodb_index_purge_guess_clust_enabled= `SELECT @@global.innodb_index_purge_guess_clust_enabled`
+--let $orig_innodb_index_scan_guess_clust_enabled= `SELECT @@global.innodb_index_scan_guess_clust_enabled`
+set global innodb_lizard_stat_enabled=on;
+set global innodb_index_purge_guess_clust_enabled=on;
+set global innodb_index_scan_guess_clust_enabled=on;
+connect (con1,localhost,root,,);
+connection default;
+
+CREATE TABLE t1 ( id int NOT NULL, k int NOT NULL, c int NOT NULL, pad varchar(8192), PRIMARY KEY (id), KEY (k)) engine=innodb;
+  
+select * from information_schema.innodb_gpp_stats;
+ 
+INSERT INTO t1 (id, k, c, pad) VALUES (1, 1, 1, LEFT(REPEAT('A', 7000), CHAR_LENGTH(REPEAT('A', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (100, 100, 100, LEFT(REPEAT('B', 7000), CHAR_LENGTH(REPEAT('B', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (10, 10, 10, LEFT(REPEAT('C', 7000), CHAR_LENGTH(REPEAT('C', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (90, 90, 90, LEFT(REPEAT('A', 7000), CHAR_LENGTH(REPEAT('A', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (20, 20, 20, LEFT(REPEAT('A', 7000), CHAR_LENGTH(REPEAT('A', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (80, 80, 80, LEFT(REPEAT('A', 7000), CHAR_LENGTH(REPEAT('A', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (30, 30, 30, LEFT(REPEAT('A', 7000), CHAR_LENGTH(REPEAT('A', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (70, 70, 70, LEFT(REPEAT('A', 7000), CHAR_LENGTH(REPEAT('A', 7000))));
+  
+select * from information_schema.innodb_gpp_stats;
+show status like '%sec_clean%';
+ 
+select c from t1 force index(k) where k > 0; 
+ 
+select * from information_schema.innodb_gpp_stats;
+ 
+show status like '%sec_record_clean%';
+ 
+select c from t1 force index(k) where k > 0; 
+ 
+select * from information_schema.innodb_gpp_stats;
+ 
+show status like '%sec_clean%';
+
+
+--echo # ------------------------- Test Partition table ----------------------------------------
+create table test12 (name varchar(30),age bigint,grade bigint,date datetime not null,partition_id int not null,   PRIMARY KEY (`name`,`PARTITION_ID`),   KEY `IDX_DATE` (`date`,`name`,`partition_id`),   KEY `IDX_AGE` (`age`,`partition_id`) ) PARTITION BY RANGE COLUMNS(PARTITION_ID) (PARTITION p0 VALUES LESS THAN (0) ENGINE = InnoDB,  PARTITION P1 VALUES LESS THAN (1) ENGINE = InnoDB);
+show status like '%clust_clean%';
+insert into test12 values('Tom27',21,1,'2017-08-25 12:12:12',0);
+update test12 set grade=3,date=now() where age=21 and partition_id=0;
+show status like '%clust_clean%';
+
+
+--echo # -------------------------Clean up --------------------------------------------------
+--eval SET opt_index_format_gpp_enabled= $orig_opt_index_format_gpp_enabled
+--eval SET GLOBAL innodb_lizard_stat_enabled= $orig_innodb_lizard_stat_enabled
+--eval SET GLOBAL innodb_index_purge_guess_clust_enabled= $orig_innodb_index_purge_guess_clust_enabled
+--eval SET GLOBAL innodb_index_scan_guess_clust_enabled= $orig_innodb_index_scan_guess_clust_enabled
+DROP TABLE t1;
+DROP TABLE test12;
+DISCONNECT con1;
+SET DEBUG_SYNC = 'RESET';
+SET DEBUG = '';
+
+
+
+

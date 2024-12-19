@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -557,8 +557,8 @@ static void opt_search_plan_for_table(
   plan->pcur.init();
   plan->clust_pcur.init();
 
-  ut_ad(plan->pcur.m_cleanout_pages == nullptr);
-  ut_ad(plan->clust_pcur.m_cleanout_pages == nullptr);
+  ut_ad(plan->pcur.m_cleanout == nullptr);
+  ut_ad(plan->clust_pcur.m_cleanout == nullptr);
 }
 
 /** Looks at a comparison condition and decides if it can, and need, be tested

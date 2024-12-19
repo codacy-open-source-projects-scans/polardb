@@ -11,7 +11,7 @@
 
 
 --disable_query_log
-RESET REPLICA;
+RESET REPLICA for channel 'test';
 
 # Assert that the fake relay log files are gone (RESET REPLICA should
 # have removed them).
@@ -21,7 +21,7 @@ RESET REPLICA;
 # Revert variables.
 eval SET @@global.relay_log_purge= $_fake_relay_log_purge;
 
-eval CHANGE REPLICATION SOURCE TO SOURCE_HOST = '$_fake_old_master_host';
+eval CHANGE REPLICATION SOURCE TO SOURCE_HOST = '$_fake_old_master_host' for channel "test";
 
 
 --let $include_filename= cleanup_fake_relay_log.inc

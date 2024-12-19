@@ -23,7 +23,7 @@
 --echo #    do not add failover sources.
 --source include/rpl_connection_slave.inc
 --source include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_CONNECT_RETRY=1, SOURCE_RETRY_COUNT=1, SOURCE_CONNECTION_AUTO_FAILOVER=1;
+CHANGE REPLICATION SOURCE TO SOURCE_CONNECT_RETRY=1, SOURCE_RETRY_COUNT=1, SOURCE_CONNECTION_AUTO_FAILOVER=1 for channel "test";
 --source include/start_slave.inc
 
 --let $assert_text= 'Asynchronous Replication Connection Failover is enabled'
@@ -52,7 +52,7 @@ CHANGE REPLICATION SOURCE TO SOURCE_CONNECT_RETRY=1, SOURCE_RETRY_COUNT=1, SOURC
 --let $slave_io_errno= 2003
 --source include/wait_for_slave_io_error.inc
 
---let $wait_condition= SELECT COUNT(*)=1 FROM performance_schema.replication_connection_status WHERE SERVICE_STATE="OFF"
+--let $wait_condition= SELECT COUNT(*)=1 FROM performance_schema.replication_connection_status WHERE CHANNEL_NAME = 'test' and SERVICE_STATE="OFF"
 --source include/wait_condition.inc
 
 --let $assert_text= 'Verify replica_monitor thread is running'
@@ -83,6 +83,6 @@ CHANGE REPLICATION SOURCE TO SOURCE_CONNECT_RETRY=1, SOURCE_RETRY_COUNT=1, SOURC
 --source include/rpl_reset_slave.inc
 --let $rpl_reset_slave_all=
 
---let $rpl_skip_sync= 1
---let $rpl_only_running_threads= 1
---source include/rpl_end.inc
+#--let $rpl_skip_sync= 1
+#--let $rpl_only_running_threads= 1
+#--source include/rpl_end.inc

@@ -96,11 +96,11 @@ if (!$expect_error)
 {
   if ($gtid_mode_on)
   {
-    --let $event_sequence= (Gtid # !Q(DROP.*) # ){$transaction_count}
+    --let $event_sequence= (Consensus_log # Gcn # Gtid # !Q(DROP.*) # ){$transaction_count}
   }
   if (!$gtid_mode_on)
   {
-    --let $event_sequence= (Anonymous_Gtid # !Q(DROP.*) # ){$transaction_count}
+    --let $event_sequence= (Consensus_log # Gcn # Anonymous_Gtid # !Q(DROP.*) # ){$transaction_count}
   }
 }
 if ($expect_error)

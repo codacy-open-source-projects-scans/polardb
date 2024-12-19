@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -267,6 +267,9 @@ enum mlog_id_t {
 
   /** Lizard: GCN metadata when commit. */
   MLOG_GCN_METADATA = 81,
+
+  /** Lizard: update the gpp_no of a secondary index record */
+  MLOG_REC_SEC_GPP_NO = 82,
 
   /** Lizard: update the lizard fields (scn, uba) after 8029 */
   MLOG_REC_CLUST_LIZARD_UPDATE = 100,

@@ -1,0 +1,453 @@
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+
+set global innodb_undo_retention = 9000;
+set global xa_detach_on_prepare = off;
+set session xa_detach_on_prepare = off;
+
+--echo ###############################
+--echo # LOAD DATA
+--echo ###############################
+create table t1 (id int primary key, balance int);
+
+insert into t1 values (1, 1000);
+insert into t1 values (2, 1000);
+
+connect(con1, localhost, root,,);
+connect(con2, localhost, root,,);
+connect(con3, localhost, root,,);
+
+--echo ###############################
+--echo # Case: Async Commit Assigned GCN
+--echo ###############################
+connection default;
+--let $commit_gcn = `select @base_seq + 100`
+
+connection con1;
+xa start 'ac_t1_b1';
+update t1 set balance = balance - 10 where id = 1;
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b1';
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $my_xid= 'ac_t1_b1', '', 1
+--let $ac_args= 1, 1, $commit_gcn
+--let $ac_conn=con1
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+--let $m_trx_id= $ac_prepare_trx_id
+--let $m_uba= $ac_prepare_uba
+--let $server_uuid= $ac_prepare_uuid
+
+connection con1;
+--let $my_xid= 'ac_t1_b1', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $server_uuid= $server_uuid
+--let $expect_m_trx_id= NULL
+--let $expect_m_uba= NULL
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+--echo ###############################
+--echo # Case: Async Commit Automatic GCN
+--echo ###############################
+connection default;
+--let $sys_gcn= `select @base_seq + 200`
+--echo call dbms_xa.advance_gcn_no_flush(sys_gcn)
+--disable_query_log
+--eval call dbms_xa.advance_gcn_no_flush($sys_gcn)
+--enable_query_log
+
+--let $sys_gcn = `SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn'`
+--let $commit_gcn = `select @base_seq + 190`
+
+connection con1;
+xa start 'ac_t1_b2';
+update t1 set balance = balance - 10 where id = 1;
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b2';
+--let $expect_gcn= $sys_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $my_xid= 'ac_t1_b2', '', 1
+--let $ac_args= 1, 1, $commit_gcn
+--let $ac_conn=con1
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+--let $m_trx_id= $ac_prepare_trx_id
+--let $m_uba= $ac_prepare_uba
+--let $server_uuid = $ac_prepare_uuid
+--let $commit_gcn= $ac_prepare_gcn
+
+connection con1;
+--let $my_xid= 'ac_t1_b2', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $server_uuid = $server_uuid
+--let $expect_m_trx_id= NULL
+--let $expect_m_uba= NULL
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+--echo ###############################
+--echo # Case: Single-shard read is initiated between two branch commits (AUTOMATIC)
+--echo ###############################
+connection default;
+--let $sys_gcn= `select @base_seq + 300`
+--echo call dbms_xa.advance_gcn_no_flush(sys_gcn)
+--disable_query_log
+--eval call dbms_xa.advance_gcn_no_flush($sys_gcn)
+--enable_query_log
+--let $proposal_gcn = `select @base_seq + 290`
+
+connection con1;
+xa start 'ac_t1_b3';
+update t1 set balance = balance - 10 where id = 1;
+xa end 'ac_t1_b3';
+--let $expect_gcn= $sys_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $my_xid= 'ac_t1_b3', '', 1
+--let $ac_args= 2, 2, $proposal_gcn
+--let $ac_conn=con1
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+--let $commit_gcn= $ac_prepare_gcn
+--let $m_trx_id= $ac_prepare_trx_id
+--let $m_uba= $ac_prepare_uba
+--let $server_uuid= $ac_prepare_uuid
+
+connection con2;
+xa start 'ac_t1_b4';
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b4';
+--let $expect_gcn= $sys_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $my_xid= 'ac_t1_b4', '', 1
+--let $ac_args= 2, 2, $proposal_gcn
+--let $ac_conn=con2
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+
+--echo ###############
+--echo # commit ac_t1_b3
+--echo ###############
+connection con1;
+--let $my_xid='ac_t1_b3', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $server_uuid = $server_uuid
+--let $expect_m_trx_id= NULL
+--let $expect_m_uba= NULL
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+connection con3;
+begin;
+set innodb_current_snapshot_seq = true;
+--send select * from t1;
+
+--echo ###############
+--echo # commit ac_t1_b4
+--echo ###############
+connection con2;
+--let $my_xid='ac_t1_b4', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $server_uuid = $server_uuid
+--let $expect_m_trx_id= $m_trx_id
+--let $expect_m_uba= $m_uba
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+connection con3;
+--reap
+commit;
+select * from t1;
+
+--echo ###############################
+--echo # Case: Single-shard read is initiated after two branch commits (AUTOMATIC)
+--echo ###############################
+connection default;
+--let $sys_gcn= `select @base_seq + 400`
+--echo call dbms_xa.advance_gcn_no_flush(sys_gcn)
+--disable_query_log
+--eval call dbms_xa.advance_gcn_no_flush($sys_gcn)
+--enable_query_log
+--let $proposal_gcn = `select @base_seq + 390`
+
+connection con1;
+xa start 'ac_t1_b5';
+update t1 set balance = balance - 10 where id = 1;
+xa end 'ac_t1_b5';
+--let $expect_gcn= $sys_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $my_xid= 'ac_t1_b5', '', 1
+--let $ac_args= 2, 2, $proposal_gcn
+--let $ac_conn=con1
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+--let $commit_gcn= $ac_prepare_gcn
+--let $m_trx_id= $ac_prepare_trx_id
+--let $m_uba= $ac_prepare_uba
+--let $server_uuid= $ac_prepare_uuid
+
+connection con2;
+xa start 'ac_t1_b6';
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b6';
+--let $expect_gcn= $sys_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $my_xid= 'ac_t1_b6', '', 1
+--let $ac_args= 2, 2, $proposal_gcn
+--let $ac_conn=con2
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+
+--echo ###############
+--echo # commit ac_t1_b5
+--echo ###############
+connection con1;
+--let $my_xid='ac_t1_b5', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $server_uuid = $server_uuid
+--let $expect_m_trx_id= NULL
+--let $expect_m_uba= NULL
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+--echo ###############
+--echo # commit ac_t1_b6
+--echo ###############
+connection con2;
+--let $my_xid='ac_t1_b6', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $server_uuid = $server_uuid
+--let $expect_m_trx_id= $m_trx_id
+--let $expect_m_uba= $m_uba
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+connection con3;
+begin;
+set innodb_current_snapshot_seq = true;
+select * from t1;
+commit;
+
+--echo ###############################
+--echo # Case: Single-shard read is initiated before two branch commits (AUTOMATIC)
+--echo ###############################
+connection default;
+--let $sys_gcn= `select @base_seq + 500`
+--echo call dbms_xa.advance_gcn_no_flush(sys_gcn)
+--disable_query_log
+--eval call dbms_xa.advance_gcn_no_flush($sys_gcn)
+--enable_query_log
+--let $proposal_gcn = `select @base_seq + 490`
+
+connection con3;
+begin;
+set transaction_isolation = "repeatable-read";
+set innodb_current_snapshot_seq = true;
+select * from t1;
+
+connection con1;
+xa start 'ac_t1_b7';
+update t1 set balance = balance - 10 where id = 1;
+xa end 'ac_t1_b7';
+--let $expect_gcn= $sys_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $my_xid= 'ac_t1_b7', '', 1
+--let $ac_args= 2, 2, $proposal_gcn
+--let $ac_conn=con1
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+--let $commit_gcn= $ac_prepare_gcn
+--let $m_trx_id= $ac_prepare_trx_id
+--let $m_uba= $ac_prepare_uba
+--let $server_uuid= $ac_prepare_uuid
+
+connection con2;
+xa start 'ac_t1_b8';
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b8';
+--let $expect_gcn= $sys_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $my_xid= 'ac_t1_b8', '', 1
+--let $ac_args= 2, 2, $proposal_gcn
+--let $ac_conn=con2
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+
+--echo ###############
+--echo # commit ac_t1_b7
+--echo ###############
+connection con1;
+--let $my_xid='ac_t1_b7', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $server_uuid = $server_uuid
+--let $expect_m_trx_id= NULL
+--let $expect_m_uba= NULL
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+--echo ###############
+--echo # commit ac_t1_b8
+--echo ###############
+connection con2;
+--let $my_xid='ac_t1_b8', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= AUTOMATIC_GCN
+--let $server_uuid = $server_uuid
+--let $expect_m_trx_id= $m_trx_id
+--let $expect_m_uba= $m_uba
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+connection con3;
+select * from t1;
+commit;
+select * from t1;
+
+--echo ###############################
+--echo # Case: Single-shard read is initiated between two branch commits (ASSIGNED)
+--echo ###############################
+connection default;
+--let $proposal_gcn= `select @base_seq + 600`
+--let $commit_gcn= `select @base_seq + 600`
+
+connection con1;
+xa start 'ac_t1_b9';
+update t1 set balance = balance - 10 where id = 1;
+xa end 'ac_t1_b9';
+--let $expect_gcn= $proposal_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $my_xid= 'ac_t1_b9', '', 1
+--let $ac_args= 2, 2, $proposal_gcn
+--let $ac_conn=con1
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+--let $m_trx_id= $ac_prepare_trx_id
+--let $m_uba= $ac_prepare_uba
+--let $server_uuid= $ac_prepare_uuid
+
+connection con2;
+xa start 'ac_t1_b10';
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b10';
+--let $expect_gcn= $proposal_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $my_xid= 'ac_t1_b10', '', 1
+--let $ac_args= 2, 2, $proposal_gcn
+--let $ac_conn=con2
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+
+--echo ###############
+--echo # commit ac_t1_b9
+--echo ###############
+connection con1;
+--let $my_xid='ac_t1_b9', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $server_uuid = $server_uuid
+--let $expect_m_trx_id= NULL
+--let $expect_m_uba= NULL
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+connection con3;
+begin;
+set innodb_current_snapshot_seq = true;
+--send select * from t1;
+
+--echo ###############
+--echo # commit ac_t1_b10
+--echo ###############
+connection con2;
+--let $my_xid='ac_t1_b10', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $server_uuid = $server_uuid
+--let $expect_m_trx_id= $m_trx_id
+--let $expect_m_uba= $m_uba
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+connection con3;
+--reap
+commit;
+select * from t1;
+
+--echo ###############################
+--echo # Case: Single-shard read is initiated after two branch commits (ASSIGNED)
+--echo ###############################
+connection default;
+--let $proposal_gcn= `select @base_seq + 700`
+--let $commit_gcn= `select @base_seq + 700`
+
+connection con1;
+xa start 'ac_t1_b11';
+update t1 set balance = balance - 10 where id = 1;
+xa end 'ac_t1_b11';
+--let $expect_gcn= $proposal_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $my_xid= 'ac_t1_b11', '', 1
+--let $ac_args= 2, 2, $proposal_gcn
+--let $ac_conn=con1
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+--let $m_trx_id= $ac_prepare_trx_id
+--let $m_uba= $ac_prepare_uba
+--let $server_uuid= $ac_prepare_uuid
+
+connection con2;
+xa start 'ac_t1_b12';
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b12';
+--let $expect_gcn= $proposal_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $my_xid= 'ac_t1_b12', '', 1
+--let $ac_args= 2, 2, $proposal_gcn
+--let $ac_conn=con2
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+
+--echo ###############
+--echo # commit ac_t1_b11
+--echo ###############
+connection con1;
+--let $my_xid='ac_t1_b11', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $server_uuid = $server_uuid
+--let $expect_m_trx_id= NULL
+--let $expect_m_uba= NULL
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+--echo ###############
+--echo # commit ac_t1_b12
+--echo ###############
+connection con2;
+--let $my_xid='ac_t1_b12', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $commit_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $server_uuid = $server_uuid
+--let $expect_m_trx_id= $m_trx_id
+--let $expect_m_uba= $m_uba
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+connection con3;
+begin;
+set innodb_current_snapshot_seq = true;
+select * from t1;
+commit;
+select * from t1;
+
+--echo ###############################
+--echo # cleanup
+--echo ###############################
+
+--disconnect con1
+--disconnect con2
+--disconnect con3
+
+connection default;
+
+set global innodb_undo_retention = default;
+set global xa_detach_on_prepare = default;
+set session xa_detach_on_prepare = default;
+
+drop table t1;
+

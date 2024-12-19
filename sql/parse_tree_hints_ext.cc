@@ -61,6 +61,7 @@ bool PT_hint_sample_percentage::contextualize(Parse_context *pc) {
     global_hint->sample_hint =
         new (pc->thd->mem_root) Sample_percentage_hint(pct);
     global_hint->set_switch(switch_on(), type(), false);
+    global_hint->sample_percentage = this;
     return false;
   } while (0);
 

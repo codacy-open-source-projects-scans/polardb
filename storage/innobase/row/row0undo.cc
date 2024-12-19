@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -143,7 +143,7 @@ undo_node_t *row_undo_node_create(trx_t *trx, que_thr_t *parent,
 
   undo->partial = partial_rollback;
   undo->pcur.init();
-  ut_ad(undo->pcur.m_cleanout_pages == nullptr);
+  ut_ad(undo->pcur.m_cleanout == nullptr);
 
   undo->heap = mem_heap_create(256, UT_LOCATION_HERE);
 
@@ -208,6 +208,8 @@ bool row_undo_search_clust_to_pcur(
 
     node->row = row_build(ROW_COPY_DATA, clust_index, rec, offsets, nullptr,
                           nullptr, nullptr, ext, node->heap);
+
+    lizard::row_undo_alloc_gpp_field(node);
 
     /* We will need to parse out virtual column info from undo
     log, first mark them DATA_MISSING. So we will know if the

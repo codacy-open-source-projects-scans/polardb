@@ -2,7 +2,7 @@
 #define HANDLER_INCLUDED
 
 /*
-   Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2000, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -119,6 +119,10 @@ enum class enum_column_types;
 class Table;
 class Tablespace;
 }  // namespace dd
+
+namespace lizard {
+class Ha_ddl_policy;
+}
 
 constexpr const ha_rows EXTRA_RECORDS{10};
 
@@ -3524,6 +3528,8 @@ class Alter_inplace_info {
   */
   const char *unsupported_reason;
 
+  lizard::Ha_ddl_policy *ddl_policy;
+
   Alter_inplace_info(HA_CREATE_INFO *create_info_arg,
                      Alter_info *alter_info_arg, bool error_if_not_empty_arg,
                      KEY *key_info_arg, uint key_count_arg,
@@ -3548,7 +3554,8 @@ class Alter_inplace_info {
         modified_part_info(modified_part_info_arg),
         online(false),
         handler_trivial_ctx(0),
-        unsupported_reason(nullptr) {}
+        unsupported_reason(nullptr),
+        ddl_policy(nullptr) {}
 
   ~Alter_inplace_info() { destroy(handler_ctx); }
 
@@ -3602,6 +3609,14 @@ class Alter_inplace_info {
   void add_added_key(KEY *new_key) {
     index_add_buffer[index_add_count++] = (uint)(new_key - key_info_buffer);
     DBUG_PRINT("info", ("index added: '%s'", new_key->name));
+  }
+
+  bool is_inplace_alter_partition() {
+    constexpr HA_ALTER_FLAGS INPLACE_PARTITION_OP =
+        ADD_PARTITION | DROP_PARTITION | ALTER_REBUILD_PARTITION |
+        COALESCE_PARTITION | REORGANIZE_PARTITION;
+
+    return ((handler_flags & INPLACE_PARTITION_OP) != 0);
   }
 };
 
@@ -6993,6 +7008,8 @@ class handler {
                                HA_CREATE_INFO *) {
     return;
   }
+
+  virtual bool support_index_format() const { return false; }
 };
 
 /* Temporary Table handle for opening uncached table */

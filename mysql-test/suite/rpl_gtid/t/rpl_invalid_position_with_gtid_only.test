@@ -41,12 +41,12 @@
 --let $replica_checkpoint_period_value = `SELECT @@global.replica_checkpoint_period`
 SET @@GLOBAL.replica_checkpoint_period= 1;
 
-CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1, GTID_ONLY = 1;
+CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1, GTID_ONLY = 1 for channel "test";
 
 --source include/start_slave.inc
 
 --let $assert_text= 'GTID_ONLY is enabled'
---let $assert_cond= [SELECT GTID_ONLY FROM performance_schema.replication_connection_configuration, GTID_ONLY, 1] = 1
+--let $assert_cond= [SELECT GTID_ONLY FROM performance_schema.replication_connection_configuration where CHANNEL_NAME="test", GTID_ONLY, 1] = 1
 --source include/assert.inc
 
 --source include/rpl_connection_master.inc
@@ -56,8 +56,8 @@ INSERT INTO t VALUES(1);
 
 --source include/sync_slave_sql_with_master.inc
 
---let $source_log_file_orig=query_get_value(SHOW REPLICA STATUS FOR CHANNEL '', Source_Log_File, 1)
---let $source_log_pos_orig=query_get_value(SHOW REPLICA STATUS FOR CHANNEL '', Read_Source_Log_Pos, 1)
+--let $source_log_file_orig=query_get_value(SHOW REPLICA STATUS FOR CHANNEL 'test', Source_Log_File, 1)
+--let $source_log_pos_orig=query_get_value(SHOW REPLICA STATUS FOR CHANNEL 'test', Read_Source_Log_Pos, 1)
 
 --let $rpl_server_number = 2
 --let $rpl_server_parameters = --skip_slave_start
@@ -67,22 +67,22 @@ INSERT INTO t VALUES(1);
 --echo #
 --echo # 2 Assert all invalid positions in SHOW REPLICA STATUS are shown as such
 
---let $source_log_file=query_get_value(SHOW REPLICA STATUS FOR CHANNEL '', Source_Log_File, 1)
+--let $source_log_file=query_get_value(SHOW REPLICA STATUS FOR CHANNEL 'test', Source_Log_File, 1)
 --let $assert_cond= [ SELECT "$source_log_file" = "INVALID" ]
 --let $assert_text= The source log file name is invalid
 --source include/assert.inc
 
---let $source_log_pos=query_get_value(SHOW REPLICA STATUS FOR CHANNEL '', Read_Source_Log_Pos, 1)
+--let $source_log_pos=query_get_value(SHOW REPLICA STATUS FOR CHANNEL 'test', Read_Source_Log_Pos, 1)
 --let $assert_cond= [ SELECT "$source_log_pos" = "0" ]
 --let $assert_text= The source log file position is 0
 --source include/assert.inc
 
---let $applier_source_log_file=query_get_value(SHOW REPLICA STATUS FOR CHANNEL '', Relay_Source_Log_File, 1)
+--let $applier_source_log_file=query_get_value(SHOW REPLICA STATUS FOR CHANNEL 'test', Relay_Source_Log_File, 1)
 --let $assert_cond= [ SELECT "$applier_source_log_file" = "INVALID" ]
 --let $assert_text= The source log file name in the applier is invalid
 --source include/assert.inc
 
---let $applier_source_log_pos=query_get_value(SHOW REPLICA STATUS FOR CHANNEL '', Exec_Source_Log_Pos, 1)
+--let $applier_source_log_pos=query_get_value(SHOW REPLICA STATUS FOR CHANNEL 'test', Exec_Source_Log_Pos, 1)
 --let $assert_cond= [ SELECT "$applier_source_log_pos" = "0" ]
 --let $assert_text= The source log file position in the applier is 0
 --source include/assert.inc
@@ -93,17 +93,17 @@ INSERT INTO t VALUES(1);
 
 --source include/start_slave_io.inc
 
---let $show_statement= SHOW REPLICA STATUS FOR CHANNEL ''
+--let $show_statement= SHOW REPLICA STATUS FOR CHANNEL 'test'
 --let $field= Source_Log_File
 --let $condition= != 'INVALID'
 --source include/wait_show_condition.inc
 
---let $source_log_file=query_get_value(SHOW REPLICA STATUS FOR CHANNEL '', Source_Log_File, 1)
+--let $source_log_file=query_get_value(SHOW REPLICA STATUS FOR CHANNEL 'test', Source_Log_File, 1)
 --let $assert_cond= [ SELECT "$source_log_file" = "$source_log_file_orig" ]
 --let $assert_text= The source log file name is back to the previous value
 --source include/assert.inc
 
---let $source_log_pos=query_get_value(SHOW REPLICA STATUS FOR CHANNEL '', Read_Source_Log_Pos, 1)
+--let $source_log_pos=query_get_value(SHOW REPLICA STATUS FOR CHANNEL 'test', Read_Source_Log_Pos, 1)
 --let $assert_cond= [ SELECT "$source_log_pos" = "$source_log_pos_orig" ]
 --let $assert_text= The source log file is back to the previous position
 --source include/assert.inc
@@ -133,17 +133,17 @@ INSERT INTO t VALUES(2);
 --source include/rpl_connection_slave.inc
 
 # Relay log is only updated on checkpoint points
---let $show_statement= SHOW REPLICA STATUS FOR CHANNEL ''
+--let $show_statement= SHOW REPLICA STATUS FOR CHANNEL 'test'
 --let $field= Relay_Source_Log_File
 --let $condition= != 'INVALID'
 --source include/wait_show_condition.inc
 
---let $applier_source_log_file=query_get_value(SHOW REPLICA STATUS FOR CHANNEL '', Relay_Source_Log_File, 1)
+--let $applier_source_log_file=query_get_value(SHOW REPLICA STATUS FOR CHANNEL 'test', Relay_Source_Log_File, 1)
 --let $assert_cond= [ SELECT "$applier_source_log_file" = "$log_file_on_source" ]
 --let $assert_text= The source log file name for the applier is the one used on the source
 --source include/assert.inc
 
---let $applier_source_log_pos=query_get_value(SHOW REPLICA STATUS FOR CHANNEL '', Exec_Source_Log_Pos, 1)
+--let $applier_source_log_pos=query_get_value(SHOW REPLICA STATUS FOR CHANNEL 'test', Exec_Source_Log_Pos, 1)
 --let $assert_cond= [ SELECT "$applier_source_log_pos" = "$log_pos_on_source" ]
 --let $assert_text= The source log file position in the applier is last applied on the source
 --source include/assert.inc
@@ -152,7 +152,7 @@ INSERT INTO t VALUES(2);
 --echo # 5 Check the starting SQL thread message reports invalid positions
 
 --let $assert_file= $MYSQLTEST_VARDIR/log/mysqld.2.err
---let $assert_select= Slave SQL thread for channel '' initialized, starting replication in log 'INVALID' at position 0, relay log *
+--let $assert_select= Slave SQL thread for channel 'test' initialized, starting replication in log 'INVALID' at position 0, relay log *
 --let $assert_count= 1
 --let $assert_text= The SQL thread start will report the information in relation to the source as invalid
 --source include/assert_grep.inc
@@ -165,7 +165,7 @@ INSERT INTO t VALUES(2);
 
 --source include/stop_slave.inc
 
-CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 0, GTID_ONLY = 0;
+CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 0, GTID_ONLY = 0 for channel "test";
 
 --source include/start_slave.inc
 

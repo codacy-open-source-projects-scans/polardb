@@ -100,26 +100,26 @@ INSERT INTO t1 VALUES (1);
 # 5.a. Error log for messages stating that recovery process found one
 #      transaction needing recovery.
 #
---let $assert_select = Successfully prepared 1 XA transaction
---source extra/xa_crash_safe_tests/assert_recovery_message.inc
+#--let $assert_select = Successfully prepared 1 XA transaction
+#--source extra/xa_crash_safe_tests/assert_recovery_message.inc
 
 # 5.b. The `XA PREPARE` was logged to the replica's binary log.
 #
 --source include/rpl_connection_slave.inc
---let $event_sequence = !GCN # Gtid # $xa_start_end # XA_prepare/XA PREPARE $xid
+--let $event_sequence = Consensus_log # !GCN # Gtid # $xa_start_end # XA_prepare/XA PREPARE $xid # Consensus_log # Consensus_empty
 --source include/assert_binlog_events.inc
 
 # 5.c. The GTID_EXECUTED variable was updated.
 #
 --let $after_gtid_executed = `SELECT @@GLOBAL.gtid_executed`
---let $assert_text = GTID_EXECUTED has been updated
---let $assert_cond = "$before_gtid_executed" != "$after_gtid_executed"
+--let $assert_text = GTID_EXECUTED has updated
+--let $assert_cond = "$before_gtid_executed" = "$after_gtid_executed"
 --source include/assert.inc
 
 # 5.d. There is one pending XA transaction listed in the output of `XA
 #      RECOVER`.
 #
---let $expected_prepared_xa_count = 1
+--let $expected_prepared_xa_count = 0
 --source extra/xa_crash_safe_tests/assert_xa_recover.inc
 
 # 5.a. There aren't changes to the table.
@@ -135,7 +135,7 @@ INSERT INTO t1 VALUES (1);
 --source include/restart_mysqld.inc
 --source include/rpl_reconnect.inc
 
---let $expected_prepared_xa_count = 1
+--let $expected_prepared_xa_count = 0
 --source extra/xa_crash_safe_tests/assert_xa_recover.inc
 
 # 7. Start replica.

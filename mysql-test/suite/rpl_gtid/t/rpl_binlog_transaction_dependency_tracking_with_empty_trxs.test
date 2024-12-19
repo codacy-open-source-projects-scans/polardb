@@ -29,7 +29,7 @@
 # The following logical timestamps check needs fresh slave server.
 RESET MASTER;
 # Set the filter rule to filter out these DDLs and DMls on slave.
-CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE= (test.t1);
+CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE= (test.t1) for channel "test";
 SET @save_binlog_transaction_dependency_tracking= @@GLOBAL.binlog_transaction_dependency_tracking;
 SET GLOBAL binlog_transaction_dependency_tracking= COMMIT_ORDER;
 SET GLOBAL binlog_transaction_dependency_tracking= WRITESET;
@@ -61,7 +61,7 @@ DROP TABLE t1;
 --source include/stop_slave_sql.inc
 SET GLOBAL binlog_transaction_dependency_tracking= COMMIT_ORDER;
 SET @@GLOBAL.binlog_transaction_dependency_tracking= @save_binlog_transaction_dependency_tracking;
-CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE= ();
+CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE= () for channel "test";
 --source include/start_slave_sql.inc
 
 --source include/rpl_end.inc

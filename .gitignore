@@ -258,7 +258,6 @@ support-files/mysqlrouter-log-rotate
 CMakeDoxyfile.in
 CMakeDoxygenDefaults.cmake
 Doxyfile
-data/
 extra/curl/curl-7.86.0/CMake/cmake_uninstall.cmake
 extra/curl/curl-7.86.0/curl-config
 extra/curl/curl-7.86.0/generated/
@@ -547,3 +546,5 @@ extra/jemalloc/jemalloc-install
 extra/jemalloc/jemalloc-mkdir
 extra/jemalloc/jemalloc-patch
 extra/jemalloc/jemalloc-update
+extra/jemalloc/jemalloc-*info.txt
+router/tests/data/

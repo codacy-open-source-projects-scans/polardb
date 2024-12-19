@@ -599,6 +599,17 @@ class ha_sequence : public handler {
   int external_lock(THD *thd, int lock_type) override;
 
   /**
+    start stmt
+
+    @param[in]      thd         User connection
+    @param[in]      lock_typ    Lock type
+
+    @retval         0         Success
+    @retval         ~0        Failure
+  */
+  int start_stmt(THD *thd, thr_lock_type lock_type) override;
+
+  /**
     Scrolling the sequence cache by update the base table through autonomous
     transaction.
 

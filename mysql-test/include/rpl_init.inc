@@ -332,6 +332,9 @@ while ($_rpl_server)
   --let $rpl_connection_name= server_$_rpl_server
   --source include/rpl_connection.inc
   USE test;
+  call dbms_consensus.force_single_mode();
+  sleep 2;
+
   if ($rpl_gtid_utils)
   {
     --source include/gtid_utils.inc
@@ -343,7 +346,8 @@ while ($_rpl_server)
     if (!$rpl_shallow_reset_slave){
       --let $_rpl_init_reset_slave_modifier= ALL
     }
-    --eval RESET REPLICA $_rpl_init_reset_slave_modifier FOR CHANNEL ''
+    --error 0,ER_SLAVE_CHANNEL_DOES_NOT_EXIST
+    --eval RESET REPLICA $_rpl_init_reset_slave_modifier FOR CHANNEL 'test'
   }
   # Only way to do this in mtr :-(
   if ($_rpl_server == 1) {

@@ -36,8 +36,6 @@
 --let $include_filename= sync_slave_sql.inc
 --source include/begin_include_file.inc
 
-# --let $rpl_debug= 1
-
 --let $_sss_slave_timeout= $slave_timeout
 if (!$_sss_slave_timeout)
 {
@@ -68,8 +66,8 @@ if ($rpl_debug)
 # timeout will make mtr throw an error almost promptly, without having
 # to wait 300 seconds to notice a sync problem between master and slave.
 #
---let $_slave_master_file= query_get_value(SHOW SLAVE STATUS, Relay_Master_Log_File, 1)
---let $_slave_master_pos= query_get_value(SHOW SLAVE STATUS, Exec_Master_Log_Pos, 1)
+--let $_slave_master_file= query_get_value(SHOW SLAVE STATUS for channel $_saved_channel_name, Relay_Master_Log_File, 1)
+--let $_slave_master_pos= query_get_value(SHOW SLAVE STATUS for channel $_saved_channel_name, Exec_Master_Log_Pos, 1)
 
 if ($rpl_debug)
 {

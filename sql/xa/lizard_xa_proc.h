@@ -62,6 +62,9 @@ class Xa_proc_base : public Proc, public Disable_copy_base {
 */
 class Sql_cmd_xa_proc_base : public Sql_cmd_trans_proc {
  public:
+
+  static constexpr size_t MAX_SERVER_UUID_LENGTH = 256;
+
   explicit Sql_cmd_xa_proc_base(THD *thd, mem_root_deque<Item *> *list,
                                 const Proc *proc)
       : Sql_cmd_trans_proc(thd, list, proc) {
@@ -136,7 +139,13 @@ class Xa_proc_find_by_xid : public Xa_proc_base {
     COLUMN_STATUS = 0,
     COLUMN_GCN = 1,
     COLUMN_CSR = 2,
-    COLUMN_LAST = 3
+    COLUMN_TRX_ID = 3,
+    COLUMN_UBA = 4,
+    COLUMN_N_BRANCH = 5,
+    COLUMN_N_LOCAL_BRANCH = 6,
+    COLUMN_MASTER_TRX_ID = 7,
+    COLUMN_MASTER_UBA = 8,
+    COLUMN_LAST = 9
   };
 
  public:
@@ -151,9 +160,15 @@ class Xa_proc_find_by_xid : public Xa_proc_base {
     m_result_type = Result_type::RESULT_SET;
 
     Column_element elements[COLUMN_LAST] = {
-        {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("Status"), 16},
+        {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("STATUS"), 16},
         {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("GCN"), 0},
         {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("CSR"), 16},
+        {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("TRX_ID"), 0},
+        {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("UBA"), 0},
+        {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("N_BRANCH"), 0},
+        {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("N_LOCAL_BRANCH"), 0},
+        {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("MASTER_TRX_ID"), 0},
+        {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("MASTER_UBA"), 0},
     };
 
     for (size_t i = 0; i < COLUMN_LAST; i++) {
@@ -205,7 +220,7 @@ class Sql_cmd_xa_proc_prepare_with_trx_slot : public Sql_cmd_xa_proc_base {
   virtual void send_result(THD *thd, bool error) override;
 
  private:
-  my_slot_ptr_t m_slot_ptr;
+  slot_ptr_t m_slot_ptr;
 };
 
 class Xa_proc_prepare_with_trx_slot : public Xa_proc_base {
@@ -258,9 +273,6 @@ class Xa_proc_prepare_with_trx_slot : public Xa_proc_base {
   /* Singleton instance for prepare_with_trx_slot */
   static Proc *instance();
 
-  /**
-    Evoke the sql_cmd object for find_by_xid() proc.
-  */
   virtual Sql_cmd *evoke_cmd(THD *thd,
                              mem_root_deque<Item *> *list) const override;
 
@@ -386,6 +398,212 @@ class Xa_proc_advance_gcn_no_flush : public Xa_proc_base {
   virtual const std::string str() const override {
     return std::string("advance_gcn_no_flush");
   }
+};
+
+/**
+  dbms_xa.ac_prepare(...)
+
+  Do actually XA PREPARE when using async commit.
+*/
+class Sql_cmd_xa_proc_ac_prepare : public Sql_cmd_xa_proc_base {
+  constexpr static uint64_t MAX_BRANCH = std::numeric_limits<uint16_t>::max();
+
+ public:
+  explicit Sql_cmd_xa_proc_ac_prepare(THD *thd, mem_root_deque<Item *> *list,
+                                      const Proc *proc)
+      : Sql_cmd_xa_proc_base(thd, list, proc),
+        m_trx_id(0),
+        m_slot_ptr(0),
+        m_proposal_gcn(GCN_NULL),
+        m_csr(CSR_AUTOMATIC) {}
+
+  /**
+    Implementation of Proc execution body.
+
+    @param[in]    THD           Thread context
+
+    @retval       true          Failure
+    @retval       false         Success
+  */
+  virtual bool pc_execute(THD *thd) override;
+
+  /* Override default send_result */
+  virtual void send_result(THD *thd, bool error) override;
+
+ private:
+  trx_id_t m_trx_id;
+  slot_ptr_t m_slot_ptr;
+  gcn_t m_proposal_gcn;
+  csr_t m_csr;
+};
+
+class Xa_proc_ac_prepare : public Xa_proc_base {
+  using Sql_cmd_type = Sql_cmd_xa_proc_ac_prepare;
+
+  enum enum_parameter {
+    XA_PARAM_GTRID = 0,
+    XA_PARAM_BQUAL,
+    XA_PARAM_FORMATID,
+    XA_PARAM_N_BRANCH,
+    XA_PARAM_N_LOCAL_BRANCH,
+    XA_PARAM_PRE_COMMIT_GCN,
+    XA_PARAM_LAST
+  };
+
+  enum_field_types get_field_type(enum_parameter param) {
+    switch (param) {
+      case XA_PARAM_GTRID:
+      case XA_PARAM_BQUAL:
+        return MYSQL_TYPE_VARCHAR;
+      case XA_PARAM_FORMATID:
+      case XA_PARAM_N_BRANCH:
+      case XA_PARAM_N_LOCAL_BRANCH:
+      case XA_PARAM_PRE_COMMIT_GCN:
+        return MYSQL_TYPE_LONGLONG;
+      case XA_PARAM_LAST:
+        assert(0);
+    }
+    return MYSQL_TYPE_LONGLONG;
+  }
+
+  enum enum_column {
+    COLUMN_UUID = 0,
+    COLUMN_TRX_ID = 1,
+    COLUMN_UBA = 2,
+    COLUMN_GCN = 3,
+    COLUMN_CSR = 4,
+    COLUMN_LAST = 5
+  };
+
+ public:
+  explicit Xa_proc_ac_prepare(PSI_memory_key key)
+      : Xa_proc_base(key) {
+    /* 1. Init parameters */
+    for (size_t i = XA_PARAM_GTRID; i < XA_PARAM_LAST; i++) {
+      m_parameters.assign_at(
+          i, get_field_type(static_cast<enum enum_parameter>(i)));
+    }
+
+    /* 2. Result set protocol packet */
+    m_result_type = Result_type::RESULT_SET;
+
+    Column_element elements[COLUMN_LAST] = {
+        {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("UUID"), 256},
+        {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("TRX_ID"), 0},
+        {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("UBA"), 0},
+        {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("GCN"), 0},
+        {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("CSR"), 16},
+    };
+
+    for (size_t i = 0; i < COLUMN_LAST; i++) {
+      m_columns.assign_at(i, elements[i]);
+    }
+  }
+
+  /* Singleton instance */
+  static Proc *instance();
+
+  virtual Sql_cmd *evoke_cmd(THD *thd,
+                             mem_root_deque<Item *> *list) const override;
+
+  virtual ~Xa_proc_ac_prepare() {}
+
+  /* Proc name */
+  virtual const std::string str() const override {
+    return std::string("ac_prepare");
+  }
+
+  friend Sql_cmd_type;
+};
+
+/**
+  dbms_xa.ac_commit(...)
+
+  Do actually XA COMMIT when using async commit.
+*/
+class Sql_cmd_xa_proc_ac_commit : public Sql_cmd_xa_proc_base {
+  constexpr static uint64_t MAX_PARTICIPANT =
+      std::numeric_limits<uint16_t>::max();
+
+ public:
+  explicit Sql_cmd_xa_proc_ac_commit(THD *thd, mem_root_deque<Item *> *list,
+                                      const Proc *proc)
+      : Sql_cmd_xa_proc_base(thd, list, proc) {}
+
+  /**
+    Implementation of Proc execution body.
+
+    @param[in]    THD           Thread context
+
+    @retval       true          Failure
+    @retval       false         Success
+  */
+  virtual bool pc_execute(THD *thd) override;
+
+ private:
+  bool get_master_parms(char server_uuid[], xa_addr_t *addr);
+
+  /* Inherit the default send_result */
+};
+
+class Xa_proc_ac_commit : public Xa_proc_base {
+  using Sql_cmd_type = Sql_cmd_xa_proc_ac_commit;
+
+  enum enum_parameter {
+    XA_PARAM_GTRID = 0,
+    XA_PARAM_BQUAL,
+    XA_PARAM_FORMATID,
+    XA_PARAM_COMMIT_GCN,
+    XA_PARAM_UUID,
+    XA_PARAM_MASTER_TRX_ID,
+    XA_PARAM_MASTER_UBA,
+    XA_PARAM_LAST
+  };
+
+  enum_field_types get_field_type(enum_parameter param) {
+    switch (param) {
+      case XA_PARAM_GTRID:
+      case XA_PARAM_BQUAL:
+      case XA_PARAM_UUID:
+        return MYSQL_TYPE_VARCHAR;
+      case XA_PARAM_FORMATID:
+      case XA_PARAM_MASTER_TRX_ID:
+      case XA_PARAM_MASTER_UBA:
+      case XA_PARAM_COMMIT_GCN:
+        return MYSQL_TYPE_LONGLONG;
+      case XA_PARAM_LAST:
+        assert(0);
+    }
+    return MYSQL_TYPE_LONGLONG;
+  }
+
+ public:
+  explicit Xa_proc_ac_commit(PSI_memory_key key)
+      : Xa_proc_base(key) {
+    /* 1. Init parameters */
+    for (size_t i = XA_PARAM_GTRID; i < XA_PARAM_LAST; i++) {
+      m_parameters.assign_at(
+          i, get_field_type(static_cast<enum enum_parameter>(i)));
+    }
+
+    /* 2. Only OK or ERROR protocol packet */
+    m_result_type = Result_type::RESULT_OK;
+  }
+
+  /* Singleton instance */
+  static Proc *instance();
+
+  virtual Sql_cmd *evoke_cmd(THD *thd,
+                             mem_root_deque<Item *> *list) const override;
+
+  virtual ~Xa_proc_ac_commit() {}
+
+  /* Proc name */
+  virtual const std::string str() const override {
+    return std::string("ac_commit");
+  }
+
+  friend Sql_cmd_type;
 };
 
 }  // namespace im

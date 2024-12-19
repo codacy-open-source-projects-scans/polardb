@@ -49,8 +49,8 @@
 # timeout will make mtr throw an error almost promptly, without having
 # to wait 300 seconds to notice a sync problem between master and slave.
 #
---let $_slave_master_file= query_get_value(SHOW SLAVE STATUS, Master_Log_File, 1)
---let $_slave_master_pos= query_get_value(SHOW SLAVE STATUS, Read_Master_Log_Pos, 1)
+--let $_slave_master_file= query_get_value(SHOW SLAVE STATUS for channel 'test', Master_Log_File, 1)
+--let $_slave_master_pos= query_get_value(SHOW SLAVE STATUS for channel 'test', Read_Master_Log_Pos, 1)
 --let $_saved_slave_timeout= $slave_timeout
 if ( $_slave_master_file == $_saved_file )
 {

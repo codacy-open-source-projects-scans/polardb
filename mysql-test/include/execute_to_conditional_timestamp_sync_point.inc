@@ -150,7 +150,9 @@ if ($_ectsp_server_aux == $_ectsp_server_stmt) {
 }
 --eval SET TIMESTAMP = $timestamp; $statement
 --enable_query_log
+if ($skip_echo_statement == '') {
 --echo $statement;
+}
 
 --connection $_ectsp_auxiliary_connection
 --disable_query_log

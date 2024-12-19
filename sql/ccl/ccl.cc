@@ -987,7 +987,7 @@ void Ccl_slot::exit_cond() {
   DBUG_ENTER("Ccl_slot::exit_cond");
   lock();
   m_running--;
-  mysql_cond_broadcast(&m_cond);
+  mysql_cond_signal(&m_cond);
   unlock();
   DBUG_VOID_RETURN;
 }

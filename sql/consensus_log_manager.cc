@@ -39,6 +39,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "sql/consensus_admin.h"
 #include "sql/rpl_info_factory.h"
 #include "sql/rpl_mi.h"
+#include "sql/rpl_rli_pdb.h"
 #include "sql_parse.h"
 #include "sys_vars_consensus.h"
 
@@ -321,43 +322,24 @@ int ConsensusLogManager::init_service() {
     Consensus_info *consensus_info = get_consensus_info();
     if (opt_cluster_dump_meta) {
       std::string meta_file_name = "consensus.meta";
-      std::ostringstream oss_apply_index;
-      uint64 apply_index = get_relay_log_info()->get_consensus_apply_index();
-      oss_apply_index << apply_index;
-      std::string apply_index_str = oss_apply_index.str();
-      std::string cluster_info = get_consensus_info()->get_cluster_info();
-      std::string learner_info =
-          get_consensus_info()->get_cluster_learner_info();
+      std::ostringstream oss;
+      oss << "Consensus_apply_index: " << rli_info->get_consensus_apply_index() << "\n" 
+          << "Consensus_cluster_info: " << consensus_info->get_cluster_info() << "\n"
+          << "Consensus_learner_info: " << consensus_info->get_cluster_learner_info() << "\n"
+          << "Cluster_id: " << consensus_info->get_cluster_id() << "\n"
+          << "Current_term: " << consensus_info->get_current_term() << "\n"
+          << "Recover_status: " << consensus_info->get_recover_status() << "\n"
+          << "Last_leader_term: " << consensus_info->get_last_leader_term() << "\n"
+          << "Start_apply_index: " << consensus_info->get_start_apply_index() << "\n";
 
-      std::ostringstream oss_cluster_id;
-      uint64 cluster_id = get_consensus_info()->get_cluster_id();
-      oss_cluster_id << cluster_id;
-      std::string cluster_id_str = oss_cluster_id.str();
-
-      std::string output_str =
-          "Consensus_apply_index: " + apply_index_str + "\n" +
-          "Conseneus_cluster_info: " + cluster_info + "\n" +
-          "Consensus_learner_info: " + learner_info + "\n" +
-          "Cluster_id: " + cluster_id_str;
-      if (dump_cluster_info_to_file(meta_file_name, output_str) < 0) return -1;
-      xp::warn(ER_XP_0) << "Dump meta file successfully.";
+      if (dump_cluster_info_to_file(meta_file_name, oss.str()) < 0) return -1;
+      xp::system(ER_XP_0) << "Dump meta file(" << meta_file_name 
+                        << ") successfully. " << oss.str();
       return 1;
     }
 
     if (opt_cluster_force_change_meta) {
       consensus_info->set_cluster_id(opt_cluster_id);
-      if (opt_cluster_current_term)
-        consensus_info->set_current_term(opt_cluster_current_term);
-
-      if (opt_cluster_force_recover_index) {
-        // backup from leader can also recover like a follower
-        if (consensus_info->get_recover_status() == BINLOG_WORKING) {
-          consensus_info->set_recover_status(RELAY_LOG_WORKING);
-          consensus_info->set_last_leader_term(0);
-          consensus_info->set_start_apply_index(
-              opt_cluster_force_recover_index);
-        }
-      }
       // reuse opt_cluster, if normal stands for cluster info, else stands for
       // learner info
       if (!opt_cluster_info) {
@@ -366,6 +348,25 @@ int ConsensusLogManager::init_service() {
                            << "with --initialize(-insecure) ";
         return -1;
       }
+      if (opt_cluster_current_term)
+        consensus_info->set_current_term(opt_cluster_current_term);
+
+      if (opt_cluster_force_recover_index &&
+          consensus_info->get_recover_status() == BINLOG_WORKING) {
+        // backup from leader can also recover like a follower
+        consensus_info->set_recover_status(RELAY_LOG_WORKING);
+        consensus_info->set_last_leader_term(0);
+        consensus_info->set_start_apply_index(opt_cluster_force_recover_index);
+      }
+
+      if (opt_cluster_follower_force_recover_index &&
+          consensus_info->get_recover_status() == RELAY_LOG_WORKING)
+        consensus_info->set_start_apply_index(opt_cluster_follower_force_recover_index);
+
+      if (opt_consensus_mts_force_apply_index) {
+        rli_info->set_consensus_apply_index(opt_consensus_mts_force_apply_index);
+        rli_info->flush_info(true);
+      }
       if (!opt_cluster_learner_node) {
         consensus_info->set_cluster_learner_info("");
         consensus_info->set_cluster_info(std::string(opt_cluster_info));
@@ -373,9 +374,22 @@ int ConsensusLogManager::init_service() {
         consensus_info->set_cluster_learner_info(std::string(opt_cluster_info));
         consensus_info->set_cluster_info("");
       }
+
+      // this flag is used in situation that recovery from a backup
+      // without binlog copied.
+      // Binlog (also work as relaylog in PolarDB-X DN) is needed in mts
+      // recovery. As MySQL use RelayLog for mts reovery.
+      if (opt_consensus_reset_mts_info) {
+        for (uint id = 0; id < rli_info->recovery_parallel_workers; id++) {
+          Slave_worker *worker = Rpl_info_factory::create_worker(
+              opt_rli_repository_id, id, rli_info, false);
+          worker->reset_recovery_info();
+        }
+      }
+
       // if change meta, flush sys info, force quit
       consensus_info->flush_info(true, true);
-      xp::warn(ER_XP_0) << "Force change meta to system table successfully.";
+      xp::system(ER_XP_0) << "Force change meta to system table successfully.";
       return 1;
     } else {
       opt_cluster_id = get_consensus_info()->get_cluster_id();
@@ -866,9 +880,12 @@ int ConsensusLogManager::truncate_log(uint64 consensus_index) {
       << ", error: " << error
       << ", consensus index: " << consensus_index
       << ", status: " << status
-      << ", relay_log name: " << ((rli_info && rli_info->applier_reader) ? rli_info->applier_reader->get_log_info()->log_file_name : "")
-      << ", relaylog_reader_position: " << ((rli_info && rli_info->applier_reader) ? rli_info->applier_reader->relaylog_reader_position() : 0)
-      << ", relay_log->position: " << (rli_info ? rli_info->relay_log.get_binlog_file()->position() : 0)
+      << ", applier_reader relaylog name: " 
+      << ((rli_info && rli_info->applier_reader) ? rli_info->applier_reader->get_log_info()->log_file_name : "")
+      << ", applier_reader relaylog position: " 
+      << ((rli_info && rli_info->applier_reader) ? rli_info->applier_reader->relaylog_reader_position() : 0)
+      << ", relay_log name: " << (rli_info ? rli_info->relay_log.get_binlog_file()->get_binlog_name() : 0)
+      << ", relay_log position: " << (rli_info ? rli_info->relay_log.get_binlog_file()->position() : 0)
       << ", binlog name: " << binlog->get_binlog_file()->get_binlog_name()
       << ", binlog->position: " << binlog->get_binlog_file()->position();
 
@@ -936,9 +953,12 @@ int ConsensusLogManager::truncate_log(uint64 consensus_index) {
       << ", error: " << error
       << ", consensus index: " << consensus_index
       << ", status: " << status
-      << ", relay_log name: " << ((rli_info && rli_info->applier_reader) ? rli_info->applier_reader->get_log_info()->log_file_name : "")
-      << ", relaylog_reader_position: " << ((rli_info && rli_info->applier_reader) ? rli_info->applier_reader->relaylog_reader_position() : 0)
-      << ", relay_log->position: " << (rli_info ? rli_info->relay_log.get_binlog_file()->position() : 0)
+      << ", applier_reader relaylog name: " 
+      << ((rli_info && rli_info->applier_reader) ? rli_info->applier_reader->get_log_info()->log_file_name : "")
+      << ", applier_reader relaylog position: " 
+      << ((rli_info && rli_info->applier_reader) ? rli_info->applier_reader->relaylog_reader_position() : 0)
+      << ", relay_log name: " << (rli_info ? rli_info->relay_log.get_binlog_file()->get_binlog_name() : 0)
+      << ", relay_log position: " << (rli_info ? rli_info->relay_log.get_binlog_file()->position() : 0)
       << ", binlog name: " << binlog->get_binlog_file()->get_binlog_name()
       << ", binlog->position: " << binlog->get_binlog_file()->position();
 
@@ -1163,6 +1183,7 @@ int ConsensusLogManager::wait_leader_degraded(uint64 term, uint64 index) {
     goto end;
   }
   if (!opt_cluster_log_type_instance) {
+    stop_slave_threads();
     start_consensus_apply_threads();
   }
 
@@ -1287,8 +1308,12 @@ int ConsensusLogManager::wait_follower_upgraded(uint64 term, uint64 index) {
     error = 3;
     goto end;
   }
-  consensus_guard.unlock();
 
+  if (!opt_cluster_log_type_instance) {
+    start_slave_threads();
+  }
+  consensus_guard.unlock();
+ 
   // switch event scheduler on
   if (opt_configured_event_scheduler == Events::EVENTS_ON) {
     int err_no = 0;

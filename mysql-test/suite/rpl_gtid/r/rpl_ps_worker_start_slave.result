@@ -13,43 +13,43 @@ SET GLOBAL replica_transaction_retries = 5;
 SET GLOBAL innodb_lock_wait_timeout = 2;
 [connection master]
 CREATE TABLE t1 (a INT UNIQUE);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 BEGIN;
 INSERT INTO t1 VALUES (1);;
 [connection master]
 INSERT INTO t1 VALUES (1);;
 [connection slave]
-include/wait_for_slave_sql_to_stop.inc
+include/wait_for_slave_sql_to_stop.inc [FOR CHANNEL 'test']
 ROLLBACK;
-include/start_slave_sql.inc
+include/start_slave_sql.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [Confirm that we are checking the correct transaction]
 include/assert.inc [Start apply timestamp must be more recent after start slave to prove that the transaction info was reset]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_parallel_workers = 1;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 BEGIN;
 INSERT INTO t1 VALUES (2);;
 [connection master]
 INSERT INTO t1 VALUES (2);;
 [connection slave]
-include/wait_for_slave_sql_to_stop.inc
+include/wait_for_slave_sql_to_stop.inc [FOR CHANNEL 'test']
 ROLLBACK;
-include/start_slave_sql.inc
+include/start_slave_sql.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [Confirm that we are checking the correct transaction]
 include/assert.inc [Start apply timestamp must be more recent after start slave to prove that the transaction info was reset]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_parallel_workers = 1;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 DROP TABLE t1;
-include/sync_slave_sql_with_master.inc
-include/stop_slave.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_parallel_workers = @saved_replica_parallel_workers;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL innodb_lock_wait_timeout = @saved_innodb_lock_wait_timeout;
 SET GLOBAL replica_transaction_retries = @saved_replica_transaction_retries;
 include/rpl_end.inc

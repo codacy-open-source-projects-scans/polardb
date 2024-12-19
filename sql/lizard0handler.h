@@ -7,14 +7,14 @@ the terms of the GNU General Public License, version 2.0, as published by the
 Free Software Foundation.
 
 This program is also distributed with certain software (including but not
-lzeusited to OpenSSL) that is licensed under separate terms, as designated in a
+limited to OpenSSL) that is licensed under separate terms, as designated in a
 particular file or component or in included license documentation. The authors
 of MySQL hereby grant you an additional permission to link the program and
 your derivative works with the separately licensed software that they have
 included with MySQL.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the zeusplied warranty of MERCHANTABILITY or FITNESS
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
 for more details.
 
@@ -38,15 +38,17 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "sql/xa.h"
 #include "sql/xa/lizard_xa_trx.h"
 
-#include "lizard_iface.h"
 #include "sql/xa_specification.h"
 #include "sql_string.h"
+
+#include "sql/package/gpp_stat.h"
+#include "sql/lizard/lizard_service.h"
 
 class THD;
 
 namespace im {
 struct Undo_purge_show_result;
-}
+}  // namespace im
 
 class XA_spec_list {
  public:
@@ -113,24 +115,38 @@ class XA_spec_list {
 
 typedef void (*register_xa_attributes_t)(THD *thd);
 
-typedef my_gcn_t (*load_gcn_t)();
-typedef my_scn_t (*load_scn_t)();
+typedef gcn_t (*load_gcn_t)();
+typedef scn_t (*load_scn_t)();
 
-typedef bool (*snapshot_scn_too_old_t)(my_scn_t scn);
-typedef bool (*snapshot_gcn_too_old_t)(my_gcn_t gcn);
-typedef void (*set_gcn_if_bigger_t)(my_gcn_t gcn);
+typedef bool (*snapshot_scn_too_old_t)(scn_t scn, bool flashback_area);
+typedef bool (*snapshot_gcn_too_old_t)(gcn_t gcn, bool flashback_area);
+typedef void (*set_gcn_if_bigger_t)(gcn_t gcn);
 
 typedef bool (*start_trx_for_xa_t)(handlerton *hton, THD *thd, bool rw);
-typedef bool (*assign_slot_for_xa_t)(THD *thd, my_slot_ptr_t *slot_ptr);
-typedef bool (*search_trx_by_xid_t)(const XID *xid,
-                                    lizard::xa::Transaction_info *info);
-typedef int (*convert_timestamp_to_scn_t)(THD *thd, my_utc_t utc,
-                                          my_scn_t *scn);
+typedef bool (*assign_slot_for_xa_t)(THD *thd, slot_ptr_t *slot_ptr,
+                                     trx_id_t *trx_id);
 
-typedef void (*get_undo_purge_status_t)(im::Undo_purge_show_result *result);
+typedef bool (*search_trx_by_xid_t)(const XID *xid, MyXAInfo *info);
+
+typedef int (*convert_timestamp_to_scn_t)(THD *thd, utc_t utc,
+                                          scn_t *scn);
+
+typedef void (*trunc_status_t)(std::vector<lizard::trunc_status_t> &array);
+typedef void (*purge_status_t)(lizard::purge_status_t &status);
+
+typedef void (*flush_gpp_stat_t)();
+
+typedef void (*decide_xa_when_prepare_t)(MyGCN *gcn);
+
+typedef void (*decide_xa_when_commit_t)(THD *thd, MyGCN *my_gcn,
+                                        xa_addr_t *master_addr);
+
+typedef void (*decide_xa_when_commit_by_xid_t)(handlerton *hton, XID *xid,
+                                               MyGCN *my_gcn,
+                                               xa_addr_t *master_addr);
 
 template <typename T>
-using search_up_limit_tid_t = my_trx_id_t (*)(const T &lhs);
+using search_up_limit_tid_t = trx_id_t (*)(const T &lhs);
 
 namespace lizard {
 class Snapshot_scn_vision;
@@ -148,12 +164,19 @@ struct handlerton_ext {
   set_gcn_if_bigger_t set_gcn_if_bigger;
   start_trx_for_xa_t start_trx_for_xa;
   assign_slot_for_xa_t assign_slot_for_xa;
-  search_trx_by_xid_t search_trx_by_xid;
+  search_trx_by_xid_t search_detach_prepare_trx_by_xid;
+  search_trx_by_xid_t search_rollback_background_trx_by_xid;
+  search_trx_by_xid_t search_history_trx_by_xid;
   convert_timestamp_to_scn_t convert_timestamp_to_scn;
   search_up_limit_tid_t<lizard::Snapshot_scn_vision>
       search_up_limit_tid_for_scn;
   search_up_limit_tid_t<lizard::Snapshot_gcn_vision>
       search_up_limit_tid_for_gcn;
-  get_undo_purge_status_t get_undo_purge_status;
+  trunc_status_t trunc_status;
+  purge_status_t purge_status;
+  flush_gpp_stat_t flush_gpp_stat;
+  decide_xa_when_prepare_t decide_xa_when_prepare;
+  decide_xa_when_commit_t decide_xa_when_commit;
+  decide_xa_when_commit_by_xid_t decide_xa_when_commit_by_xid;
 };
 #endif

@@ -8,10 +8,10 @@ Note	####	Storing MySQL user name or password information in the master info rep
 #
 [connection slave]
 SET debug_sync = "begin_source_pos_wait SIGNAL wait_func_begin WAIT_FOR wait_func_continue";
-SELECT source_pos_wait("master-bin.000001", 10000);;
+SELECT source_pos_wait("master-bin.000001", 10000, 0, "test");;
 [connection slave1]
 SET debug_sync = "now WAIT_FOR wait_func_begin";
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 RESET SLAVE ALL;
 [connection server_2]
 SET debug_sync = "now signal wait_func_continue";
@@ -20,7 +20,7 @@ Warnings:
 Warning	1287	'RESET SLAVE' is deprecated and will be removed in a future release. Please use RESET REPLICA instead
 SET debug_sync = 'RESET';
 [connection slave]
-source_pos_wait("master-bin.000001", 10000)
+source_pos_wait("master-bin.000001", 10000, 0, "test")
 NULL
 SET debug_sync = 'RESET';
 [connection master]
@@ -28,7 +28,7 @@ include/save_binlog_position.inc
 [connection slave]
 CHANGE REPLICATION SOURCE TO SOURCE_LOG_FILE = "BINLOG_FILE",
 SOURCE_LOG_POS = BINLOG_POS, SOURCE_USER='root',
-SOURCE_HOST='127.0.0.1', SOURCE_PORT=MASTER_PORT;
+SOURCE_HOST='127.0.0.1', SOURCE_PORT=MASTER_PORT for channel 'test';
 Warnings:
 Note	1759	Sending passwords in plain text without SSL/TLS is extremely insecure.
 Note	1760	Storing MySQL user name or password information in the master info repository is not secure and is therefore not recommended. Please consider using the USER and PASSWORD connection options for START SLAVE; see the 'START SLAVE Syntax' in the MySQL Manual for more information.
@@ -36,12 +36,12 @@ Note	1760	Storing MySQL user name or password information in the master info rep
 # Case 2: Verify wait_for_gtid_set can block RESET SLAVE ALL
 #
 [connection slave]
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 SET debug_sync = "begin_wait_for_gtid_set SIGNAL wait_func_begin WAIT_FOR wait_func_continue";
-SELECT wait_until_sql_thread_after_gtids(CONCAT(@@GLOBAL.server_uuid, ":100"));
+SELECT wait_until_sql_thread_after_gtids(CONCAT(@@GLOBAL.server_uuid, ":100"), 0, 'test');
 [connection slave1]
 SET debug_sync = "now WAIT_FOR wait_func_begin";
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 RESET SLAVE ALL;
 [connection server_2]
 SET debug_sync = "now signal wait_func_continue";
@@ -50,7 +50,7 @@ Warnings:
 Warning	1287	'RESET SLAVE' is deprecated and will be removed in a future release. Please use RESET REPLICA instead
 SET debug_sync = 'RESET';
 [connection slave]
-wait_until_sql_thread_after_gtids(CONCAT(@@GLOBAL.server_uuid, ":100"))
+wait_until_sql_thread_after_gtids(CONCAT(@@GLOBAL.server_uuid, ":100"), 0, 'test')
 NULL
 Warnings:
 Warning	1287	'WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS' is deprecated and will be removed in a future release. Please use WAIT_FOR_EXECUTED_GTID_SET instead
@@ -60,7 +60,7 @@ include/save_binlog_position.inc
 [connection slave]
 CHANGE REPLICATION SOURCE TO SOURCE_LOG_FILE = "BINLOG_FILE",
 SOURCE_LOG_POS = BINLOG_POS, SOURCE_USER='root',
-SOURCE_HOST='127.0.0.1', SOURCE_PORT=MASTER_PORT;
+SOURCE_HOST='127.0.0.1', SOURCE_PORT=MASTER_PORT for channel 'test';
 Warnings:
 Note	1759	Sending passwords in plain text without SSL/TLS is extremely insecure.
 Note	1760	Storing MySQL user name or password information in the master info repository is not secure and is therefore not recommended. Please consider using the USER and PASSWORD connection options for START SLAVE; see the 'START SLAVE Syntax' in the MySQL Manual for more information.

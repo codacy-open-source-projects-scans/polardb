@@ -29,9 +29,15 @@
 #include <field.h>
 #include <sql_show.h>
 
+#include "dd/types/partition.h"
+#include "dd/types/partition_index.h"
 #include "fil0key.h"
 #include "fil0purge.h"
+#include "lizard0dict.h"
 #include "mysql/plugin.h"
+#include "sql/dd/cache/dictionary_client.h"
+#include "sql/dd/dictionary.h"
+#include "sql/dd/types/table.h"
 #include "sql/table.h"
 #include "storage/innobase/handler/i_s_ext.h"
 
@@ -300,7 +306,6 @@ static int innodb_tablespace_master_key_fill_table(
 static int innodb_tablespace_master_key_init(void *p) {
   ST_SCHEMA_TABLE *schema;
   DBUG_ENTER("innodb_tablespace_master_key_init");
-
   schema = (ST_SCHEMA_TABLE *)p;
 
   schema->fields_info = innodb_tablespace_master_key_fields_info;
@@ -358,6 +363,501 @@ struct st_mysql_plugin i_s_innodb_tablespace_master_key = {
     /* plugin version (for SHOW PLUGINS) */
     /* unsigned int */
     STRUCT_FLD(version, i_s_innodb_plugin_version_rds),
+
+    /* SHOW_VAR* */
+    STRUCT_FLD(status_vars, NULL),
+
+    /* SYS_VAR** */
+    STRUCT_FLD(system_vars, NULL),
+
+    /* reserved for dependency checking */
+    /* void* */
+    STRUCT_FLD(__reserved1, NULL),
+
+    /* Plugin flags */
+    /* unsigned long */
+    STRUCT_FLD(flags, 0UL),
+};
+
+ST_FIELD_INFO innodb_table_status_fields_info[] = {
+#define IDX_TS_SCHEMA_NAME 0
+    {STRUCT_FLD(field_name, "SCHEMA_NAME"), STRUCT_FLD(field_length, 1024),
+     STRUCT_FLD(field_type, MYSQL_TYPE_STRING), STRUCT_FLD(value, 0),
+     STRUCT_FLD(field_flags, MY_I_S_MAYBE_NULL), STRUCT_FLD(old_name, ""),
+     STRUCT_FLD(open_method, 0)},
+
+#define IDX_TS_TABLE_NAME 1
+    {STRUCT_FLD(field_name, "TABLE_NAME"), STRUCT_FLD(field_length, 1024),
+     STRUCT_FLD(field_type, MYSQL_TYPE_STRING), STRUCT_FLD(value, 0),
+     STRUCT_FLD(field_flags, MY_I_S_MAYBE_NULL), STRUCT_FLD(old_name, ""),
+     STRUCT_FLD(open_method, 0)},
+
+#define IDX_TS_PARTITION_NAME 2
+    {STRUCT_FLD(field_name, "PARTITION_NAME"), STRUCT_FLD(field_length, 1024),
+     STRUCT_FLD(field_type, MYSQL_TYPE_STRING), STRUCT_FLD(value, 0),
+     STRUCT_FLD(field_flags, MY_I_S_MAYBE_NULL), STRUCT_FLD(old_name, ""),
+     STRUCT_FLD(open_method, 0)},
+
+#define IDX_TS_OPTIONS 3
+    {STRUCT_FLD(field_name, "options"), STRUCT_FLD(field_length, 8192),
+     STRUCT_FLD(field_type, MYSQL_TYPE_STRING), STRUCT_FLD(value, 0),
+     STRUCT_FLD(field_flags, MY_I_S_MAYBE_NULL), STRUCT_FLD(old_name, ""),
+     STRUCT_FLD(open_method, 0)},
+
+    END_OF_ST_FIELD_INFO};
+
+static int innodb_table_status_fill_table(THD *thd,
+		Table_ref *tables, Item *) {
+  Field **fields;
+  TABLE *table;
+  std::vector<const dd::Schema *> dd_schemas;
+  std::vector<const dd::Table *> dd_tables;
+  std::unordered_map<dd::Object_id, dd::String_type> schema_map;
+  DBUG_ENTER("innodb_table_status_fill_table");
+
+  table = tables->table;
+  fields = table->field;
+
+  auto dc = dd::get_dd_client(thd);
+  dd::cache::Dictionary_client::Auto_releaser releaser(dc);
+
+  if (dc->fetch_global_components(&dd_schemas)) {
+    DBUG_RETURN(1);
+  }
+  for (auto schema : dd_schemas) {
+    schema_map[schema->id()] = schema->name();
+  }
+
+  if (dc->fetch_global_components(&dd_tables)) {
+    DBUG_RETURN(1);
+  }
+
+  for (auto dd_table : dd_tables) {
+    auto it = schema_map.find(dd_table->schema_id());
+    if (it == schema_map.end()) {
+      continue;
+    } else {
+      OK(field_store_string(fields[IDX_TS_SCHEMA_NAME], it->second.c_str()));
+      fields[IDX_TS_SCHEMA_NAME]->set_notnull();
+    }
+
+    OK(field_store_string(fields[IDX_TS_TABLE_NAME], dd_table->name().c_str()));
+    fields[IDX_TS_TABLE_NAME]->set_notnull();
+
+    fields[IDX_TS_PARTITION_NAME]->set_null();
+
+    dd::String_type options = dd_table->options().raw_string();
+    if (options.empty()) {
+      fields[IDX_TS_OPTIONS]->set_null();
+    } else {
+      OK(field_store_string(fields[IDX_TS_OPTIONS], options.c_str()));
+      fields[IDX_TS_OPTIONS]->set_notnull();
+    }
+
+    OK(schema_table_store_record(thd, table));
+
+    for (auto dd_par : dd_table->partitions()) {
+      OK(field_store_string(fields[IDX_TS_SCHEMA_NAME], it->second.c_str()));
+      fields[IDX_TS_SCHEMA_NAME]->set_notnull();
+
+      OK(field_store_string(fields[IDX_TS_TABLE_NAME],
+                            dd_table->name().c_str()));
+      fields[IDX_TS_TABLE_NAME]->set_notnull();
+
+      OK(field_store_string(fields[IDX_TS_PARTITION_NAME],
+                            dd_par->name().c_str()));
+      fields[IDX_TS_PARTITION_NAME]->set_notnull();
+
+      dd::String_type options = dd_par->options().raw_string();
+      if (options.empty()) {
+        fields[IDX_TS_OPTIONS]->set_null();
+      } else {
+        OK(field_store_string(fields[IDX_TS_OPTIONS], options.c_str()));
+        fields[IDX_TS_OPTIONS]->set_notnull();
+      }
+
+      OK(schema_table_store_record(thd, table));
+    }
+  }
+
+  DBUG_RETURN(0);
+}
+
+static int innodb_table_status_init(void *p) {
+  ST_SCHEMA_TABLE *schema;
+  DBUG_ENTER("innodb_table_status_init");
+  schema = (ST_SCHEMA_TABLE *)p;
+
+  schema->fields_info = innodb_table_status_fields_info;
+  schema->fill_table = innodb_table_status_fill_table;
+
+  DBUG_RETURN(0);
+}
+
+/** I_S.innodb_* views version postfix. Everytime the define of any InnoDB I_S
+ * table is changed, this value has to be increased accordingly */
+static constexpr uint8_t EXTRA_IS_PLUGIN_TS_VERSION = 1;
+
+/** I_S.innodb_* views version. It would be X.Y and X should be the server major
+ *  * version while Y is the InnoDB I_S views version, starting from 1 */
+constexpr uint64_t i_s_innodb_plugin_version_table_status =
+    (INNODB_VERSION_MAJOR << 8 | (EXTRA_IS_PLUGIN_TS_VERSION));
+
+struct st_mysql_plugin i_s_innodb_table_status = {
+    /* the plugin type (a MYSQL_XXX_PLUGIN value) */
+    /* int */
+    STRUCT_FLD(type, MYSQL_INFORMATION_SCHEMA_PLUGIN),
+
+    /* pointer to type-specific plugin descriptor */
+    /* void* */
+    STRUCT_FLD(info, &i_s_info),
+
+    /* plugin name */
+    STRUCT_FLD(name, "INNODB_TABLE_STATUS"),
+
+    /* plugin author (for SHOW PLUGINS) */
+    /* const char* */
+    STRUCT_FLD(author, plugin_author),
+
+    /* general descriptive text (for SHOW PLUGINS) */
+    /* const char* */
+    STRUCT_FLD(descr, "InnoDB all table status"),
+
+    /* the plugin license (PLUGIN_LICENSE_XXX) */
+    /* int */
+    STRUCT_FLD(license, PLUGIN_LICENSE_GPL),
+
+    /* the function to invoke when plugin is loaded */
+    /* int (*)(void*); */
+    STRUCT_FLD(init, innodb_table_status_init),
+
+    /* the function to invoke when plugin is un installed */
+    /* int (*)(void*); */
+    NULL,
+
+    /* the function to invoke when plugin is unloaded */
+    /* int (*)(void*); */
+    STRUCT_FLD(deinit, i_s_common_deinit),
+
+    /* plugin version (for SHOW PLUGINS) */
+    /* unsigned int */
+    STRUCT_FLD(version, i_s_innodb_plugin_version_table_status),
+
+    /* SHOW_VAR* */
+    STRUCT_FLD(status_vars, NULL),
+
+    /* SYS_VAR** */
+    STRUCT_FLD(system_vars, NULL),
+
+    /* reserved for dependency checking */
+    /* void* */
+    STRUCT_FLD(__reserved1, NULL),
+
+    /* Plugin flags */
+    /* unsigned long */
+    STRUCT_FLD(flags, 0UL),
+};
+
+static ST_FIELD_INFO innodb_gpp_stats_fields_info[] = {
+#define IDX_GPP_TABLE_NAME 0
+    {STRUCT_FLD(field_name, "TABLE_NAME"), STRUCT_FLD(field_length, 1024),
+     STRUCT_FLD(field_type, MYSQL_TYPE_STRING), STRUCT_FLD(value, 0),
+     STRUCT_FLD(field_flags, MY_I_S_MAYBE_NULL), STRUCT_FLD(old_name, ""),
+     STRUCT_FLD(open_method, 0)},
+
+#define IDX_GPP_INDEX_NAME 1
+    {STRUCT_FLD(field_name, "INDEX_NAME"), STRUCT_FLD(field_length, 1024),
+     STRUCT_FLD(field_type, MYSQL_TYPE_STRING), STRUCT_FLD(value, 0),
+     STRUCT_FLD(field_flags, MY_I_S_MAYBE_NULL), STRUCT_FLD(old_name, ""),
+     STRUCT_FLD(open_method, 0)},
+
+#define IDX_GPP_HIT 2
+    {STRUCT_FLD(field_name, "GPP_HIT"),
+     STRUCT_FLD(field_length, MY_INT64_NUM_DECIMAL_DIGITS),
+     STRUCT_FLD(field_type, MYSQL_TYPE_LONGLONG), STRUCT_FLD(value, 0),
+     STRUCT_FLD(field_flags, MY_I_S_UNSIGNED), STRUCT_FLD(old_name, ""),
+     STRUCT_FLD(open_method, 0)},
+
+#define IDX_GPP_MISS 3
+    {STRUCT_FLD(field_name, "GPP_MISS"),
+     STRUCT_FLD(field_length, MY_INT64_NUM_DECIMAL_DIGITS),
+     STRUCT_FLD(field_type, MYSQL_TYPE_LONGLONG), STRUCT_FLD(value, 0),
+     STRUCT_FLD(field_flags, MY_I_S_UNSIGNED), STRUCT_FLD(old_name, ""),
+     STRUCT_FLD(open_method, 0)},
+
+    END_OF_ST_FIELD_INFO};
+
+static int innodb_gpp_stats_fill_table(THD *thd, Table_ref *tables, Item *) {
+  Field **fields;
+  TABLE *table;
+  std::vector<im::Index_gpp_stat> result;
+  DBUG_ENTER("innodb_gpp_stats_fill_table");
+
+  table = tables->table;
+  fields = table->field;
+
+  lizard::Collector collector = lizard::Collector(result);
+  dict_sys->for_each_table(collector);
+
+  for (auto &stat : result) {
+    OK(field_store_string(fields[IDX_GPP_TABLE_NAME], stat.table_name.c_str()));
+    fields[IDX_GPP_TABLE_NAME]->set_notnull();
+
+    OK(field_store_string(fields[IDX_GPP_INDEX_NAME], stat.index_name.c_str()));
+    fields[IDX_GPP_INDEX_NAME]->set_notnull();
+
+    OK(fields[IDX_GPP_HIT]->store(stat.gpp_hit, true));
+
+    OK(fields[IDX_GPP_MISS]->store(stat.gpp_miss, true));
+
+    OK(schema_table_store_record(thd, table));
+  }
+
+  DBUG_RETURN(0);
+}
+
+static int innodb_gpp_stats_init(void *p) {
+  ST_SCHEMA_TABLE *schema;
+  DBUG_ENTER("innodb_gpp_stats_init");
+  schema = (ST_SCHEMA_TABLE *)p;
+
+  schema->fields_info = innodb_gpp_stats_fields_info;
+  schema->fill_table = innodb_gpp_stats_fill_table;
+
+  DBUG_RETURN(0);
+}
+
+static constexpr uint8_t EXTRA_IS_PLUGIN_GPP_VERSION = 1;
+
+/** I_S.innodb_* views version. It would be X.Y and X should be the server major
+ *  * version while Y is the InnoDB I_S views version, starting from 1 */
+constexpr uint64_t i_s_innodb_plugin_version_innodb_gpp_stats =
+    (INNODB_VERSION_MAJOR << 8 | (EXTRA_IS_PLUGIN_GPP_VERSION));
+
+struct st_mysql_plugin i_s_innodb_gpp_stats = {
+    /* the plugin type (a MYSQL_XXX_PLUGIN value) */
+    /* int */
+    STRUCT_FLD(type, MYSQL_INFORMATION_SCHEMA_PLUGIN),
+
+    /* pointer to type-specific plugin descriptor */
+    /* void* */
+    STRUCT_FLD(info, &i_s_info),
+
+    /* plugin name */
+    STRUCT_FLD(name, "INNODB_GPP_STATS"),
+
+    /* plugin author (for SHOW PLUGINS) */
+    /* const char* */
+    STRUCT_FLD(author, plugin_author),
+
+    /* general descriptive text (for SHOW PLUGINS) */
+    /* const char* */
+    STRUCT_FLD(descr, "Guess Primary-key Page-no(GPP) status for each index. "),
+
+    /* the plugin license (PLUGIN_LICENSE_XXX) */
+    /* int */
+    STRUCT_FLD(license, PLUGIN_LICENSE_GPL),
+
+    /* the function to invoke when plugin is loaded */
+    /* int (*)(void*); */
+    STRUCT_FLD(init, innodb_gpp_stats_init),
+
+    /* the function to invoke when plugin is un installed */
+    /* int (*)(void*); */
+    NULL,
+
+    /* the function to invoke when plugin is unloaded */
+    /* int (*)(void*); */
+    STRUCT_FLD(deinit, i_s_common_deinit),
+
+    /* plugin version (for SHOW PLUGINS) */
+    /* unsigned int */
+    STRUCT_FLD(version, i_s_innodb_plugin_version_innodb_gpp_stats),
+
+    /* SHOW_VAR* */
+    STRUCT_FLD(status_vars, NULL),
+
+    /* SYS_VAR** */
+    STRUCT_FLD(system_vars, NULL),
+
+    /* reserved for dependency checking */
+    /* void* */
+    STRUCT_FLD(__reserved1, NULL),
+
+    /* Plugin flags */
+    /* unsigned long */
+    STRUCT_FLD(flags, 0UL),
+};
+
+ST_FIELD_INFO innodb_index_status_fields_info[] = {
+#define IDX_IS_SCHEMA_NAME 0
+    {STRUCT_FLD(field_name, "SCHEMA_NAME"), STRUCT_FLD(field_length, 1024),
+     STRUCT_FLD(field_type, MYSQL_TYPE_STRING), STRUCT_FLD(value, 0),
+     STRUCT_FLD(field_flags, MY_I_S_MAYBE_NULL), STRUCT_FLD(old_name, ""),
+     STRUCT_FLD(open_method, 0)},
+
+#define IDX_IS_TABLE_NAME 1
+    {STRUCT_FLD(field_name, "TABLE_NAME"), STRUCT_FLD(field_length, 1024),
+     STRUCT_FLD(field_type, MYSQL_TYPE_STRING), STRUCT_FLD(value, 0),
+     STRUCT_FLD(field_flags, MY_I_S_MAYBE_NULL), STRUCT_FLD(old_name, ""),
+     STRUCT_FLD(open_method, 0)},
+
+#define IDX_IS_INDEX_NAME 2
+    {STRUCT_FLD(field_name, "INDEX_NAME"), STRUCT_FLD(field_length, 1024),
+     STRUCT_FLD(field_type, MYSQL_TYPE_STRING), STRUCT_FLD(value, 0),
+     STRUCT_FLD(field_flags, MY_I_S_MAYBE_NULL), STRUCT_FLD(old_name, ""),
+     STRUCT_FLD(open_method, 0)},
+
+#define IDX_IS_OPTIONS 3
+    {STRUCT_FLD(field_name, "OPTIONS"), STRUCT_FLD(field_length, 8192),
+     STRUCT_FLD(field_type, MYSQL_TYPE_STRING), STRUCT_FLD(value, 0),
+     STRUCT_FLD(field_flags, MY_I_S_MAYBE_NULL), STRUCT_FLD(old_name, ""),
+     STRUCT_FLD(open_method, 0)},
+
+    END_OF_ST_FIELD_INFO};
+
+template <typename Index>
+static int innodb_index_status_fill_one(THD *thd, TABLE *table,
+                                        const char *schema_name,
+                                        const char *table_name,
+                                        const Index *dd_index) {
+  DBUG_ENTER("innodb_index_status_fill_one");
+
+  Field **fields = table->field;
+  OK(field_store_string(fields[IDX_IS_SCHEMA_NAME], schema_name));
+  fields[IDX_IS_SCHEMA_NAME]->set_notnull();
+  OK(field_store_string(fields[IDX_IS_TABLE_NAME], table_name));
+  fields[IDX_IS_TABLE_NAME]->set_notnull();
+  OK(field_store_string(fields[IDX_IS_INDEX_NAME], dd_index->name().c_str()));
+  dd::String_type options = dd_index->options().raw_string();
+  if (options.empty()) {
+    fields[IDX_IS_OPTIONS]->set_null();
+  } else {
+    OK(field_store_string(fields[IDX_IS_OPTIONS], options.c_str()));
+    fields[IDX_IS_OPTIONS]->set_notnull();
+  }
+  OK(schema_table_store_record(thd, table));
+  DBUG_RETURN(0);
+}
+
+template int innodb_index_status_fill_one<dd::Index>(THD *thd, TABLE *table,
+                                                     const char *schema_name,
+                                                     const char *table_name,
+                                                     const dd::Index *dd_index);
+template int innodb_index_status_fill_one<dd::Partition_index>(
+    THD *thd, TABLE *table, const char *schema_name, const char *table_name,
+    const dd::Partition_index *dd_index);
+
+static int innodb_index_status_fill_table(THD *thd, Table_ref *tables, Item *) {
+  TABLE *table;
+  std::vector<const dd::Schema *> dd_schemas;
+  std::vector<const dd::Table *> dd_tables;
+  std::unordered_map<dd::Object_id, dd::String_type> schema_map;
+  DBUG_ENTER("innodb_index_status_fill_table");
+
+  table = tables->table;
+
+  auto dc = dd::get_dd_client(thd);
+  dd::cache::Dictionary_client::Auto_releaser releaser(dc);
+
+  if (dc->fetch_global_components(&dd_schemas)) {
+    DBUG_RETURN(1);
+  }
+  for (auto schema : dd_schemas) {
+    schema_map[schema->id()] = schema->name();
+  }
+
+  if (dc->fetch_global_components(&dd_tables)) {
+    DBUG_RETURN(1);
+  }
+
+  for (auto dd_table : dd_tables) {
+    auto it = schema_map.find(dd_table->schema_id());
+    if (it == schema_map.end()) {
+      continue;
+    }
+    const char *schema_name = it->second.c_str();
+    const char *table_name = dd_table->name().c_str();
+    for (auto dd_index : dd_table->indexes()) {
+      if (innodb_index_status_fill_one(thd, table, schema_name, table_name,
+                                       dd_index)) {
+        DBUG_RETURN(1);
+      }
+    }
+
+    for (auto dd_par : dd_table->partitions()) {
+      for (auto dd_par_index : dd_par->indexes()) {
+        std::string par_name =
+            std::string(table_name) + "_" + dd_par->name().c_str();
+        if (innodb_index_status_fill_one(thd, table, schema_name,
+                                         par_name.c_str(), dd_par_index)) {
+          DBUG_RETURN(1);
+        }
+      }
+    }
+  }
+
+  DBUG_RETURN(0);
+}
+
+static int innodb_index_status_init(void *p) {
+  ST_SCHEMA_TABLE *schema;
+  DBUG_ENTER("innodb_index_status_init");
+  schema = (ST_SCHEMA_TABLE *)p;
+
+  schema->fields_info = innodb_index_status_fields_info;
+  schema->fill_table = innodb_index_status_fill_table;
+
+  DBUG_RETURN(0);
+}
+
+/** I_S.innodb_index_status version. */
+static constexpr uint8_t EXTRA_IS_PLUGIN_IS_VERSION = 1;
+
+/** I_S.innodb_* views version. It would be X.Y and X should be the server major
+ *  * version while Y is the InnoDB I_S views version, starting from 1 */
+constexpr uint64_t i_s_innodb_plugin_version_index_status =
+    (INNODB_VERSION_MAJOR << 8 | (EXTRA_IS_PLUGIN_IS_VERSION));
+
+struct st_mysql_plugin i_s_innodb_index_status = {
+    /* the plugin type (a MYSQL_XXX_PLUGIN value) */
+    /* int */
+    STRUCT_FLD(type, MYSQL_INFORMATION_SCHEMA_PLUGIN),
+
+    /* pointer to type-specific plugin descriptor */
+    /* void* */
+    STRUCT_FLD(info, &i_s_info),
+
+    /* plugin name */
+    STRUCT_FLD(name, "INNODB_INDEX_STATUS"),
+
+    /* plugin author (for SHOW PLUGINS) */
+    /* const char* */
+    STRUCT_FLD(author, plugin_author),
+
+    /* general descriptive text (for SHOW PLUGINS) */
+    /* const char* */
+    STRUCT_FLD(descr, "InnoDB all index status"),
+
+    /* the plugin license (PLUGIN_LICENSE_XXX) */
+    /* int */
+    STRUCT_FLD(license, PLUGIN_LICENSE_GPL),
+
+    /* the function to invoke when plugin is loaded */
+    /* int (*)(void*); */
+    STRUCT_FLD(init, innodb_index_status_init),
+
+    /* the function to invoke when plugin is un installed */
+    /* int (*)(void*); */
+    NULL,
+
+    /* the function to invoke when plugin is unloaded */
+    /* int (*)(void*); */
+    STRUCT_FLD(deinit, i_s_common_deinit),
+
+    /* plugin version (for SHOW PLUGINS) */
+    /* unsigned int */
+    STRUCT_FLD(version, i_s_innodb_plugin_version_index_status),
 
     /* SHOW_VAR* */
     STRUCT_FLD(status_vars, NULL),

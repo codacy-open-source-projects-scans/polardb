@@ -137,7 +137,9 @@
    1U + 8 /* type, xid of DDL */ + 1U +                                       \
    2 /* type, default_collation_for_utf8mb4_number */ + 1U +                  \
    1 /* sql_require_primary_key */ + 1U +                                     \
-   1 /* type, default_table_encryption */)
+   1 /* type, default_table_encryption */ + 1U +                              \
+   1 /* opt_flashback_area */  + 1U +                              \
+   1 /* type, opt_index_format_gpp_enabled */ )
 
 /**
    Uninitialized timestamp value (for either last committed or sequence number).

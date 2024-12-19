@@ -1,6 +1,6 @@
 /***********************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 Copyright (c) 2009, Percona Inc.
 
 Portions of this file contain modifications contributed and copyrighted
@@ -579,6 +579,10 @@ class IORequest {
     }
 
     if (m_type & DO_NOT_WAKE) {
+      os << " | DO_NOT_WAKE";
+    }
+
+    if (m_type & IGNORE_MISSING) {
       os << " | IGNORE_MISSING";
     }
 

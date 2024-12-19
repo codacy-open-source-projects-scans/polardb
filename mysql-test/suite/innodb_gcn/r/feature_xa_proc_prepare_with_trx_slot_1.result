@@ -16,8 +16,8 @@ xa recover;
 formatID	gtrid_length	bqual_length	data
 1	1	0	1
 xa commit '1';
+include/assert.inc [expect_status == actual_status]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 2
 ###############################

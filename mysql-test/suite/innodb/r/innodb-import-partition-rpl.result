@@ -14,7 +14,7 @@ CREATE TABLE t2 ( i INT ) ENGINE = InnoDB  PARTITION BY KEY(i) PARTITIONS 3;
 INSERT INTO t1 VALUES (1),(111),(321);
 INSERT INTO t2 VALUES (0),(1),(2);
 FLUSH TABLES t1,t2 FOR EXPORT;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # set MYSQLD_DATADIR with master datadir to copy idb and cfg files
 backup: t1#p#p0
 backup: t1#p#p1
@@ -38,7 +38,7 @@ i
 UNLOCK TABLES;
 ALTER TABLE t1 DISCARD TABLESPACE;
 ALTER TABLE t2 DISCARD PARTITION p0,p1 TABLESPACE;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Copy back ibd and cfg files on master
 restore: t1#p#p0 .ibd and .cfg files
 restore: t1#p#p1 .ibd and .cfg files
@@ -64,7 +64,7 @@ i
 0
 1
 2
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # On slave
 # Verify table data on slave
 SELECT * FROM t1;

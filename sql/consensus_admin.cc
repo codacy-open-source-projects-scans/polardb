@@ -351,12 +351,14 @@ static bool invalid_on_consensus_limited(enum_sql_command cmd,
   return (cmd > SQLCOM_SELECT && cmd <= SQLCOM_DROP_INDEX) ||
          (cmd == SQLCOM_LOAD) || (cmd == SQLCOM_GRANT) ||
          (cmd == SQLCOM_CHANGE_MASTER) ||
+         (cmd == SQLCOM_RENAME_TABLE) ||
          (cmd >= SQLCOM_CREATE_DB && cmd < SQLCOM_CHECK) ||
          (cmd >= SQLCOM_ASSIGN_TO_KEYCACHE && cmd < SQLCOM_FLUSH) ||
          (cmd >= SQLCOM_DELETE_MULTI && cmd <= SQLCOM_UPDATE_MULTI) ||
          (cmd >= SQLCOM_CREATE_USER && cmd <= SQLCOM_REVOKE_ALL) ||
          (cmd >= SQLCOM_CREATE_PROCEDURE && cmd <= SQLCOM_SHOW_STATUS_FUNC) ||
          (cmd >= SQLCOM_CREATE_VIEW && cmd <= SQLCOM_DROP_TRIGGER) ||
+         (cmd >= SQLCOM_XA_START && cmd <= SQLCOM_XA_ROLLBACK) ||
          (cmd == SQLCOM_ALTER_TABLESPACE) ||
          (cmd == SQLCOM_BINLOG_BASE64_EVENT) ||
          (cmd >= SQLCOM_CREATE_SERVER && cmd <= SQLCOM_DROP_EVENT) ||
@@ -537,6 +539,82 @@ int start_consensus_apply_threads() {
   DBUG_RETURN(error);
 }
 
+
+void xpaxos_set_privilege_checks_user() {
+  Master_info *mi = NULL;
+  channel_map.rdlock();
+  if (!opt_initialize) {
+    for (mi_map::iterator it = channel_map.begin(); it != channel_map.end();
+         it++) {
+      mi = it->second;
+      if (Master_info::is_configured(mi) && mi->rli->inited) {
+        xp::info(ER_XP_RECOVERY)
+            << "set_privilege_checks_user for channel '" << mi->get_channel() << "'";
+        mi->rli->set_privilege_checks_user();
+      }
+    }
+  }
+  channel_map.unlock();
+}
+
+int start_slave_threads() {
+  DBUG_ENTER("start_slave_threads");
+  Master_info *mi = NULL;
+  int default_thread_mask = SLAVE_SQL | SLAVE_IO;
+  int error = 0;
+  channel_map.wrlock();
+  if (!opt_skip_replica_start && !opt_initialize) {
+    for (mi_map::iterator it = channel_map.begin(); it != channel_map.end();
+         it++) {
+      int thread_mask = default_thread_mask;
+      mi = it->second;
+      // Todo: mi must be itself
+      /* If server id is not set, start_slave_thread() will say it */
+      if (Master_info::is_configured(mi) && mi->rli->inited &&
+          !Multisource_info::is_xpaxos_channel(mi)) {
+        if (!opt_log_replica_updates) {
+          xp::error(ER_XP_RECOVERY)
+              << "log_replica_updates must set ON when start slave"
+              << " for channel '" << mi->get_channel() << "'";
+          continue;
+        }
+        /* same as in start_slave() cache the global var values into rli's
+         * members */
+        mi->rli->opt_replica_parallel_workers =
+            opt_mts_replica_parallel_workers;
+        mi->rli->checkpoint_group = opt_mta_checkpoint_group;
+        if (mts_parallel_option == MTS_PARALLEL_TYPE_DB_NAME)
+          mi->rli->channel_mts_submode = MTS_PARALLEL_TYPE_DB_NAME;
+        else
+          mi->rli->channel_mts_submode = MTS_PARALLEL_TYPE_LOGICAL_CLOCK;
+        if (mi->is_source_connection_auto_failover())
+          thread_mask |= SLAVE_MONITOR;
+        if (start_slave_threads(true /*need_lock_slave=true*/,
+                                false /*wait_for_start=false*/, mi,
+                                thread_mask)) {
+          LogErr(ERROR_LEVEL, ER_FAILED_TO_START_SLAVE_THREAD, mi->get_channel());
+        }
+      }
+    }
+  }
+  channel_map.unlock();
+  DBUG_RETURN(error);
+}
+
+void stop_slave_threads() {
+  Master_info *mi = NULL;
+  channel_map.wrlock();
+  /* traverse through the map and terminate the threads */
+  for (mi_map::iterator it = channel_map.begin(); it != channel_map.end();
+       it++) {
+    mi = it->second;
+    if (mi)
+      terminate_slave_threads(mi, SLAVE_FORCE_ALL, rpl_stop_replica_timeout);
+  }
+  channel_map.unlock();
+}
+
+
 int check_exec_consensus_log_end_condition(Relay_log_info *rli,
                                            bool is_xpaxos_replication) {
   DBUG_ENTER("check_exec_consensus_log_end_condition");
@@ -580,10 +658,12 @@ int check_exec_consensus_log_end_condition(Relay_log_info *rli,
       // determine whether exit
       uint64 stop_term = consensus_log_manager.get_stop_term();
       long time_diff = (long)(time(0) - rli->last_master_timestamp);
-      if (stop_term == UINT64_MAX) {
+      if (stop_term == UINT64_MAX && 0 == opt_consensus_stop_apply_index) {
         my_sleep(opt_consensus_check_commit_index_interval);
         continue;
       } else if (consensus_log_manager.get_apply_term() >= stop_term ||
+                 (0 < opt_consensus_stop_apply_index &&
+                  opt_consensus_stop_apply_index <= consensus_log_manager.get_real_apply_index()) ||
                  opt_consensus_leader_stop_apply ||
                  (opt_consensus_leader_stop_apply_time &&
                   (time_diff < (long)opt_consensus_leader_stop_apply_time))) {
@@ -591,8 +671,10 @@ int check_exec_consensus_log_end_condition(Relay_log_info *rli,
             << "Apply thread stop, opt_consensus_leader_stop_apply: "
             << (opt_consensus_leader_stop_apply ? "true" : "false")
             << ", seconds_behind_master: " << time_diff
-            << ", opt_consensus_leader_stop_apply_time: "
-            << opt_consensus_leader_stop_apply_time;
+            << ", consensus_leader_stop_apply_time: "
+            << opt_consensus_leader_stop_apply_time
+            << ", consensus_stop_apply_index: "
+            << opt_consensus_stop_apply_index;
         opt_consensus_leader_stop_apply = false;
         mysql_mutex_lock(consensus_log_manager.get_apply_thread_lock());
         mysql_cond_broadcast(consensus_log_manager.get_catchup_cond());

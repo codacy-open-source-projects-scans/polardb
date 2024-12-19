@@ -113,7 +113,7 @@ END_OF_PROCEDURE
 
 # Extract some info the repository table before converting it to a table
 
---let $expected_repo_number_lines = `SELECT Number_of_lines FROM mysql.slave_master_info`
+--let $expected_repo_number_lines = `SELECT Number_of_lines FROM mysql.slave_master_info where Channel_name='test'`
 
 --let $original_repo_table_definition = `SHOW CREATE TABLE mysql.slave_master_info`
 
@@ -122,7 +122,7 @@ END_OF_PROCEDURE
 --let $explicit_default_counter = 15000
 --source include/rpl_restart_server.inc
 
---let $repo_info_file_path= query_get_value(SHOW SLAVE STATUS, Master_Info_File, 1)
+--let $repo_info_file_path= query_get_value(SHOW SLAVE STATUS for channel "test", Master_Info_File, 1)
 
 --echo
 --echo # 1.1. Check that by default GTID_ONLY is 0
@@ -137,13 +137,13 @@ END_OF_PROCEDURE
 
 --source include/stop_slave.inc
 
-CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1, SOURCE_AUTO_POSITION = 1, GTID_ONLY = 1;
+CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1, SOURCE_AUTO_POSITION = 1, GTID_ONLY = 1 for channel "test";
 
 --let $gtid_only_expected_value = 1
 --source $MYSQL_TMP_DIR/check_gtid_only_in_file_repo.inc
 
 # Disable GTID_ONLY as all the repo conversions below assume GTID_ONLY being off
-CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1, SOURCE_AUTO_POSITION = 1, GTID_ONLY = 0;
+CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1, SOURCE_AUTO_POSITION = 1, GTID_ONLY = 0 for channel "test";
 
  # 2. File to File upgrades
 
@@ -177,7 +177,7 @@ ALTER TABLE mysql.slave_master_info DROP COLUMN Gtid_only;
 --source extra/rpl_tests/restart_slave_with_custom_connection_info_repo_file.inc
 
 --let $assert_text= 'GTID_ONLY is disabled'
---let $assert_cond= [SELECT GTID_ONLY FROM performance_schema.replication_connection_configuration, GTID_ONLY, 1] = 0
+--let $assert_cond= [SELECT GTID_ONLY FROM performance_schema.replication_connection_configuration where channel_name="test", GTID_ONLY, 1] = 0
 --source include/assert.inc
 
 --echo
@@ -203,7 +203,7 @@ ALTER TABLE mysql.slave_master_info DROP COLUMN Gtid_only;
 --disable_warnings
 CHANGE REPLICATION SOURCE TO SOURCE_USER="root" FOR CHANNEL "group_replication_recovery";
 --enable_warnings
-CHANGE REPLICATION SOURCE TO SOURCE_HOST="localhost", SOURCE_PORT=12, PRIVILEGE_CHECKS_USER = 'root'@'localhost' FOR CHANNEL "";
+CHANGE REPLICATION SOURCE TO SOURCE_HOST="localhost", SOURCE_PORT=12, PRIVILEGE_CHECKS_USER = 'root'@'localhost' for channel "test";
 
 # Revert the table to 32 lines (pre upgrade)
 ALTER TABLE mysql.slave_master_info DROP COLUMN Gtid_only;

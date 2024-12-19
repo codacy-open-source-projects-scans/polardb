@@ -48,7 +48,7 @@ CREATE USER 'u1'@'localhost';
 --echo # 2. Create a group replication applier channel
 --echo #    Verify SOURCE_AUTO_POSITION, REQUIRE_ROW_FORMAT and GTID_ONLY are enabled
 
-CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER = 'u1'@'localhost' FOR CHANNEL "group_replication_applier";
+CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER = 'u1'@'localhost' FOR CHANNEL 'group_replication_applier';
 
 --let $count = `SELECT COUNT(*) FROM mysql.slave_master_info WHERE Enabled_auto_position = 1 AND Channel_name = "group_replication_applier"`
 --let $assert_text = Auto_position is set to 1 for GR applier channel
@@ -70,19 +70,19 @@ CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER = 'u1'@'localhost' FOR CHANNE
 --echo #    Verify SOURCE_AUTO_POSITION, REQUIRE_ROW_FORMAT and GTID_ONLY can't be modified
 
 --error ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION = 0 FOR CHANNEL "group_replication_applier";
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION = 0 FOR CHANNEL 'group_replication_applier';
 --error ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION = 1 FOR CHANNEL "group_replication_applier";
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION = 1 FOR CHANNEL 'group_replication_applier';
 
 --error ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED
-CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 0 FOR CHANNEL "group_replication_applier";
+CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 0 FOR CHANNEL 'group_replication_applier';
 --error ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED
-CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1 FOR CHANNEL "group_replication_applier";
+CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1 FOR CHANNEL 'group_replication_applier';
 
 --error ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED
-CHANGE REPLICATION SOURCE TO GTID_ONLY = 0 FOR CHANNEL "group_replication_applier";
+CHANGE REPLICATION SOURCE TO GTID_ONLY = 0 FOR CHANNEL 'group_replication_applier';
 --error ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED
-CHANGE REPLICATION SOURCE TO GTID_ONLY = 1 FOR CHANNEL "group_replication_applier";
+CHANGE REPLICATION SOURCE TO GTID_ONLY = 1 FOR CHANNEL 'group_replication_applier';
 
 --let $count = `SELECT COUNT(*) FROM mysql.slave_master_info WHERE Enabled_auto_position = 1 AND Channel_name = "group_replication_applier"`
 --let $assert_text = Auto_position is set to 1 for GR applier channel
@@ -164,7 +164,7 @@ RESET REPLICA ALL;
 SET GLOBAL GTID_MODE = ON_PERMISSIVE;
 
 --error ER_CHANGE_REP_SOURCE_GR_CHANNEL_WITH_GTID_MODE_NOT_ON
-CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER = 'u1'@'localhost' FOR CHANNEL "group_replication_applier";
+CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER = 'u1'@'localhost' FOR CHANNEL 'group_replication_applier';
 
 --error ER_CHANGE_REP_SOURCE_GR_CHANNEL_WITH_GTID_MODE_NOT_ON
 CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER = 'u1'@'localhost' FOR CHANNEL "group_replication_recovery";

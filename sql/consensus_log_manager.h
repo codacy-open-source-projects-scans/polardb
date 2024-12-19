@@ -236,6 +236,7 @@ class ConsensusLogManager {
   void update_commit_pos(const std::string &log_name, uint64_t pos,
                          uint64_t index);
   uint64_t get_commit_pos_index() { return commit_pos.index; }
+  uint64_t get_commit_pos_position() { return commit_pos.pos; }
   void get_commit_pos(char *const fname_ptr, uint64_t *pos_ptr,
                       uint64_t *index_ptr);
   bool is_state_machine_ready();

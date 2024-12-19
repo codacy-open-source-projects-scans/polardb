@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -44,6 +44,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "trx0types.h"
 #include "ut0vec.h"
 
+#include "lizard0row0purge.h"
+
 /** Create a purge node to a query graph.
 @param[in]      parent  parent node, i.e., a thr node
 @param[in]      heap    memory heap where created
@@ -68,7 +70,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 [[nodiscard]] bool row_purge_poss_sec(
     purge_node_t *node,     /*!< in/out: row purge node */
     dict_index_t *index,    /*!< in: secondary index */
-    const dtuple_t *entry); /*!< in: secondary index entry */
+    const dtuple_t *entry,  /*!< in: secondary index entry */
+    btr_cur_t *cur);        /*!< in: cursor on secondary index */
 /***************************************************************
 Does the purge operation for a single undo log record. This is a high-level
 function used in an SQL execution graph.
@@ -169,8 +172,14 @@ struct purge_node_t {
   /** trx id for this purging record */
   trx_id_t modifier_trx_id;
 
+  /** Lizard: true if it's a two phase purge record.  */
+  bool is_2pp;
+
   /** Undo recs to purge */
   Recs *recs;
+
+  /** Purge phase for two phase purge. */
+  lizard::e_2pp_phase phase;
 
   void init() { new (&m_lob_pages) LOB_free_set(); }
   void deinit() {
@@ -210,6 +219,14 @@ struct purge_node_t {
      the ref member.*/
   bool validate_pcur();
 #endif
+
+  /** Start purge history list. */
+  void start_history_purge() { phase = lizard::PURGE_HISTORY_LIST; }
+
+  /** Start erase semi-purge list. */
+  void start_sp_erase() { phase = lizard::PURGE_SP_LIST; }
+
+  bool is_history_purge() const { return phase == lizard::PURGE_HISTORY_LIST; }
 
  private:
   using LOB_free_set = std::set<Page_free_tuple, Compare_page_free_tuple,

@@ -38,7 +38,7 @@
 
 --source include/rpl_connection_slave.inc
 
-CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1, GTID_ONLY = 1;
+CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1, GTID_ONLY = 1 for channel "test";
 
 --source include/start_slave.inc
 
@@ -59,7 +59,7 @@ INSERT INTO t1 VALUES(1);
 --source include/rpl_restart_server.inc
 
 --let $assert_text= No info exists in the repository table
---let $assert_cond= `SELECT COUNT(*) = 0 FROM mysql.slave_worker_info`
+--let $assert_cond= `SELECT COUNT(*) = 0 FROM mysql.slave_worker_info where Channel_name='test'`
 --source include/assert.inc
 
 --echo
@@ -73,7 +73,7 @@ SET @@GLOBAL.replica_parallel_workers = 0;
  --source include/start_slave.inc
 
 --let $assert_text= There is one worker runnning with id 1
---let $assert_cond= `SELECT COUNT(*) = 1 FROM performance_schema.replication_applier_status_by_worker WHERE worker_id=1`
+--let $assert_cond= `SELECT COUNT(*) = 1 FROM performance_schema.replication_applier_status_by_worker WHERE CHANNEL_NAME = 'test' and worker_id=1`
 --source include/assert.inc
 
 --echo
@@ -83,12 +83,12 @@ SET @@GLOBAL.replica_parallel_workers = 0;
 
 --source include/stop_slave.inc
 
-CHANGE REPLICATION SOURCE TO GTID_ONLY = 0;
+CHANGE REPLICATION SOURCE TO GTID_ONLY = 0 for channel "test";
 
 --source include/start_slave.inc
 
 --let $assert_text= There is no worker with an ID
---let $assert_cond= `SELECT COUNT(*) = 0 FROM performance_schema.replication_applier_status_by_worker WHERE worker_id=1`
+--let $assert_cond= `SELECT COUNT(*) = 0 FROM performance_schema.replication_applier_status_by_worker WHERE CHANNEL_NAME = 'test' and worker_id=1`
 --source include/assert.inc
 
 --echo

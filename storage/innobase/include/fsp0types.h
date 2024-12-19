@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -36,8 +36,6 @@ Created May 26, 2009 Vasil Dimov
 
 #include "fil0types.h"
 #include "univ.i"
-
-#include "lizard0txn0types.h"
 
 /** @name Flags for inserting records in order
 If records are inserted in order, there are the following
@@ -390,6 +388,9 @@ constexpr uint32_t fsp_is_shared_tablespace(uint32_t flags) {
   return FSP_FLAGS_GET_SHARED(flags);
 }
 /** @} */
+
+/** Lizard transaction tablespace count  */
+constexpr size_t FSP_IMPLICIT_TXN_TABLESPACES = 4;
 
 /** Max number of rollback segments: the number of segment specification slots
 in the transaction system array; rollback segment id must fit in one (signed)

@@ -24,8 +24,9 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 *****************************************************************************/
 
-#include "lizard_iface.h"
+/* #define TURN_MVCC_SEARCH_TO_AS_OF */
 
+#include "sql/lizard/lizard_service.h"
 #include "sql/lizard/lizard_snapshot.h"
 
 #include "sql/item.h"
@@ -285,6 +286,7 @@ int Snapshot_hint::evoke_vision(TABLE *table, THD *thd) {
 
   Snapshot_vision *vision = table->table_snapshot.get(type());
   vision->store_int(value);
+  vision->set_flashback_area(m_flashback_area);
 
   return table->table_snapshot.activate(vision, thd);
 }
@@ -366,9 +368,9 @@ int Snapshot_gcn_hint::evoke_vision(TABLE *table, THD *thd) {
  *  @retval	false	normal
  */
 bool Snapshot_scn_vision::too_old() const {
-  assert(m_scn != MYSQL_SCN_NULL);
+  assert(m_scn != SCN_NULL);
 
-  if (innodb_hton->ext.snapshot_scn_too_old(m_scn)) {
+  if (innodb_hton->ext.snapshot_scn_too_old(m_scn, m_flashback_area)) {
     return true;
   }
   return false;
@@ -376,7 +378,7 @@ bool Snapshot_scn_vision::too_old() const {
 
 void Snapshot_scn_vision::after_activate() {
   handlerton *ttse = innodb_hton;
-  my_trx_id_t tid = ttse->ext.search_up_limit_tid_for_scn(*this);
+  trx_id_t tid = ttse->ext.search_up_limit_tid_for_scn(*this);
   set_up_limit_tid(tid);
   return;
 }
@@ -388,15 +390,17 @@ void Snapshot_scn_vision::after_activate() {
  */
 bool Snapshot_gcn_vision::too_old() const {
   switch (m_csr) {
-    case MYSQL_CSR_AUTOMATIC:
-      assert(m_current_scn != MYSQL_SCN_NULL && m_gcn != MYSQL_GCN_NULL);
-      return innodb_hton->ext.snapshot_scn_too_old(m_current_scn) ||
-             innodb_hton->ext.snapshot_automatic_gcn_too_old(m_gcn);
-    case MYSQL_CSR_ASSIGNED:
-      assert(m_current_scn == MYSQL_SCN_NULL && m_gcn != MYSQL_GCN_NULL);
-      return innodb_hton->ext.snapshot_assigned_gcn_too_old(m_gcn);
+    case CSR_AUTOMATIC:
+      assert(m_current_scn != SCN_NULL && m_gcn != GCN_NULL);
+      return innodb_hton->ext.snapshot_scn_too_old(m_current_scn,
+                                                   m_flashback_area) ||
+             innodb_hton->ext.snapshot_automatic_gcn_too_old(m_gcn,
+                                                             m_flashback_area);
+    case CSR_ASSIGNED:
+      assert(m_current_scn == SCN_NULL && m_gcn != GCN_NULL);
+      return innodb_hton->ext.snapshot_assigned_gcn_too_old(m_gcn,
+                                                            m_flashback_area);
     default:
-      assert(m_csr == MYSQL_CSR_NONE);
       return true;
   }
 
@@ -407,8 +411,8 @@ bool Snapshot_gcn_vision::too_old() const {
 void Snapshot_gcn_vision::after_activate() {
   handlerton *ttse = innodb_hton;
   assert(ttse);
-  ttse->ext.set_gcn_if_bigger(val_int());
-  my_trx_id_t tid = ttse->ext.search_up_limit_tid_for_gcn(*this);
+
+  trx_id_t tid = ttse->ext.search_up_limit_tid_for_gcn(*this);
   set_up_limit_tid(tid);
   return;
 }
@@ -444,10 +448,10 @@ bool evaluate_snapshot(THD *thd, const LEX *lex) {
 
   for (TABLE *table = thd->open_tables; table; table = table->next) {
     assert(table->pos_in_table_list);
-    assert(!table->table_snapshot.is_activated());
+    assert(!table->table_snapshot.is_activated() || thd->sp_runtime_ctx);
 
     Snapshot_hint *hint = table->pos_in_table_list->snapshot_hint;
-    if (hint) {
+    if (hint && !table->table_snapshot.is_activated()) {
       error = hint->evoke_vision(table, thd);
       if (error) {
         table->file->print_error(error, 0);
@@ -468,12 +472,19 @@ void simulate_snapshot_clause(THD *thd, Table_ref *all_tables) {
   Item *item = nullptr;
   assert(innodb_hton && innodb_hton->ext.load_gcn());
 
+  if (thd->sp_runtime_ctx) {
+    return;
+  }
+
   /** If setting innodb_current_snapshot_gcn, then a view is generated
   internally */
   if (thd->owned_vision_gcn.is_null() &&
       thd->variables.innodb_current_snapshot_gcn) {
-    thd->owned_vision_gcn.set(MYSQL_CSR_AUTOMATIC, innodb_hton->ext.load_gcn(),
-                              innodb_hton->ext.load_scn());
+    thd->owned_vision_gcn = {csr_t::CSR_AUTOMATIC, innodb_hton->ext.load_gcn(),
+                             innodb_hton->ext.load_scn()};
+  } else if (!thd->owned_vision_gcn.is_null()) {
+    handlerton *ttse = innodb_hton;
+    ttse->ext.set_gcn_if_bigger(thd->owned_vision_gcn.gcn);
   }
 
   if (!thd->owned_vision_gcn.is_null()) {
@@ -488,6 +499,19 @@ void simulate_snapshot_clause(THD *thd, Table_ref *all_tables) {
       }
     }
   }
+#if defined TURN_MVCC_SEARCH_TO_AS_OF
+  else {
+    Table_ref *table;
+    for (table = all_tables; table; table = table->next_global) {
+      if (table->snapshot_hint == nullptr) {
+        item = new (thd->mem_root)
+            Item_int((ulonglong)innodb_hton->ext.load_scn());
+        Snapshot_hint *hint = new (thd->mem_root) Snapshot_scn_hint(item);
+        table->snapshot_hint = hint;
+      }
+    }
+  }
+#endif
 }
 
 int Table_snapshot::exchange_timestamp_vision_to_scn_vision(
@@ -495,24 +519,78 @@ int Table_snapshot::exchange_timestamp_vision_to_scn_vision(
   int error = 0;
   handlerton *ttse = innodb_hton;
 
-  my_utc_t utc_second = (*vision)->val_int();
-  my_scn_t scn;
+  bool flashback_area = (*vision)->get_flashback_area();
+  utc_t utc_second = (*vision)->val_int();
 
+  scn_t scn;
   error = ttse->ext.convert_timestamp_to_scn(thd, utc_second, &scn);
   if (!error) {
     /** Change the vision. */
     *vision = get(AS_OF_SCN);
 
     (*vision)->store_int(scn);
+    (*vision)->set_flashback_area(flashback_area);
   }
   return error;
 }
 
 }  // namespace lizard
 
-bool Table_ref::process_snapshot_hint(THD *thd) {
+bool Table_ref::process_snapshot_hint(THD *thd, TABLE *tbl) {
   if (snapshot_hint) {
+    choose_flashback_area(thd, tbl);
+
     return snapshot_hint->fix_fields(thd);
   }
   return false;
+}
+
+/**
+  Set flashback_area flag in the snapshot_hint and force the use of the
+  clustered index for as-of queries when the session variable
+  'opt_query_via_flashback_area' is enabled.
+
+  @param thd The current session.
+  @param tbl the TABLE to operate on.
+*/
+void Table_ref::choose_flashback_area(THD *thd, TABLE *tbl) {
+  if (!thd->variables.opt_query_via_flashback_area || !tbl->flashback_area) {
+    return;
+  }
+
+  assert(snapshot_hint);
+  assert(thd->variables.opt_query_via_flashback_area);
+  assert(tbl->flashback_area);
+
+  /** set flag in the snapshot_hint. */
+  snapshot_hint->set_flashback_area(true);
+
+  /* initialize the result variables */
+  tbl->keys_in_use_for_query = tbl->keys_in_use_for_group_by =
+      tbl->keys_in_use_for_order_by = tbl->s->usable_indexes(thd);
+
+  /** force using primary key. */
+  uint pos = 0;
+
+  Key_map index_join;
+  Key_map index_order;
+  Key_map index_group;
+
+  index_join.set_bit(pos);
+  index_order.set_bit(pos);
+  index_group.set_bit(pos);
+
+  tbl->force_index = true;
+  tbl->keys_in_use_for_query.intersect(index_join);
+
+  tbl->force_index_order = true;
+  tbl->keys_in_use_for_order_by.intersect(index_order);
+
+  tbl->force_index_group = true;
+  tbl->keys_in_use_for_group_by.intersect(index_group);
+
+  /* make sure covering_keys don't include indexes disabled with a hint */
+  tbl->covering_keys.intersect(tbl->keys_in_use_for_query);
+
+  return;
 }

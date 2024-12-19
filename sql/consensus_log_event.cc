@@ -61,7 +61,7 @@ Consensus_log_event::Consensus_log_event(
   DBUG_ENTER(
       "Consensus_log_event::Consensus_log_event(const char *,"
       " uint, const Format_description_log_event *");
-#ifndef DBUG_OFF
+#ifndef NDEBUG
   uint8_t const common_header_len = description_event->common_header_len;
   MY_UNUSED(common_header_len);
   uint8 const post_header_len =
@@ -118,7 +118,7 @@ uint32 Consensus_log_event::write_data_header_to_memory(uchar *buffer) {
   ptr_buffer += ENCODED_LENGTH_LENGTH;
   memcpy(ptr_buffer, &reserve, sizeof(reserve));
   ptr_buffer += ENCODED_RESERVE_LENGTH;
-#ifndef DBUG_OFF
+#ifndef NDEBUG
   DBUG_PRINT("info", ("flag=%u, term=%llu index=%llu length=%llu reserve=%llu",
                       flag, term, index, length, reserve));
 #endif
@@ -196,7 +196,7 @@ Previous_consensus_index_log_event::Previous_consensus_index_log_event(
   DBUG_ENTER(
       "Consensus_log_event::Consensus_log_event(const char *,"
       " uint, const Format_description_log_event *");
-#ifndef DBUG_OFF
+#ifndef NDEBUG
   uint8_t const common_header_len = description_event->common_header_len;
   MY_UNUSED(common_header_len);
   uint8 const post_header_len =
@@ -227,7 +227,7 @@ uint32 Previous_consensus_index_log_event::write_data_header_to_memory(
   uchar *ptr_buffer = buffer;
   memcpy(ptr_buffer, &index, sizeof(index));
   ptr_buffer += ENCODED_INDEX_LENGTH;
-#ifndef DBUG_OFF
+#ifndef NDEBUG
   DBUG_PRINT("info", ("index=%lld", index));
 #endif
   assert(ptr_buffer == (buffer + POST_HEADER_LENGTH));
@@ -305,7 +305,7 @@ Consensus_cluster_info_log_event::Consensus_cluster_info_log_event(
   DBUG_ENTER(
       "Consensus_log_event::Consensus_log_event(const char *,"
       " uint, const Format_description_log_event *");
-#ifndef DBUG_OFF
+#ifndef NDEBUG
   uint8_t const common_header_len = description_event->common_header_len;
   MY_UNUSED(common_header_len);
   uint8 const post_header_len =
@@ -336,7 +336,7 @@ uint32 Consensus_cluster_info_log_event::write_data_header_to_memory(
   uchar *ptr_buffer = buffer;
   memcpy(ptr_buffer, &info_length, sizeof(info_length));
   ptr_buffer += ENCODED_INFO_LENGTH_LENGTH;
-#ifndef DBUG_OFF
+#ifndef NDEBUG
   DBUG_PRINT("info", ("info_length=%u", info_length));
 #endif
   assert(ptr_buffer == (buffer + POST_HEADER_LENGTH));
@@ -413,7 +413,7 @@ Consensus_empty_log_event::Consensus_empty_log_event(
   DBUG_ENTER(
       "Consensus_empty_log_event::Consensus_empty_log_event(const char *,"
       " uint, const Format_description_log_event *");
-#ifndef DBUG_OFF
+#ifndef NDEBUG
   uint8_t const common_header_len = description_event->common_header_len;
   MY_UNUSED(common_header_len);
   uint8 const post_header_len =
@@ -473,7 +473,7 @@ Log_event::enum_skip_reason Stop_log_event::do_shall_skip(Relay_log_info *rli) {
    decrease the slave skip counter.
   */
   if (Multisource_info::is_xpaxos_channel(rli)) {
-#ifndef DBUG_OFF
+#ifndef NDEBUG
     assert(Multisource_info::is_xpaxos_replication_channel_name(
         rli->get_channel()));
 #endif

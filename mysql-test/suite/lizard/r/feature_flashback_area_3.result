@@ -1,0 +1,343 @@
+CALL mtr.add_suppression("'innodb-scn-history-interval': unsigned value 0 adjusted to 1");
+set global innodb_undo_retention = 0;
+set global innodb_txn_retention = 36000;
+set global innodb_purge_rseg_truncate_frequency = 1;
+set global innodb_undo_log_truncate = 1;
+
+==============================================================
+Test flashback_area across different partition DDL operations.
+All the partitions of a partitioned table have a consistent 
+flashback area option.
+The ALTER TABLE statement will modify the flashback_area
+option only if the whole table needs to be rebuilt.
+==============================================================
+set opt_flashback_area = 0;
+set global innodb_undo_retention = 0;
+set global innodb_txn_retention = 36000;
+create table t1 (c1 int, c2 int, primary key(c1));
+insert into t1 values (1, 100);
+insert into t1 values (2, 200);
+set opt_flashback_area = 0;
+create table t0 like t1;
+insert into t0 select * from t1;
+select * from information_schema.innodb_table_status where schema_name='test';
+SCHEMA_NAME	TABLE_NAME	PARTITION_NAME	options
+test	t1	NULL	avg_row_length=0;encrypt_type=N;flashback_area=0;key_block_size=0;keys_disabled=0;pack_record=0;stats_auto_recalc=0;stats_sample_pages=0;
+test	t0	NULL	avg_row_length=0;encrypt_type=N;flashback_area=0;key_block_size=0;keys_disabled=0;pack_record=0;stats_auto_recalc=0;stats_sample_pages=0;
+
+=== Partitioning Operations ===
+include/assert.inc [The options for test.t1. should match the expected FBA=0 condition]
+set @past_timestamps = (select now());
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: Snapshot too old
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	0
+set opt_flashback_area = 1;
+ALTER TABLE t1 PARTITION BY RANGE(c1) (PARTITION p0 VALUES LESS THAN (100), PARTITION p1 VALUES LESS THAN (200));
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: The definition of the table required by the flashback query has changed
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	1
+set @past_timestamps = (select now());
+set opt_flashback_area = 0;
+ALTER TABLE t1 ADD PARTITION (PARTITION p2 VALUES LESS THAN (300));
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+insert into t1 values (250, 250);
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: The definition of the table required by the flashback query has changed
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	4
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 > 200;
+ERROR HY000: The definition of the table required by the flashback query has changed
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	5
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 < 200;
+c1	c2
+1	100
+2	200
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	7
+set @past_timestamps = (select now());
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+c1	c2
+1	100
+2	200
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	10
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 > 200;
+c1	c2
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	11
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 < 200;
+c1	c2
+1	100
+2	200
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	13
+set opt_flashback_area = 0;
+ALTER TABLE t1 DROP PARTITION p2;
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+c1	c2
+1	100
+2	200
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	15
+set opt_flashback_area = 0;
+ALTER TABLE t1 REBUILD PARTITION p0;
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: The definition of the table required by the flashback query has changed
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	16
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 > 100;
+c1	c2
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	17
+set @past_timestamps = (select now());
+set opt_flashback_area = 0;
+ALTER TABLE t1 TRUNCATE PARTITION p0;
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: The definition of the table required by the flashback query has changed
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	18
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 > 100;
+c1	c2
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	19
+set @past_timestamps = (select now());
+set opt_flashback_area = 0;
+ALTER TABLE t1 REORGANIZE PARTITION p0 INTO (PARTITION p0 VALUES LESS THAN (50), PARTITION p2 VALUES LESS THAN (100)) ;
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: The definition of the table required by the flashback query has changed
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	20
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 > 100;
+c1	c2
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	21
+set @past_timestamps = (select now());
+set opt_flashback_area = 0;
+ALTER TABLE t1 ANALYZE PARTITION p0;
+Table	Op	Msg_type	Msg_text
+test.t1	analyze	status	OK
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+c1	c2
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	24
+set opt_flashback_area = 0;
+ALTER TABLE t1 CHECK PARTITION p0;
+Table	Op	Msg_type	Msg_text
+test.t1	check	status	OK
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+c1	c2
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	27
+set opt_flashback_area = 0;
+ALTER TABLE t1 OPTIMIZE PARTITION p1;
+Table	Op	Msg_type	Msg_text
+test.t1	optimize	note	Table does not support optimize on partitions. All partitions will be rebuilt and analyzed.
+test.t1	optimize	status	OK
+include/assert.inc [The options for test.t1. should match the expected FBA=0 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: Snapshot too old
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	27
+set opt_flashback_area = 1;
+ALTER TABLE t1 REPAIR PARTITION p1;
+Table	Op	Msg_type	Msg_text
+test.t1	repair	status	OK
+include/assert.inc [The options for test.t1. should match the expected FBA=0 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: Snapshot too old
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	27
+set opt_flashback_area = 1;
+truncate table t0;
+include/assert.inc [The options for test.t0. should match the expected FBA=1 condition]
+ALTER TABLE t1 EXCHANGE PARTITION p1 WITH TABLE t0;
+ERROR HY000: Non matching attribute 'FLASHBACK_AREA' between partition and table
+set opt_flashback_area = 1;
+OPTIMIZE TABLE t1;
+Table	Op	Msg_type	Msg_text
+test.t1	optimize	note	Table does not support optimize, doing recreate + analyze instead
+test.t1	optimize	status	OK
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set @past_timestamps = (select now());
+insert into t0 values (110, 110);
+insert into t0 values (120, 120);
+insert into t0 values (130, 130);
+insert into t0 values (140, 140);
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+c1	c2
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	30
+set query_via_flashback_area = 1;
+select * from t0 as of timestamp @past_timestamps;
+c1	c2
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	31
+ALTER TABLE t1 EXCHANGE PARTITION p1 WITH TABLE t0;
+include/assert.inc [The options for test.t0. should match the expected FBA=1 condition]
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+c1	c2
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	34
+set query_via_flashback_area = 1;
+select * from t0 as of timestamp @past_timestamps;
+c1	c2
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	35
+set opt_flashback_area = 0;
+create table t11 like t1;
+insert into t11 select * from t1;
+include/assert.inc [The options for test.t11. should match the expected FBA=0 condition]
+ALTER TABLE t1 DISCARD PARTITION p1 TABLESPACE;
+FLUSH TABLES t11 FOR EXPORT;
+UNLOCK TABLES;
+ALTER TABLE t1 IMPORT PARTITION p1 TABLESPACE;
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: Snapshot too old
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	38
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps where c1 < 100;
+c1	c2
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	40
+# Kill and restart
+set global innodb_undo_retention = 0;
+set global innodb_txn_retention = 36000;
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set @past_timestamps = (select now());
+set opt_flashback_area = 0;
+ALTER TABLE t1 TRUNCATE PARTITION p0, p1, p2;
+include/assert.inc [The options for test.t1. should match the expected FBA=0 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: Snapshot too old
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	0
+set @past_timestamps = (select now());
+set opt_flashback_area = 1;
+ALTER TABLE t1 rebuild partition p0, p1, p2;
+include/assert.inc [The options for test.t1. should match the expected FBA=0 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: Snapshot too old
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	0
+set @past_timestamps = (select now());
+set opt_flashback_area = 0;
+ALTER TABLE t1 REMOVE PARTITIONING;
+include/assert.inc [The options for test.t1. should match the expected FBA=0 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: Snapshot too old
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	0
+set @past_timestamps = (select now());
+set opt_flashback_area = 1;
+ALTER TABLE t1 PARTITION BY HASH(c1) PARTITIONS 4;
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: The definition of the table required by the flashback query has changed
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	1
+set @past_timestamps = (select now());
+set opt_flashback_area = 0;
+ALTER TABLE t1 COALESCE PARTITION 2;
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: The definition of the table required by the flashback query has changed
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	2
+# Kill and restart
+set global innodb_undo_retention = 0;
+set global innodb_txn_retention = 36000;
+include/assert.inc [The options for test.t1. should match the expected FBA=1 condition]
+set @past_timestamps = (select now());
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+c1	c2
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	2
+set opt_flashback_area = 0;
+ALTER TABLE t1 REMOVE PARTITIONING;
+include/assert.inc [The options for test.t1. should match the expected FBA=0 condition]
+set query_via_flashback_area = 1;
+select * from t1 as of timestamp @past_timestamps;
+ERROR HY000: Snapshot too old
+SHOW STATUS WHERE Variable_name like '%flashback_area_query%';
+Variable_name	Value
+Lizard_flashback_area_query_cnt	2
+set opt_flashback_area = default;
+set global innodb_undo_retention = default;
+set global innodb_txn_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;
+set global innodb_undo_log_truncate = default;
+drop table t0;
+drop table t1;
+drop table t11;

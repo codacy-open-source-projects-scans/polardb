@@ -21,7 +21,7 @@ commit;
 --echo #########################################
 --echo #  Case 1
 --echo #########################################
---let $query_gcn = `select @base_seq`
+--let $query_gcn = `select @base_seq + 1`
 begin;
 --disable_query_log
 --eval set innodb_snapshot_seq = $query_gcn

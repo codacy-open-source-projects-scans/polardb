@@ -1,0 +1,156 @@
+--source include/have_debug.inc
+
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+
+set global innodb_undo_retention = 9000;
+
+connect(con1, localhost, root,,);
+
+--echo ###############################
+--echo # Case: ATTACHED
+--echo ###############################
+connection default;
+--let $commit_gcn = `select @base_seq + 100`
+connection con1;
+set session xa_detach_on_prepare = on;
+xa start 'ac_t3_b1';
+xa end 'ac_t3_b1';
+
+connection default;
+--let $my_xid='ac_t3_b1', '', 1
+--let $expect_status= ATTACHED
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ###############################
+--echo # Case: DETACHED_PREPARE
+--echo ###############################
+connection con1;
+--echo call dbms_xa.ac_prepare('ac_t3_b1', '', 1, 1, 1, commit_gcn)
+--disable_query_log
+--disable_result_log
+--eval call dbms_xa.ac_prepare('ac_t3_b1', '', 1, 1, 1, $commit_gcn)
+--enable_result_log
+--enable_query_log
+
+connection default;
+--let $my_xid='ac_t3_b1', '', 1
+--let $expect_status= DETACHED_PREPARE
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ###############################
+--echo # Case: COMMIT
+--echo ###############################
+connection con1;
+--let $my_xid= 'ac_t3_b1', '', 1
+--let $m_phyid= 0, 0
+--let $expect_gcn= $commit_gcn
+--let $server_uuid=
+--let $expect_m_trx_id= NULL
+--let $expect_m_uba= NULL
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+
+connection default;
+--let $my_xid='ac_t3_b1', '', 1
+--let $expect_status= COMMIT
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ###############################
+--echo # Case: ROLLBACK
+--echo ###############################
+connection default;
+--let $commit_gcn = `select @base_seq + 200`
+connection con1;
+xa start 'ac_t3_b2';
+xa end 'ac_t3_b2';
+--echo call dbms_xa.ac_prepare('ac_t3_b2', '', 1, 1, 1, commit_gcn)
+--disable_query_log
+--disable_result_log
+--eval call dbms_xa.ac_prepare('ac_t3_b2', '', 1, 1, 1, $commit_gcn)
+--enable_result_log
+--enable_query_log
+
+xa rollback 'ac_t3_b2';
+
+connection default;
+--let $my_xid='ac_t3_b2', '', 1
+--let $expect_status= ROLLBACK
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ###############################
+--echo # Case: find_by_xid after ac_commit acquire_locks
+--echo ###############################
+connection default;
+--let $commit_gcn = `select @base_seq + 300`
+
+connection con1;
+set session xa_detach_on_prepare = on;
+xa start 'ac_t3_b3';
+xa end 'ac_t3_b3';
+
+--echo call dbms_xa.ac_prepare('ac_t3_b3', '', 1, 1, 1, commit_gcn)
+--disable_query_log
+--disable_result_log
+--eval call dbms_xa.ac_prepare('ac_t3_b3', '', 1, 1, 1, $commit_gcn)
+--enable_result_log
+--enable_query_log
+
+# --send xa commit 'ac_t3_b3'
+--echo send call dbms_xa.ac_commit('ac_t3_b3', '', 1, commit_gcn, "", 0, 0)
+--disable_query_log
+set debug_sync='RESET';
+set debug_sync='detached_xa_commit_after_acquire_commit_lock SIGNAL parked WAIT_FOR go';
+--send xa commit 'ac_t3_b3'
+# TODO: Don't know why debug_sync of dbms_xa.ac_commit does not work
+# --send call dbms_xa.ac_commit('ac_t3_b3', '', 1, $commit_gcn, "", 0, 0)
+--enable_query_log
+
+--connection default
+xa recover;
+set debug_sync='now WAIT_FOR parked';
+--let $my_xid='ac_t3_b3', '', 1
+--let $expect_status= ATTACHED
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+set debug_sync='now SIGNAL go';
+--connection con1
+--reap
+
+--echo ###############################
+--echo # Case: find_by_xid after XA ROLLBACK acquire_locks
+--echo ###############################
+connection default;
+--let $commit_gcn = `select @base_seq + 400`
+
+connection con1;
+set session xa_detach_on_prepare = on;
+xa start 'ac_t3_b4';
+xa end 'ac_t3_b4';
+
+--echo call dbms_xa.ac_prepare('ac_t3_b4', '', 1, 1, 1, commit_gcn)
+--disable_query_log
+--disable_result_log
+--eval call dbms_xa.ac_prepare('ac_t3_b4', '', 1, 1, 1, $commit_gcn)
+--enable_result_log
+--enable_query_log
+
+set debug_sync='detached_xa_commit_after_acquire_commit_lock SIGNAL parked WAIT_FOR go';
+--send xa rollback 'ac_t3_b4'
+
+--connection default
+set debug_sync='now WAIT_FOR parked';
+--let $my_xid='ac_t3_b4', '', 1
+--let $expect_status= ATTACHED
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+set debug_sync='now SIGNAL go';
+--connection con1
+--reap
+
+--echo ###############################
+--echo # cleanup
+--echo ###############################
+--disconnect con1
+
+connection default;
+set global innodb_undo_retention = default;
+

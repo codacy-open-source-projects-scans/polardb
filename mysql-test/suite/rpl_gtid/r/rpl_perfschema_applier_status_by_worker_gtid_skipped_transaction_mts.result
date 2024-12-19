@@ -5,17 +5,17 @@ Note	####	Storing MySQL user name or password information in the master info rep
 [connection master]
 CREATE TABLE t (a int);
 DROP TABLE t;
-include/sync_slave_sql_with_master.inc
-include/wait_for_slave_param.inc [Slave_SQL_Running_State]
-include/stop_slave_sql.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
+include/wait_for_slave_param.inc [Slave_SQL_Running_State FOR CHANNEL 'test']
+include/stop_slave_sql.inc [FOR CHANNEL 'test']
 [connection master]
 CREATE TABLE t1 (a int);
 [connection slave]
 CREATE TABLE t2 (a int);
 SET @@SESSION.GTID_NEXT= 'AUTOMATIC';
-include/start_slave_sql.inc
+include/start_slave_sql.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [queueing_gtid was cleared after the gtid skipped transactions]
 include/assert.inc [processing_gtid was cleared after the gtid skipped transactions]
 include/assert.inc [applying_gtid was cleared after the gtid skipped transactions]

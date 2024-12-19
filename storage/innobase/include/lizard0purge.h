@@ -7,14 +7,14 @@ the terms of the GNU General Public License, version 2.0, as published by the
 Free Software Foundation.
 
 This program is also distributed with certain software (including but not
-lzeusited to OpenSSL) that is licensed under separate terms, as designated in a
+limited to OpenSSL) that is licensed under separate terms, as designated in a
 particular file or component or in included license documentation. The authors
 of MySQL hereby grant you an additional permission to link the program and
 your derivative works with the separately licensed software that they have
 included with MySQL.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the zeusplied warranty of MERCHANTABILITY or FITNESS
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
 for more details.
 
@@ -38,25 +38,30 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "lizard0undo0types.h"
 #include "page0size.h"
 
+/**	Two Phase Purge (2PP)
+ *
+ * Followed 2PC naming tradition, we introduce a new purge stratedy,
+ *
+ * Two phase purge:
+ *
+ * 	First stage is original purge;
+ *
+ * 	Second stage is erase that is named by LIZARD system.
+ */
 struct trx_purge_t;
 struct mtr_t;
 
 /** purged_scn is not valid */
-constexpr scn_t PURGED_SCN_INVALID = lizard::SCN_NULL;
-
-#ifdef UNIV_PFS_MUTEX
-/* lizard purge blocked stat mutex PFS key */
-extern mysql_pfs_key_t purge_blocked_stat_mutex_key;
-#endif
+constexpr scn_t PURGED_SCN_INVALID = SCN_NULL;
 
 namespace lizard {
 
 /**
-  Here's an explanation of the changes associated with zeus and purge sys.
-  In the past, when committing, innodb holds rseg::mutex, trx_sys::mutex to
-  generate new trx_id as a commited number called trx_no for a trx, and then
-  holds trx_sys::mutex, rseg::mutex, and purge_sys::pq_mutex to add resgs to
-  purge_sys::purge_queue. So, we get the following conclusions:
+  Here's an explanation of the changes associated with Lizard transaction system
+  and purge sys. In the past, when committing, innodb holds rseg::mutex,
+  trx_sys::mutex to generate new trx_id as a commited number called trx_no for a
+  trx, and then holds trx_sys::mutex, rseg::mutex, and purge_sys::pq_mutex to
+  add resgs to purge_sys::purge_queue. So, we get the following conclusions:
   c-a. The history list in rollback segments is ordered.
   c-b. The purge_queue is ordered.
 
@@ -110,35 +115,20 @@ struct TxnUndoRsegsIterator {
   static const TxnUndoRsegs NullElement;
 };
 
-/** Persistence of purged commit number. For scn or gcn */
-template <typename XCN, unsigned long long POS>
-class Purged_cnum {
+struct min_safe_scn {
  public:
-  Purged_cnum() : m_purged_xcn(0), m_inited(false) {}
-  virtual ~Purged_cnum() {}
+  min_safe_scn() : m_scn(0) {}
+  min_safe_scn(scn_t scn) : m_scn(scn) {}
 
-  void init();
-  /**
-    Attention:
+  scn_t get_min() const { return m_scn; }
 
-    If flush commit number > m_purged_xcn, it will flush commit number into
-    lizard tablespace, but it didn't sync the redo of modification.  if
-    related undo content has been purged, it mean that those undo's redo
-    has been synced, because the redo of flushing commit number is prior of
-    undo's redo. so it's unnecessary to sync it specially.
-  */
-  void flush(XCN num);
-
-  XCN get();
+  void push(scn_t scn) {
+    ut_ad(scn >= m_scn);
+    m_scn = scn;
+  }
 
  private:
-  XCN read();
-
-  void write(XCN num);
-
- private:
-  std::atomic<XCN> m_purged_xcn;
-  bool m_inited;
+  scn_t m_scn;
 };
 
 /**
@@ -163,7 +153,18 @@ void trx_purge_set_purged_scn(scn_t txn_scn);
 
   @retval       bool        true if the corresponding txn has been purged
 */
-bool precheck_if_txn_is_purged(txn_rec_t *txn_rec);
+bool precheck_if_txn_is_purged(const txn_rec_t *txn_rec);
+
+void trx_purge_add_sp_list(trx_rseg_t *rseg, trx_rsegf_t *rseg_hdr,
+                           trx_ulogf_t *log_hdr, ulint type, mtr_t *mtr);
+
+/**
+ * Migrate the undo log segment from the history list to semi-purge list.
+ *
+ * @param[in] rseg            Rollback segment
+ * @param[in] hdr_addr        File address of log_hdr
+ */
+void trx_purge_migrate_last_log(trx_rseg_t *rseg, fil_addr_t hdr_addr);
 
 #if defined UNIV_DEBUG || defined LIZARD_DEBUG
 /**
@@ -175,57 +176,25 @@ bool purged_scn_validation();
 
 #endif /* UNIV_DEBUG || defined LIZARD_DEBUG */
 
-enum purge_blocked_cause_t {
-  UNBLOCKED,
-  BLOCKED_BY_VISION,
-  RETENTION_BY_TIME,
-  RETENTION_BY_SPACE,
-  BLOCKED_BY_HB,
-  NO_UNDO_LEFT
-};
+extern void trx_purge_start_history();
 
-/** Blocked reason of purge sys. */
-class Purge_blocked_stat {
- public:
-  Purge_blocked_stat()
-      : m_blocked_cause(purge_blocked_cause_t::UNBLOCKED),
-        m_undo_used_size(0),
-        m_undo_retained_time(0),
-        m_retention_time(0),
-        m_retention_reserved_size(0),
-        m_utc(0) {
-    mutex_create(LATCH_ID_PURGE_BLOCKED_STAT, &m_mutex);
-  }
+/**
+ Optimistically repositions the `pcur` in the purge node to the clustered
+ index record. This method uses extra GPP information from the secondary index
+ record to attempt an optimistic repositioning without a top-down B-tree search.
+ If repositioning fails, it defaults to `row_purge_reposition_pcur()`, which
+ conducts a top-down B-tree search to reposition the `pcur`.
 
-  virtual ~Purge_blocked_stat() { mutex_free(&m_mutex); }
-
-  void get(String *blocked_cause, ulint *utc);
-
-  void set(purge_blocked_cause_t cause, ulint utc);
-
-  void retained_by_space(purge_blocked_cause_t cause, ulint utc,
-                         ulint used_size, ulint undo_retention_reserved_size);
-
-  void retained_by_time(purge_blocked_cause_t cause, ulint utc,
-                        ulint retained_time, ulint undo_retention_time);
-
- private:
-  ib_mutex_t m_mutex;
-  purge_blocked_cause_t m_blocked_cause;
-  /** info used when blocking is caused by retention */
-  ulint m_undo_used_size;
-  ulint m_undo_retained_time;
-  ulint m_retention_time;
-  ulint m_retention_reserved_size;
-  /** utc when purge sys is blocked. 0 when purge sys is not blocked */
-  ulint m_utc;
-
-  char detailed_cause[256] = {0};
-};
+ * @param[in] mode       Search mode, should be BTR_SEARCH_LEAF
+ * @param[in,out] node   Purge node
+ * @param[in] sec_cursor Cursor for the secondary index
+ * @param[in] mtr        Mini-transaction
+ * @return True if the cluster index record was successfully positioned
+ */
+bool row_purge_optimistic_reposition_pcur(ulint mode, purge_node_t *node,
+                                          btr_cur_t *sec_cursor, mtr_t *mtr);
 
 }  // namespace lizard
-
-using Purged_gcn = lizard::Purged_cnum<gcn_t, GCS_DATA_PURGE_GCN>;
 
 #if defined UNIV_DEBUG || defined LIZARD_DEBUG
 

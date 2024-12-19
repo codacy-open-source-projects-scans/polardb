@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+Copyright (c) 2015, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -848,7 +848,8 @@ void dd_import_instant_add_columns(const dict_table_t *table,
 @param[in]      table           InnoDB table object */
 template <typename Table>
 void dd_write_table(dd::Object_id dd_space_id, Table *dd_table,
-                    const dict_table_t *table);
+                    const dict_table_t *table,
+                    const lizard::Ha_ddl_policy *ddl_policy);
 
 /** Set options of dd::Table according to InnoDB table object
 @tparam         Table           dd::Table or dd::Partition
@@ -1603,6 +1604,28 @@ void get_field_types(const dd::Table *dd_tab, const dict_table_t *m_table,
                      const Field *field, unsigned &col_len, ulint &mtype,
                      ulint &prtype);
 #endif
+
+/** Set se private data for DD::Index or DD::Partition_index
+@param[in,out]  dd_index        dd::Index
+@param[in]      trx_id          trx ID
+@param[in]      txn_info        {scn, gcn, uba} */
+template <typename Index>
+void dd_index_set_se_private_for_system_cols(Index *dd_index,
+                                             const trx_id_t trx_id,
+                                             const txn_info_t &txn_info) {
+  dd::Properties &p = dd_index->se_private_data();
+  p.set(dd_index_key_strings[DD_INDEX_TRX_ID], trx_id);
+  p.set(dd_index_key_strings[DD_INDEX_UBA], txn_info.undo_ptr);
+  p.set(dd_index_key_strings[DD_INDEX_SCN], txn_info.scn);
+  p.set(dd_index_key_strings[DD_INDEX_GCN], txn_info.gcn);
+}
+
+template void dd_index_set_se_private_for_system_cols<dd::Index>(
+    dd::Index *dd_index, const trx_id_t trx_id, const txn_info_t &txn_info);
+
+template void dd_index_set_se_private_for_system_cols<dd::Partition_index>(
+    dd::Partition_index *dd_index, const trx_id_t trx_id,
+    const txn_info_t &txn_info);
 
 #include "dict0dd.ic"
 #endif

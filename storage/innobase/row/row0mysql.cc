@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+Copyright (c) 2000, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -909,12 +909,9 @@ row_prebuilt_t *row_create_prebuilt(
   prebuilt->clust_pcur = static_cast<btr_pcur_t *>(
       mem_heap_zalloc(prebuilt->heap, sizeof(btr_pcur_t)));
 
-  prebuilt->pcur->m_cleanout_pages = ut::new_<lizard::Cleanout_pages>();
-  prebuilt->clust_pcur->m_cleanout_pages = ut::new_<lizard::Cleanout_pages>();
-
-  prebuilt->pcur->m_cleanout_cursors = ut::new_<lizard::Cleanout_cursors>();
-  prebuilt->clust_pcur->m_cleanout_cursors =
-      ut::new_<lizard::Cleanout_cursors>();
+  prebuilt->pcur->m_cleanout = ut::new_<lizard::Scan_cleanout>();
+  prebuilt->clust_pcur->m_cleanout =
+      ut::new_<lizard::Scan_cleanout>();
 
   prebuilt->pcur->reset();
   prebuilt->clust_pcur->reset();
@@ -983,15 +980,10 @@ void row_prebuilt_free(row_prebuilt_t *prebuilt, bool dict_locked) {
   prebuilt->pcur->reset();
   prebuilt->clust_pcur->reset();
 
-  ut::delete_(prebuilt->pcur->m_cleanout_pages);
-  ut::delete_(prebuilt->clust_pcur->m_cleanout_pages);
-  prebuilt->pcur->m_cleanout_pages = nullptr;
-  prebuilt->clust_pcur->m_cleanout_pages = nullptr;
-
-  ut::delete_(prebuilt->pcur->m_cleanout_cursors);
-  ut::delete_(prebuilt->clust_pcur->m_cleanout_cursors);
-  prebuilt->pcur->m_cleanout_cursors = nullptr;
-  prebuilt->clust_pcur->m_cleanout_cursors = nullptr;
+  ut::delete_(prebuilt->pcur->m_cleanout);
+  ut::delete_(prebuilt->clust_pcur->m_cleanout);
+  prebuilt->pcur->m_cleanout = nullptr;
+  prebuilt->clust_pcur->m_cleanout = nullptr;
 
   ut::free(prebuilt->mysql_template);
 
@@ -1495,7 +1487,8 @@ static dberr_t row_insert_for_mysql_using_cursor(const byte *mysql_rec,
     }
 
     if (index->is_clustered()) {
-      err = row_ins_clust_index_entry(node->index, node->entry, thr, false);
+      err = row_ins_clust_index_entry(node->index, node->entry, &node->gpp_no,
+                                      thr, false);
     } else {
       err = row_ins_sec_index_entry(node->index, node->entry, thr, false);
     }
@@ -2166,7 +2159,7 @@ static dberr_t row_update_for_mysql_using_cursor(const upd_node_t *node,
 
     if (index->is_clustered()) {
       if (!dict_index_is_auto_gen_clust(index)) {
-        err = row_ins_clust_index_entry(index, entry, thr, true);
+        err = row_ins_clust_index_entry(index, entry, nullptr, thr, true);
       }
     } else {
       err = row_ins_sec_index_entry(index, entry, thr, true);
@@ -2187,7 +2180,7 @@ static dberr_t row_update_for_mysql_using_cursor(const upd_node_t *node,
     entry = row_build_index_entry(node->upd_row, node->upd_ext, index, heap);
 
     if (index->is_clustered()) {
-      err = row_ins_clust_index_entry(index, entry, thr, false);
+      err = row_ins_clust_index_entry(index, entry, nullptr, thr, false);
       /* Commit the open mtr as we are processing UPDATE. */
       if (index->last_ins_cur) {
         index->last_ins_cur->release();
@@ -2780,7 +2773,9 @@ void row_mysql_unlock_data_dictionary(trx_t *trx) /*!< in/out: transaction */
 dberr_t row_create_table_for_mysql(dict_table_t *&table,
                                    const char *compression,
                                    const HA_CREATE_INFO *create_info,
-                                   trx_t *trx, mem_heap_t *heap) {
+                                   trx_t *trx, mem_heap_t *heap,
+                                   const lizard::Ha_ddl_policy *ddl_policy,
+                                   const dd::Table *old_dd_tab) {
   dberr_t err;
 
   ut_ad(!dict_sys_mutex_own());
@@ -2818,6 +2813,9 @@ dberr_t row_create_table_for_mysql(dict_table_t *&table,
     table = nullptr;
     return err;
   }
+
+  lizard::dd_fill_dict_table_fba(
+      lizard::ha_ddl_create_table_policy(ddl_policy, table, old_dd_tab), table);
 
   bool free_heap = false;
   if (heap == nullptr) {
@@ -2937,7 +2935,8 @@ dberr_t row_create_index_for_mysql(
                                 index columns, which are
                                 then checked for not being too
                                 large. */
-    dict_table_t *handler)      /*!< in/out: table handler. */
+    dict_table_t *handler,      /*!< in/out: table handler. */
+    lizard::Ha_ddl_policy *ddl_policy)
 {
   dberr_t err;
   ulint i;
@@ -2990,6 +2989,10 @@ dberr_t row_create_index_for_mysql(
   }
 
   trx_set_dict_operation(trx, TRX_DICT_OP_TABLE);
+
+  lizard::dd_fill_dict_index_format(
+      lizard::ha_ddl_create_index_policy(ddl_policy, table, index), table,
+      index);
 
   /* For temp-table we avoid insertion into SYSTEM TABLES to
   maintain performance and so we have separate path that directly
@@ -3060,7 +3063,8 @@ dberr_t row_create_index_for_mysql(
     idx = dict_table_get_index_on_name(table, index_name);
 
     ut_ad(idx);
-    err = fts_create_index_tables_low(trx, idx, table->name.m_name, table->id);
+    err = fts_create_index_tables_low(trx, idx, table->name.m_name, table->id,
+                                      ddl_policy);
   }
 
 error_handling:

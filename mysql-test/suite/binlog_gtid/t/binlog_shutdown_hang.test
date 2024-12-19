@@ -19,6 +19,11 @@
 # GTIDS TO SAVE AND AUTOCOMMIT=0
 #
 
+# The following "Set super_read_only=1" then shutdown will crash at consensus_info::flush_info.
+# The crash is expected, but we don't want core file to be misunderstood. 
+--let restart_parameters="restart: --skip-core-file"
+--source include/restart_mysqld.inc
+
 # For reseting mysql.gtid_executed table
 RESET MASTER;
 
@@ -29,6 +34,7 @@ INSERT INTO t VALUES (10);
 SET GLOBAL autocommit= 0;
 SET GLOBAL super_read_only= ON;
 
+--let restart_parameters="restart:"
 --source include/restart_mysqld.inc
 
 --let $master_uuid= `SELECT @@GLOBAL.SERVER_UUID`

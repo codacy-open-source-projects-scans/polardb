@@ -13,16 +13,16 @@ SET SESSION sql_log_bin = 1;
 #
 CREATE TABLE t (a INT);
 CREATE DATABASE ignored;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 SET SESSION sql_log_bin = 0;
 call mtr.add_suppression("Unsafe statement written to the binary log using statement format since BINLOG_FORMAT = STATEMENT. Statement is unsafe because it is being used inside a XA transaction. Concurrent XA transactions may deadlock on slaves when replicated using statements*");
 SET SESSION sql_log_bin = 1;
 # 2. On replica: Stop replica and create ignore_db replication filter for
 #    database 'ignored'. Start replica.
 #
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = (ignored);
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 # 3. On source: Start a new XA transaction, insert data in test.t table.
 #
 [connection master]
@@ -39,15 +39,15 @@ USE ignored;
 XA END 'a';
 XA PREPARE 'a';
 XA COMMIT 'a';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # 5. Confirm data is replicated successfully.
 #
 include/assert.inc ['There is a value 1 in table t']
 # 6. Cleanup.
 #
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = ();
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 DROP TABLE test.t;
 DROP DATABASE ignored;

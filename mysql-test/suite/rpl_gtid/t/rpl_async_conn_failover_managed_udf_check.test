@@ -93,7 +93,7 @@ SELECT asynchronous_connection_failover_add_managed(9, 'GroupReplication', 'aaaa
 --echo #
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '', 3310, '', 80, 60);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '', 3310, '', 80, 60);
 
 --let $assert_text= 'The performance_schema.replication_asynchronous_connection_failover table is empty'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 0
@@ -109,7 +109,7 @@ SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaa
 --echo #
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', '3310', '', 80, 60);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', '3310', '', 80, 60);
 
 --let $assert_text= 'The performance_schema.replication_asynchronous_connection_failover table is empty'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 0
@@ -126,7 +126,7 @@ SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaa
 --echo #
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', 0, 60);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', 0, 60);
 
 --let $assert_text= 'The performance_schema.replication_asynchronous_connection_failover table is empty'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 0
@@ -138,7 +138,7 @@ SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaa
 
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', 180, 60);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', 180, 60);
 
 --let $assert_text= 'The performance_schema.replication_asynchronous_connection_failover table is empty'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 0
@@ -150,7 +150,7 @@ SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaa
 
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', '80', 60);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', '80', 60);
 
 --let $assert_text= 'The performance_schema.replication_asynchronous_connection_failover table is empty'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 0
@@ -167,7 +167,7 @@ SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaa
 --echo #
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', 80, 0);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', 80, 0);
 
 --let $assert_text= 'The performance_schema.replication_asynchronous_connection_failover table is empty'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 0
@@ -179,7 +179,7 @@ SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaa
 
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', 80, 160);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', 80, 160);
 
 --let $assert_text= 'The performance_schema.replication_asynchronous_connection_failover table is empty'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 0
@@ -191,7 +191,7 @@ SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaa
 
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', 80, '60');
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', 80, '60');
 
 --let $assert_text= 'The performance_schema.replication_asynchronous_connection_failover table is empty'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 0
@@ -207,9 +207,10 @@ SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaa
 --echo #    secondary_weight.
 --echo #
 
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', 80, 60);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3310, '', 80, 60);
 
 --let $assert_text= 'There is one row in performance_schema.replication_asynchronous_connection_failover'
+--let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 1
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 1
 --source include/assert.inc
 
@@ -221,13 +222,12 @@ SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaa
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover_managed, count, 1] = 1
 --source include/assert.inc
 
-
 --echo #
 --echo # 8. Check correct string value is provided for network_namespace.
 --echo #
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaabb', '127.0.0.1', 3310, 100, 80, 60);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaabb', '127.0.0.1', 3310, 100, 80, 60);
 
 --let $assert_text= 'There is one row in performance_schema.replication_asynchronous_connection_failover'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 1
@@ -241,7 +241,7 @@ SELECT * FROM performance_schema.replication_asynchronous_connection_failover;
 SELECT * FROM performance_schema.replication_asynchronous_connection_failover_managed;
 
 
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaabb', '10.0.0.10', 1111, 'nets', 20, 10);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaabb', '10.0.0.10', 1111, 'nets', 20, 10);
 
 --let $assert_text= 'There is one row in performance_schema.replication_asynchronous_connection_failover'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 2
@@ -268,7 +268,7 @@ SELECT asynchronous_connection_failover_add_managed('ch1', 'GroupReplication', '
 SELECT * FROM performance_schema.replication_asynchronous_connection_failover;
 SELECT * FROM performance_schema.replication_asynchronous_connection_failover_managed;
 
-SELECT asynchronous_connection_failover_delete_managed('', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaabb');
+SELECT asynchronous_connection_failover_delete_managed('test', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaabb');
 SELECT asynchronous_connection_failover_delete_managed('ch1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaabb');
 
 
@@ -281,7 +281,7 @@ SELECT asynchronous_connection_failover_delete_managed('ch1', 'aaaaaaaa-aaaa-aaa
 --echo #
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_delete_managed('');
+SELECT asynchronous_connection_failover_delete_managed('test');
 
 --let $assert_text= 'There is one row in performance_schema.replication_asynchronous_connection_failover'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 1
@@ -293,7 +293,7 @@ SELECT asynchronous_connection_failover_delete_managed('');
 
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_delete_managed('', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 3);
+SELECT asynchronous_connection_failover_delete_managed('test', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 3);
 
 --let $assert_text= 'There is one row in performance_schema.replication_asynchronous_connection_failover'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 1
@@ -325,7 +325,7 @@ SELECT asynchronous_connection_failover_delete_managed(9, 'aaaaaaaa-aaaa-aaaa-aa
 --echo #
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_delete_managed('', '');
+SELECT asynchronous_connection_failover_delete_managed('test', '');
 
 --let $assert_text= 'There is one row in performance_schema.replication_asynchronous_connection_failover'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 1
@@ -336,7 +336,7 @@ SELECT asynchronous_connection_failover_delete_managed('', '');
 --source include/assert.inc
 
 
-SELECT asynchronous_connection_failover_delete_managed('', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+SELECT asynchronous_connection_failover_delete_managed('test', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 
 --let $assert_text= 'There is one row in performance_schema.replication_asynchronous_connection_failover'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 0
@@ -360,10 +360,10 @@ CREATE USER 'async_user' IDENTIFIED BY 'pass';
 connect(connect_async, localhost, async_user, pass);
 
 --error ER_SPECIFIC_ACCESS_DENIED_ERROR
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-bbbb-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3100, '', 80, 60);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-bbbb-aaaa-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3100, '', 80, 60);
 
 --error ER_SPECIFIC_ACCESS_DENIED_ERROR
-SELECT asynchronous_connection_failover_delete_managed('', 'aaaaaaaa-bbbb-aaaa-aaaa-aaaaaaaaaaaa');
+SELECT asynchronous_connection_failover_delete_managed('test', 'aaaaaaaa-bbbb-aaaa-aaaa-aaaaaaaaaaaa');
 
 --error ER_TABLEACCESS_DENIED_ERROR
 SELECT * FROM mysql.replication_asynchronous_connection_failover;
@@ -387,24 +387,24 @@ GRANT REPLICATION_SLAVE_ADMIN ON *.* TO 'async_user';
 --echo [connection connect_async]
 connect(connect_async, localhost, async_user, pass);
 
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-bbbb-bbbb-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3100, '', 80, 60);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-bbbb-bbbb-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3100, '', 80, 60);
 
 --error ER_UDF_ERROR
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'aaaaaaaa-bbbb-bbbb-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3100, '', 80, 60);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'aaaaaaaa-bbbb-bbbb-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3100, '', 80, 60);
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_add_managed('', 'AsyncReplication', 'aaaaaaaa-bbbb-bbbb-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3100, '', 80, 60);
+SELECT asynchronous_connection_failover_add_managed('test', 'AsyncReplication', 'aaaaaaaa-bbbb-bbbb-aaaa-aaaaaaaaaaaa', '127.0.0.1', 3100, '', 80, 60);
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_add_managed('', 'GroupReplication', 'UUID', '127.0.0.1', 3100, '', 80, 60);
+SELECT asynchronous_connection_failover_add_managed('test', 'GroupReplication', 'UUID', '127.0.0.1', 3100, '', 80, 60);
 
-SELECT asynchronous_connection_failover_delete_managed('', 'aaaaaaaa-bbbb-bbbb-aaaa-aaaaaaaaaaaa');
+SELECT asynchronous_connection_failover_delete_managed('test', 'aaaaaaaa-bbbb-bbbb-aaaa-aaaaaaaaaaaa');
 
 --error ER_UDF_ERROR
-SELECT asynchronous_connection_failover_delete_managed('', 'aaaaaaaa-bbbb-bbbb-aaaa-aaaaaaaaaaaa');
+SELECT asynchronous_connection_failover_delete_managed('test', 'aaaaaaaa-bbbb-bbbb-aaaa-aaaaaaaaaaaa');
 
 --error ER_CANT_INITIALIZE_UDF
-SELECT asynchronous_connection_failover_delete_managed('', 'UUID');
+SELECT asynchronous_connection_failover_delete_managed('test', 'UUID');
 
 --disconnect connect_async
 --source include/rpl_connection_master.inc

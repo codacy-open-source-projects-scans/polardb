@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 Copyright (c) 2008, Google Inc.
 
 Portions of this file contain modifications contributed and copyrighted by
@@ -892,7 +892,7 @@ bool btr_search_guess_on_hash(const dtuple_t *tuple, ulint mode,
 
   if (!has_search_latch) {
     if (!buf_page_get_known_nowait(latch_mode, block, Cache_hint::MAKE_YOUNG,
-                                   __FILE__, __LINE__, mtr)) {
+                                   __FILE__, __LINE__, false, mtr)) {
       return false;
     }
 

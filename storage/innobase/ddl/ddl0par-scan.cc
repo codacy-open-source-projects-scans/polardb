@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2020, 2022, Oracle and/or its affiliates.
+Copyright (c) 2020, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -333,6 +333,9 @@ dberr_t Parallel_cursor::scan(Builders &builders) noexcept {
         auto heap = m_heaps[thread_id];
 
         row.m_rec = read_ctx->m_rec;
+
+        row.m_page_no = read_ctx->m_block->page.id.page_no();
+        ut_ad(row.m_page_no != FIL_NULL);
 
         row.m_offsets =
             rec_get_offsets(row.m_rec, index(), nullptr, ULINT_UNDEFINED,

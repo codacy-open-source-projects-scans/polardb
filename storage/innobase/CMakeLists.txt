@@ -1,4 +1,4 @@
-# Copyright (c) 2006, 2022, Oracle and/or its affiliates.
+# Copyright (c) 2006, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -79,6 +79,7 @@ SET(INNOBASE_SOURCES
   btr/btr0cur.cc
   btr/btr0pcur.cc
   btr/btr0sea.cc
+  btr/lizard0btr0cur.cc
   buf/buf0block_hint.cc
   buf/buf0buddy.cc
   buf/buf0buf.cc
@@ -272,18 +273,24 @@ SET(INNOBASE_SOURCES
   srv/lizard0mon.cc
   btr/lizard0cleanout.cc
   trx/lizard0purge.cc
+  trx/lizard0erase.cc
   ut/lizard0log.cc
   ut/lizard0ut.cc
   page/lizard0page.cc
   read/lizard0read.cc
-  trx/lizard0purge.cc
   trx/lizard0trx.cc
   dict/lizard0gcs0hist.cc
   row/lizard0mysql.cc
   trx/lizard0gp.cc
   trx/lizard0xa.cc
   trx/lizard0tcn.cc
-  ut/lizard0iv.cc)
+  ut/lizard0iv.cc
+  dict/lizard0dict0mem.cc
+  data/lizard0data0data.cc
+  mtr/lizard0mtr0log.cc
+  dict/lizard0dd0policy.cc
+  btr/lizard0cleanout0safe.cc
+  )
 
 # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=98753
 IF(MY_COMPILER_IS_GNU AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 11)

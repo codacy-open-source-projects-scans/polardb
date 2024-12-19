@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -1004,6 +1004,8 @@ MySQL clients support the protocol:
 #include "sql/sql_jemalloc.h"
 #endif
 
+#include "sql/lizard/lizard_hb_freezer.h"
+
 using std::max;
 using std::min;
 using std::vector;
@@ -1535,6 +1537,7 @@ char *mysql_data_home = const_cast<char *>(".");
 const char *mysql_real_data_home_ptr = mysql_real_data_home;
 char *opt_protocol_compression_algorithms;
 char server_version[SERVER_VERSION_LENGTH];
+char polardb_version[SERVER_VERSION_LENGTH];
 const char *mysqld_unix_port;
 char *opt_mysql_tmpdir;
 
@@ -7007,9 +7010,6 @@ static int init_server_components() {
     }
   }
 
-  /* Initialize the optimizer cost module */
-  init_optimizer_cost_module(true);
-
   ReplicaInitializer replica_initializer(
       opt_initialize, /*opt_skip_replica_start*/ true, rpl_channel_filters,
       &opt_replica_skip_errors);
@@ -7018,6 +7018,11 @@ static int init_server_components() {
   if (!opt_initialize && !opt_consensus_force_recovery &&
       consensus_log_manager.init_consensus_info())
     unireg_abort(MYSQLD_ABORT_EXIT);
+
+  /* Save pid of this process in a file, because init_service maybe wait long time*/
+  if (!opt_initialize && create_pid_file()) {
+    unireg_abort(MYSQLD_ABORT_EXIT);
+  }
 
   int consensus_error = consensus_log_manager.init_service();
   if (consensus_error < 0)
@@ -7112,6 +7117,8 @@ static int init_server_components() {
   rpl_source_io_monitor = new Source_IO_monitor();
   udf_load_service.init();
 
+  /* Initialize the optimizer cost module */
+  init_optimizer_cost_module(true);
   ft_init_stopwords();
 
   init_max_user_conn();
@@ -8209,10 +8216,10 @@ int mysqld_main(int argc, char **argv)
 
   bool abort = false;
 
-  /* Save pid of this process in a file */
-  if (!opt_initialize) {
-    if (create_pid_file()) abort = true;
-  }
+  // /* Save pid of this process in a file */
+  // if (!opt_initialize) {
+  //   if (create_pid_file()) abort = true;
+  // }
 
   /* Read the optimizer cost model configuration tables */
   if (!opt_initialize) reload_optimizer_cost_constants();
@@ -8304,6 +8311,8 @@ int mysqld_main(int argc, char **argv)
   check_binlog_cache_size(nullptr);
   check_binlog_stmt_cache_size(nullptr);
 
+  xpaxos_set_privilege_checks_user();
+
   binlog_unsafe_map_init();
 
   if (!opt_initialize) {
@@ -8313,23 +8322,6 @@ int mysqld_main(int argc, char **argv)
       }
     }
   }
-
-  //  ReplicaInitializer replica_initializer(opt_initialize,
-  //  opt_skip_replica_start,
-  //                                         rpl_channel_filters,
-  //                                         &opt_replica_skip_errors);
-  //
-  //  /* If running with --initialize, do not start replication. */
-  //  if (!opt_initialize &&
-  //      !opt_consensus_force_recovery &&
-  //      consensus_log_manager.init_consensus_info())
-  //    unireg_abort(MYSQLD_ABORT_EXIT);
-  //
-  //  int consensus_error = consensus_log_manager.init_service();
-  //  if (consensus_error < 0)
-  //    unireg_abort(MYSQLD_ABORT_EXIT);
-  //  else if (consensus_error > 0)
-  //    unireg_abort(MYSQLD_SUCCESS_EXIT);
 
 #ifdef WITH_LOCK_ORDER
   if (!opt_initialize) {
@@ -9254,9 +9246,19 @@ struct my_option my_long_options[] = {
      "Cluster restore from leader set apply index point",
      &opt_cluster_force_recover_index, &opt_cluster_force_recover_index, 0,
      GET_ULL, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+    {"cluster-follower-force-recover-index", OPT_CLUSTER,
+     "Cluster restore from follower set apply index point",
+     &opt_cluster_follower_force_recover_index, &opt_cluster_follower_force_recover_index, 0,
+     GET_ULL, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
     {"cluster-force-change-meta", OPT_CLUSTER, "Cluster force to change meta",
      &opt_cluster_force_change_meta, &opt_cluster_force_change_meta, 0,
      GET_BOOL, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+    {"consensus-mts-force-apply-index", OPT_CLUSTER, "Update consensus_apply_index in slave_relay_log_info",
+     &opt_consensus_mts_force_apply_index, &opt_consensus_mts_force_apply_index, 0,
+     GET_ULL, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+    {"consensus-reset-mts-info", OPT_CLUSTER, "reset mts info when force change meta",
+     &opt_consensus_reset_mts_info, &opt_consensus_reset_mts_info, 0, GET_BOOL,
+     REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
     {"cluster-dump-meta", OPT_CLUSTER, "Cluster dump meta",
      &opt_cluster_dump_meta, &opt_cluster_dump_meta, 0, GET_BOOL, REQUIRED_ARG,
      0, 0, 0, 0, 0, 0},
@@ -10424,6 +10426,7 @@ static int mysql_init_variables() {
   what_to_log = ~(1L << (uint)COM_TIME);
   refresh_version = 1L; /* Increments on each reload */
   my_stpcpy(server_version, MYSQL_SERVER_VERSION);
+  my_stpcpy(polardb_version, POLARDB_VERSION);
   key_caches.clear();
   if (!(dflt_key_cache = get_or_create_key_cache(std::string_view{
             default_key_cache_base.str, default_key_cache_base.length}))) {
@@ -11401,7 +11404,7 @@ static int get_options(int *argc_ptr, char ***argv_ptr) {
   read_only = super_read_only ? super_read_only : read_only;
   opt_readonly = read_only;
 
-  lizard::xa::opt_no_heartbeat_freeze = lizard::xa::no_heartbeat_freeze;
+  lizard::opt_no_heartbeat_freeze = lizard::no_heartbeat_freeze;
   return 0;
 }
 

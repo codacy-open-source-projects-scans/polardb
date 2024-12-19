@@ -13,7 +13,7 @@ CALL mtr.add_suppression("Slave SQL .*Deadlock found when trying to get lock; tr
 # Check EEREE
 [connection master]
 CREATE TABLE t1(a INT PRIMARY KEY);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Execute transactions on slave
 [connection slave]
 BEGIN;
@@ -37,12 +37,12 @@ INSERT INTO t1 VALUES (5);
 [connection slave1]
 COMMIT;
 # Wait until slave worker has failed due to duplicate entry
-include/wait_for_slave_param.inc [Last_Errno]
+include/wait_for_slave_param.inc [Last_Errno FOR CHANNEL 'test']
 # Release other worker threads
 [connection slave]
 ROLLBACK;
 # Wait for all worker threads to exit
-include/wait_for_slave_param.inc [Slave_SQL_Running]
+include/wait_for_slave_param.inc [Slave_SQL_Running FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 3 values]
 # Delete conflicting transactions on slave
 [connection slave]
@@ -52,19 +52,19 @@ DELETE FROM t1 WHERE a = 4;
 DELETE FROM t1 WHERE a = 5;
 COMMIT;
 # Start slave sql thread
-include/start_slave_sql.inc
-include/wait_for_slave_param.inc [Slave_SQL_Running_State]
+include/start_slave_sql.inc [FOR CHANNEL 'test']
+include/wait_for_slave_param.inc [Slave_SQL_Running_State FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 5 rows]
 [connection master]
 # Removing debug point 'set_commit_parent_100' from @@GLOBAL.debug
 DROP TABLE t1;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Check EEREW
 [connection master]
 CREATE TABLE t1(a INT PRIMARY KEY);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Execute transactions on slave
 [connection slave]
 BEGIN;
@@ -87,12 +87,12 @@ INSERT INTO t1 VALUES (5);
 [connection slave1]
 COMMIT;
 # Wait until slave worker has failed due to duplicate entry
-include/wait_for_slave_param.inc [Last_Errno]
+include/wait_for_slave_param.inc [Last_Errno FOR CHANNEL 'test']
 # Release other worker threads
 [connection slave]
 ROLLBACK;
 # Wait for all worker threads to exit
-include/wait_for_slave_param.inc [Slave_SQL_Running]
+include/wait_for_slave_param.inc [Slave_SQL_Running FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 3 values]
 # Delete conflicting transactions on slave
 [connection slave]
@@ -101,19 +101,19 @@ DELETE FROM t1 WHERE a = 3;
 DELETE FROM t1 WHERE a = 4;
 COMMIT;
 # Start slave sql thread
-include/start_slave_sql.inc
-include/wait_for_slave_param.inc [Slave_SQL_Running_State]
+include/start_slave_sql.inc [FOR CHANNEL 'test']
+include/wait_for_slave_param.inc [Slave_SQL_Running_State FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 5 rows]
 [connection master]
 # Removing debug point 'set_commit_parent_100' from @@GLOBAL.debug
 DROP TABLE t1;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Check EERWE
 [connection master]
 CREATE TABLE t1(a INT PRIMARY KEY);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Execute transactions on slave
 [connection slave]
 BEGIN;
@@ -136,12 +136,12 @@ INSERT INTO t1 VALUES (5);
 [connection slave1]
 COMMIT;
 # Wait until slave worker has failed due to duplicate entry
-include/wait_for_slave_param.inc [Last_Errno]
+include/wait_for_slave_param.inc [Last_Errno FOR CHANNEL 'test']
 # Release other worker threads
 [connection slave]
 ROLLBACK;
 # Wait for all worker threads to exit
-include/wait_for_slave_param.inc [Slave_SQL_Running]
+include/wait_for_slave_param.inc [Slave_SQL_Running FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 3 values]
 # Delete conflicting transactions on slave
 [connection slave]
@@ -150,19 +150,19 @@ DELETE FROM t1 WHERE a = 3;
 DELETE FROM t1 WHERE a = 5;
 COMMIT;
 # Start slave sql thread
-include/start_slave_sql.inc
-include/wait_for_slave_param.inc [Slave_SQL_Running_State]
+include/start_slave_sql.inc [FOR CHANNEL 'test']
+include/wait_for_slave_param.inc [Slave_SQL_Running_State FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 5 rows]
 [connection master]
 # Removing debug point 'set_commit_parent_100' from @@GLOBAL.debug
 DROP TABLE t1;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Check EERWW
 [connection master]
 CREATE TABLE t1(a INT PRIMARY KEY);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Execute transactions on slave
 [connection slave]
 BEGIN;
@@ -184,12 +184,12 @@ INSERT INTO t1 VALUES (5);
 [connection slave1]
 COMMIT;
 # Wait until slave worker has failed due to duplicate entry
-include/wait_for_slave_param.inc [Last_Errno]
+include/wait_for_slave_param.inc [Last_Errno FOR CHANNEL 'test']
 # Release other worker threads
 [connection slave]
 ROLLBACK;
 # Wait for all worker threads to exit
-include/wait_for_slave_param.inc [Slave_SQL_Running]
+include/wait_for_slave_param.inc [Slave_SQL_Running FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 3 values]
 # Delete conflicting transactions on slave
 [connection slave]
@@ -197,19 +197,19 @@ BEGIN;
 DELETE FROM t1 WHERE a = 3;
 COMMIT;
 # Start slave sql thread
-include/start_slave_sql.inc
-include/wait_for_slave_param.inc [Slave_SQL_Running_State]
+include/start_slave_sql.inc [FOR CHANNEL 'test']
+include/wait_for_slave_param.inc [Slave_SQL_Running_State FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 5 rows]
 [connection master]
 # Removing debug point 'set_commit_parent_100' from @@GLOBAL.debug
 DROP TABLE t1;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Check EWREE
 [connection master]
 CREATE TABLE t1(a INT PRIMARY KEY);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Execute transactions on slave
 [connection slave]
 BEGIN;
@@ -232,12 +232,12 @@ INSERT INTO t1 VALUES (5);
 [connection slave1]
 COMMIT;
 # Wait until slave worker has failed due to duplicate entry
-include/wait_for_slave_param.inc [Last_Errno]
+include/wait_for_slave_param.inc [Last_Errno FOR CHANNEL 'test']
 # Release other worker threads
 [connection slave]
 ROLLBACK;
 # Wait for all worker threads to exit
-include/wait_for_slave_param.inc [Slave_SQL_Running]
+include/wait_for_slave_param.inc [Slave_SQL_Running FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 3 values]
 # Delete conflicting transactions on slave
 [connection slave]
@@ -247,19 +247,19 @@ DELETE FROM t1 WHERE a = 4;
 DELETE FROM t1 WHERE a = 5;
 COMMIT;
 # Start slave sql thread
-include/start_slave_sql.inc
-include/wait_for_slave_param.inc [Slave_SQL_Running_State]
+include/start_slave_sql.inc [FOR CHANNEL 'test']
+include/wait_for_slave_param.inc [Slave_SQL_Running_State FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 5 rows]
 [connection master]
 # Removing debug point 'set_commit_parent_100' from @@GLOBAL.debug
 DROP TABLE t1;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Check EWREW
 [connection master]
 CREATE TABLE t1(a INT PRIMARY KEY);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Execute transactions on slave
 [connection slave]
 BEGIN;
@@ -281,12 +281,12 @@ INSERT INTO t1 VALUES (5);
 [connection slave1]
 COMMIT;
 # Wait until slave worker has failed due to duplicate entry
-include/wait_for_slave_param.inc [Last_Errno]
+include/wait_for_slave_param.inc [Last_Errno FOR CHANNEL 'test']
 # Release other worker threads
 [connection slave]
 ROLLBACK;
 # Wait for all worker threads to exit
-include/wait_for_slave_param.inc [Slave_SQL_Running]
+include/wait_for_slave_param.inc [Slave_SQL_Running FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 3 values]
 # Delete conflicting transactions on slave
 [connection slave]
@@ -295,19 +295,19 @@ DELETE FROM t1 WHERE a = 3;
 DELETE FROM t1 WHERE a = 4;
 COMMIT;
 # Start slave sql thread
-include/start_slave_sql.inc
-include/wait_for_slave_param.inc [Slave_SQL_Running_State]
+include/start_slave_sql.inc [FOR CHANNEL 'test']
+include/wait_for_slave_param.inc [Slave_SQL_Running_State FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 5 rows]
 [connection master]
 # Removing debug point 'set_commit_parent_100' from @@GLOBAL.debug
 DROP TABLE t1;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Check EWRWE
 [connection master]
 CREATE TABLE t1(a INT PRIMARY KEY);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Execute transactions on slave
 [connection slave]
 BEGIN;
@@ -329,12 +329,12 @@ INSERT INTO t1 VALUES (5);
 [connection slave1]
 COMMIT;
 # Wait until slave worker has failed due to duplicate entry
-include/wait_for_slave_param.inc [Last_Errno]
+include/wait_for_slave_param.inc [Last_Errno FOR CHANNEL 'test']
 # Release other worker threads
 [connection slave]
 ROLLBACK;
 # Wait for all worker threads to exit
-include/wait_for_slave_param.inc [Slave_SQL_Running]
+include/wait_for_slave_param.inc [Slave_SQL_Running FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 3 values]
 # Delete conflicting transactions on slave
 [connection slave]
@@ -343,19 +343,19 @@ DELETE FROM t1 WHERE a = 3;
 DELETE FROM t1 WHERE a = 5;
 COMMIT;
 # Start slave sql thread
-include/start_slave_sql.inc
-include/wait_for_slave_param.inc [Slave_SQL_Running_State]
+include/start_slave_sql.inc [FOR CHANNEL 'test']
+include/wait_for_slave_param.inc [Slave_SQL_Running_State FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 5 rows]
 [connection master]
 # Removing debug point 'set_commit_parent_100' from @@GLOBAL.debug
 DROP TABLE t1;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Check EWRWW
 [connection master]
 CREATE TABLE t1(a INT PRIMARY KEY);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 # Execute transactions on slave
 [connection slave]
 BEGIN;
@@ -376,12 +376,12 @@ INSERT INTO t1 VALUES (5);
 [connection slave1]
 COMMIT;
 # Wait until slave worker has failed due to duplicate entry
-include/wait_for_slave_param.inc [Last_Errno]
+include/wait_for_slave_param.inc [Last_Errno FOR CHANNEL 'test']
 # Release other worker threads
 [connection slave]
 ROLLBACK;
 # Wait for all worker threads to exit
-include/wait_for_slave_param.inc [Slave_SQL_Running]
+include/wait_for_slave_param.inc [Slave_SQL_Running FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 3 values]
 # Delete conflicting transactions on slave
 [connection slave]
@@ -389,13 +389,13 @@ BEGIN;
 DELETE FROM t1 WHERE a = 3;
 COMMIT;
 # Start slave sql thread
-include/start_slave_sql.inc
-include/wait_for_slave_param.inc [Slave_SQL_Running_State]
+include/start_slave_sql.inc [FOR CHANNEL 'test']
+include/wait_for_slave_param.inc [Slave_SQL_Running_State FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [Verify table t1 has 5 rows]
 [connection master]
 # Removing debug point 'set_commit_parent_100' from @@GLOBAL.debug
 DROP TABLE t1;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/rpl_end.inc

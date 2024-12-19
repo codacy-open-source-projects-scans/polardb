@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2018, 2022, Oracle and/or its affiliates.
+Copyright (c) 2018, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -482,7 +482,7 @@ int Clone_persist_gtid::write_to_table(uint64_t flush_list_number,
 void Clone_persist_gtid::update_gtid_trx_scn(scn_t new_gtid_trx_scn) {
   auto trx_scn = m_gtid_trx_scn.load();
   /* Noting to do if scn hasn't increased. */
-  if (trx_scn != lizard::SCN_NULL && trx_scn >= new_gtid_trx_scn) {
+  if (trx_scn != SCN_NULL && trx_scn >= new_gtid_trx_scn) {
     ut_ad(trx_scn == new_gtid_trx_scn);
     return;
   }

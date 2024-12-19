@@ -86,7 +86,7 @@ SELECT * FROM mysql.gtid_executed;
 --echo # connection slave
 --echo #
 call mtr.add_suppression("You need to use --log-bin to make --binlog-format work");
-call mtr.add_suppression("Slave SQL for channel '': Error in Xid_log_event: Commit could not "
+call mtr.add_suppression("Slave SQL for channel 'test': Error in Xid_log_event: Commit could not "
                          "be completed, 'Got error -1 - 'Unknown error.*' from storage engine', "
                          "Error_code: MY-001030");
 call mtr.add_suppression("Slave.*Got error -1 .* from storage engine.*Error_code: MY-001030");
@@ -272,7 +272,7 @@ CALL mtr.add_suppression("Statement is unsafe because it is being used inside a 
 # which is not allowed after fix for bug#18789758.
 # Since we are at cleanup stage only, we can
 # ignore the error here in this test script.
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 --let $rpl_only_running_threads= 1
 
 --source include/rpl_end.inc

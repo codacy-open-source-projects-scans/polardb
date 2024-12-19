@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -529,7 +529,10 @@ struct dict_col_t {
   /* End of definitions copied from dtype_t */
   /** @} */
 
-  unsigned ind : 10;        /*!< table column position
+  /* Lizard-4.0: extend ind from 10-bits to 11-bits for Secondary
+     Lizard Columns. See comments of DATA_GPP_NO for more informations.
+  */
+  unsigned ind : 11;        /*!< table column position
                             (starting from 0) */
   unsigned ord_part : 1;    /*!< nonzero if this column
                             appears in the ordering fields
@@ -1277,6 +1280,34 @@ struct dict_index_t {
   scn: The real scn of the creator trx. It's always set as the
        actual value from undo header when it is SCN_NULL */
   txn_index_t txn;
+  /** Lizard-3.0 GPP NO field, virtual or stored by se_private_data
+   *
+   *  1) Always virtual on primary key
+   *  2) Stored on secondary index if DD_GPP_KEY
+   * */
+  dict_field_t *v_gfield{nullptr};
+  uint8_t n_v_gfields;
+
+  /** Number of stored gpp fields. Only in secondary index. */
+  uint8_t n_s_gfields;
+
+  /** Whether have stored gpp_no column capacity. */
+  bool gpp_stored{false};
+  bool is_gstored() const { return gpp_stored; }
+  void set_gstored(bool stored) { gpp_stored = stored; }
+
+  /** The count of successful gpp (Guess Primary Page). */
+  mutable lizard_stats_t::ulint_ctr_1_t gpp_hit;
+  /** The count of failed gpp (Guess Primary Page). */
+  mutable lizard_stats_t::ulint_ctr_1_t gpp_miss;
+
+  void gpp_stat(bool hit) const {
+    if (hit) {
+      gpp_hit.inc();
+    } else {
+      gpp_miss.inc();
+    }
+  }
 
   /** Determine if the index has been committed to the
   data dictionary.
@@ -1349,14 +1380,8 @@ struct dict_index_t {
 
   /** Check whether index can be used by transaction
   @param[in] trx                transaction*/
-  bool is_usable(const trx_t *trx);
-
-  /** Check whether index can be used by an as-of query
-  @param[in] trx            transaction
-  @param[in] as_of_scn      as of scn
-  @param[in] as_of_gcn      as of gcn */
-  bool is_usable_as_of(const trx_t *trx,
-                       lizard::Snapshot_vision *snapshot_vision);
+  bool is_usable(const trx_t *trx,
+                 const lizard::Snapshot_vision *snapshot_vision);
 
   /** Check whether index has any instantly added columns.
   Possible only if table has INSTANT ADD columns and is upgraded.
@@ -2153,7 +2178,7 @@ struct dict_table_t {
   uint32_t total_col_count{0};
 
   /** Set if table is upgraded instant table */
-  unsigned m_upgraded_instant : 1;
+  bool m_upgraded_instant{false};
 
   /** table dynamic metadata status, protected by dict_persist->mutex */
   std::atomic<table_dirty_status> dirty_status;
@@ -2558,13 +2583,11 @@ detect this and will eventually quit sooner. */
   bool has_instant_drop_cols() const { return (get_n_instant_drop_cols() > 0); }
 
   /** Set table to be upgraded table with INSTANT ADD columns in V1. */
-  void set_upgraded_instant() { m_upgraded_instant = 1; }
+  void set_upgraded_instant() { m_upgraded_instant = true; }
 
   /** Checks if table is upgraded table with INSTANT ADD columns in V1.
   @return       true if it is, false otherwise */
-  bool is_upgraded_instant() const {
-    return (m_upgraded_instant == 1) ? true : false;
-  }
+  bool is_upgraded_instant() const { return m_upgraded_instant; }
 
   /** Check whether the table is corrupted.
   @return true if the table is corrupted, otherwise false */
@@ -2587,9 +2610,12 @@ detect this and will eventually quit sooner. */
   @return column name. NOTE: not guaranteed to stay valid if table is
   modified in any way (columns added, etc.). */
   const char *get_col_name(ulint col_nr) const {
-    ut_ad(col_nr < n_def);
+    ut_ad(col_nr < n_def || col_nr == DATA_GPP_NO);
     ut_ad(magic_n == DICT_TABLE_MAGIC_N);
 
+    if (col_nr == DATA_GPP_NO) {
+      return g_col_name();
+    }
     const char *s = col_names;
     if (s) {
       for (ulint i = 0; i < col_nr; i++) {
@@ -2604,10 +2630,12 @@ detect this and will eventually quit sooner. */
   @param[in] pos        position of column
   @return pointer to column object */
   dict_col_t *get_col(uint pos) const {
-    ut_ad(pos < n_def);
+    ut_ad(pos < n_def || pos == DATA_GPP_NO);
     ut_ad(magic_n == DICT_TABLE_MAGIC_N);
 
-    return (cols + pos);
+    /** Lizard-4.0 */
+    return pos == DATA_GPP_NO ? v_gcol : cols + pos;
+    // return (cols + pos);
   }
 
   /** Get column by name
@@ -2725,6 +2753,12 @@ detect this and will eventually quit sooner. */
 
   /** Determine if the table can support instant ADD/DROP COLUMN */
   inline bool support_instant_add_drop() const;
+
+  /** Lizard: two phase purge on table. */
+  bool is_2pp;
+
+  /** Lizard-4.0 hardcode GPP column*/
+  dict_col_t *v_gcol{nullptr};
 };
 
 static inline void DICT_TF2_FLAG_SET(dict_table_t *table, uint32_t flag) {

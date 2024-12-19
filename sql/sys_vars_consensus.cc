@@ -50,6 +50,8 @@ char *opt_cluster_info;
 char *opt_cluster_purged_gtid;
 ulonglong opt_cluster_current_term;
 ulonglong opt_cluster_force_recover_index;
+ulonglong opt_cluster_follower_force_recover_index;
+ulonglong opt_consensus_mts_force_apply_index;
 bool opt_cluster_force_change_meta;
 bool opt_cluster_dump_meta;
 ulonglong opt_consensus_log_cache_size;
@@ -91,6 +93,7 @@ bool opt_consensus_replicate_with_cache_log;
 bool opt_consensus_old_compact_mode;
 bool opt_consensus_leader_stop_apply;
 ulong opt_consensus_leader_stop_apply_time;
+ulonglong opt_consensus_stop_apply_index;
 ulonglong opt_consensus_force_sync_epoch_diff = 0;
 bool opt_consensus_force_recovery;
 bool opt_enable_appliedindex_checker;
@@ -108,6 +111,7 @@ bool opt_consensuslog_revise;
 bool opt_recover_snapshot = false;
 ulong thread_stack_warning = 65536;
 ulong opt_configured_event_scheduler = Events::EVENTS_OFF;
+bool opt_consensus_reset_mts_info = false;
 
 static bool fix_consensus_checksum(sys_var *, THD *, enum_var_type) {
   consensus_ptr->setChecksumMode(opt_consensus_checksum);
@@ -195,6 +199,12 @@ static Sys_var_bool Sys_consensus_leader_stop_apply(
 static Sys_var_ulong Sys_consensus_leader_stop_apply_time(
     "consensus_leader_stop_apply_time", "leader stop apply time",
     GLOBAL_VAR(opt_consensus_leader_stop_apply_time), CMD_LINE(OPT_ARG),
+    VALID_RANGE(0, UINT_MAX), DEFAULT(0), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+
+static Sys_var_ulonglong Sys_consensus_stop_apply_index(
+    "consensus_stop_apply_index", "member stop apply index",
+    GLOBAL_VAR(opt_consensus_stop_apply_index), CMD_LINE(OPT_ARG),
     VALID_RANGE(0, UINT_MAX), DEFAULT(0), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
 

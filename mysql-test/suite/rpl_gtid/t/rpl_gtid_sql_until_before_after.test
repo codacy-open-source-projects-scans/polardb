@@ -56,7 +56,7 @@ while ($i != 11)
 # UNTIL GTID
 --echo Check that START SLAVE IO_THREAD UNTIL ... maintains old behaviour, condition is ignored.
 --replace_result $master_uuid MASTER_UUID
---eval START SLAVE IO_THREAD UNTIL SQL_BEFORE_GTIDS= "$master_uuid:4-5"
+--eval START SLAVE IO_THREAD UNTIL SQL_BEFORE_GTIDS= "$master_uuid:4-5" for channel 'test'
 
 --echo Wait until IO Thread reads all master binlog and stop slave.
 --let $slave_param= Retrieved_Gtid_Set
@@ -66,7 +66,7 @@ while ($i != 11)
 
 --echo SQL thread must stop *before* INSERT 4
 --replace_result $master_uuid MASTER_UUID
---eval START SLAVE SQL_THREAD UNTIL SQL_BEFORE_GTIDS= "$master_uuid:4-5"
+--eval START SLAVE SQL_THREAD UNTIL SQL_BEFORE_GTIDS= "$master_uuid:4-5" for channel 'test'
 --source include/wait_for_slave_sql_to_stop.inc
 --let $assert_cond= MAX(c1)=3 FROM t1
 --let $assert_text= Rows until 3 in t1 must be replicated now
@@ -78,7 +78,7 @@ while ($i != 11)
 # when MTS is enabled and server will be started in single threaded mode.
 --disable_warnings
 --replace_result $master_uuid MASTER_UUID
---eval START SLAVE SQL_THREAD UNTIL SQL_AFTER_GTIDS= "$master_uuid:4-5"
+--eval START SLAVE SQL_THREAD UNTIL SQL_AFTER_GTIDS= "$master_uuid:4-5" for channel 'test'
 --enable_warnings
 --source include/wait_for_slave_sql_to_stop.inc
 --let $assert_cond= MAX(c1)=5 FROM t1
@@ -87,7 +87,7 @@ while ($i != 11)
 
 --echo SQL thread must stop *before* INSERT 6
 --replace_result $master_uuid MASTER_UUID
---eval START SLAVE SQL_THREAD, IO_THREAD UNTIL SQL_BEFORE_GTIDS= "$master_uuid:2-7"
+--eval START SLAVE SQL_THREAD, IO_THREAD UNTIL SQL_BEFORE_GTIDS= "$master_uuid:2-7" for channel 'test'
 --source include/wait_for_slave_sql_to_stop.inc
 --let $assert_cond= MAX(c1)=5 FROM t1
 --let $assert_text= Rows until 5 in t1 must be replicated now
@@ -100,7 +100,7 @@ while ($i != 11)
 # when MTS is enabled and server will be started in single threaded mode.
 --disable_warnings
 --replace_result $master_uuid MASTER_UUID
---eval START SLAVE SQL_THREAD, IO_THREAD UNTIL SQL_AFTER_GTIDS= "$master_uuid:1-5"
+--eval START SLAVE SQL_THREAD, IO_THREAD UNTIL SQL_AFTER_GTIDS= "$master_uuid:1-5" for channel 'test'
 --enable_warnings
 --source include/wait_for_slave_sql_to_stop.inc
 --let $assert_cond= MAX(c1)=5 FROM t1
@@ -110,7 +110,7 @@ while ($i != 11)
 --echo SQL thread must stop *before* INSERT 10
 --replace_result $master_uuid MASTER_UUID
 --enable_query_log
---eval START SLAVE UNTIL SQL_BEFORE_GTIDS= "$master_uuid:10"
+--eval START SLAVE UNTIL SQL_BEFORE_GTIDS= "$master_uuid:10" for channel 'test'
 --source include/wait_for_slave_sql_to_stop.inc
 --let $assert_cond= MAX(c1)=9 FROM t1
 --let $assert_text= Rows until 9 in t1 must be replicated now
@@ -119,7 +119,7 @@ while ($i != 11)
 --echo SQL thread must stop *before* INSERT 3-6
 --echo 3-6 is already applied so it will stop immediately
 --replace_result $master_uuid MASTER_UUID
---eval START SLAVE UNTIL SQL_BEFORE_GTIDS= "$master_uuid:3-6"
+--eval START SLAVE UNTIL SQL_BEFORE_GTIDS= "$master_uuid:3-6" for channel 'test'
 --source include/wait_for_slave_sql_to_stop.inc
 --let $assert_cond= MAX(c1)=9 FROM t1
 --let $assert_text= Rows until 9 in t1 must be replicated now
@@ -128,7 +128,7 @@ while ($i != 11)
 --echo SQL thread must stop *before* INSERT 9
 --echo 9 is already applied so it will stop immediately
 --replace_result $master_uuid MASTER_UUID
---eval START SLAVE UNTIL SQL_BEFORE_GTIDS= "$master_uuid:9"
+--eval START SLAVE UNTIL SQL_BEFORE_GTIDS= "$master_uuid:9" for channel 'test'
 --source include/wait_for_slave_sql_to_stop.inc
 --let $assert_cond= MAX(c1)=9 FROM t1
 --let $assert_text= Rows until 9 in t1 must be replicated now
@@ -138,7 +138,7 @@ while ($i != 11)
 --source include/start_slave.inc
 --replace_result $master_uuid MASTER_UUID
 --disable_result_log
---eval SELECT WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS('$master_uuid:10')
+--eval SELECT WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS('$master_uuid:10', 0, 'test')
 --enable_result_log
 --let $assert_cond= MAX(c1)=10 FROM t1
 --let $assert_text= Rows until 10 in t1 must be replicated now
@@ -155,14 +155,14 @@ SET @save_sql_mode=@@SESSION.SQL_MODE;
 SET @@SESSION.SQL_MODE="STRICT_ALL_TABLES";
 --replace_result $master_uuid MASTER_UUID
 --error ER_WRONG_ARGUMENTS
---eval SELECT WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS('$master_uuid:100', -1);
+--eval SELECT WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS('$master_uuid:100', -1, 'test');
 
 --echo When SQL_MODE is non-strict mode the function executes
 --echo same as in strict SQL_MODE and generates WRONG_ARGUMENTS error.
 SET @@SESSION.SQL_MODE="";
 --replace_result $master_uuid MASTER_UUID
 --error ER_WRONG_ARGUMENTS
---eval SELECT WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS('$master_uuid:100', -1);
+--eval SELECT WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS('$master_uuid:100', -1, 'test');
 SET @@SESSION.SQL_MODE=@save_sql_mode;
 
 --echo Test WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS function with fractional timeout
@@ -172,7 +172,7 @@ SET @@SESSION.SQL_MODE=@save_sql_mode;
 --echo atleast 0.4 seconds (or till all the specified  gtids are executed).
 --echo Also check that function returns -1 if the timeout has been exceeded.
 --let $assert_text= WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS returns -1 if the timeout has been exceeded.
---let $query_result= query_get_value("SELECT WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS('$master_uuid:100', 0.4) AS VALUE", VALUE, 1)
+--let $query_result= query_get_value("SELECT WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS('$master_uuid:100', 0.4, 'test') AS VALUE", VALUE, 1)
 --let $assert_cond= "$query_result" = "-1"
 --source include/assert.inc
 

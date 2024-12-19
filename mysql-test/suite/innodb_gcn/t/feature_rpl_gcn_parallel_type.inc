@@ -9,6 +9,7 @@
 SET GLOBAL replica_parallel_workers = 0;
 --enable_warnings
 --source include/start_slave.inc
+--let $xid_suffix=no_mts$xid_suffix_2
 
 --source suite/innodb_gcn/t/feature_rpl_gcn.inc
 
@@ -23,6 +24,7 @@ SET GLOBAL replica_parallel_type = 'DATABASE';
 SET GLOBAL replica_parallel_workers = 4;
 --enable_warnings
 --source include/start_slave.inc
+--let $xid_suffix=mts_by_db$xid_suffix_2
 
 --source suite/innodb_gcn/t/feature_rpl_gcn.inc
 
@@ -37,6 +39,7 @@ SET GLOBAL replica_parallel_type = 'LOGICAL_CLOCK';
 SET GLOBAL replica_parallel_workers = 4;
 --enable_warnings
 --source include/start_slave.inc
+--let $xid_suffix=mts_by_lc$xid_suffix_2
 
 --source suite/innodb_gcn/t/feature_rpl_gcn.inc
 

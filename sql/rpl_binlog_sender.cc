@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2013, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -1592,7 +1592,7 @@ uint32 Binlog_sender::find_first_user_event_timestamp(File_reader *reader,
     if (!Log_event::is_local_event_type(
             static_cast<Log_event_type>(event_ptr[EVENT_TYPE_OFFSET]))) {
       create_time = uint4korr(event_ptr);
-#ifndef DBUG_OFF
+#ifndef NDEBUG
       xp::info(ER_XP_APPLIER)
           << "Binlog first user event timestamp is " << create_time;
 #endif
@@ -1611,19 +1611,22 @@ uint32 Binlog_sender::find_first_user_event_timestamp(File_reader *reader,
   PolarDB-X Engine: checkCommitIndex to make sure only send committed log
 */
 int Binlog_sender::wait_commit_index_update(my_off_t log_pos, uint64_t index) {
-#ifndef DBUG_OFF
+#ifndef NDEBUG
   ulong hb_info_counter = 0;
 #endif
   longlong sec_cnt = 0;
   bool hb_send = false;
   String tmp;
-  uint64_t current_index;
   /* heartbeat period is measured by second */
   uint ratio =
       std::max(1000000ULL / opt_consensus_check_commit_index_interval, 1ULL);
   //TODO@yanhua, need use strong check like check_exec_consensus_log_end_condition
   while (consensus_ptr->checkCommitIndex(
              index - 1, consensus_log_manager.get_current_term()) < index) {
+
+    if (unlikely(flush_net()))
+      return 1;
+
     my_sleep(opt_consensus_check_commit_index_interval);
     if (unlikely(m_thd->killed)) return 1;
     // send heartbeat event
@@ -1631,7 +1634,7 @@ int Binlog_sender::wait_commit_index_update(my_off_t log_pos, uint64_t index) {
       sec_cnt++;
       if (m_heartbeat_period.count() == (sec_cnt / ratio)) {
         sec_cnt = 0;
-#ifndef DBUG_OFF
+#ifndef NDEBUG
         if (hb_info_counter < 3) {
           xp::info(ER_XP_APPLIER) << "master sends heartbeat message";
           hb_info_counter++;
@@ -1650,15 +1653,14 @@ int Binlog_sender::wait_commit_index_update(my_off_t log_pos, uint64_t index) {
       }
     }
   }
-  current_index = index;
   if (hb_send) {
     /* Restore the copy back. */
     m_packet.copy(tmp);
     m_packet.length(tmp.length());
   }
-  assert(current_index <= consensus_ptr->getCommitIndex());
-#ifndef DBUG_OFF
-  xp::info(ER_XP_APPLIER) << "master sends consensus index " << current_index;
+  assert(index <= consensus_ptr->getCommitIndex());
+#ifndef NDEBUG
+  xp::info(ER_XP_APPLIER) << "master sends consensus index " << index;
 #endif
 
   return 0;

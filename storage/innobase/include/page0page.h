@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -368,6 +368,10 @@ static inline ulint page_rec_get_heap_no(
 @param[in]      page    page frame
 @return true if the page is a root page of an index */
 [[nodiscard]] static inline bool page_is_root(const page_t *page);
+/** Determine whether a page has any siblings.
+@param[in]      page    page frame
+@return true if the page has any siblings */
+[[nodiscard]] static inline bool page_has_siblings(const page_t *page);
 /** Determine whether the page contains garbage.
  @return true if the page contains garbage (PAGE_GARBAGE is not 0) */
 [[nodiscard]] static inline bool page_has_garbage(

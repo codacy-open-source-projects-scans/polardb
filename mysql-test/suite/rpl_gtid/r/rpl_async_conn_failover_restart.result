@@ -27,17 +27,17 @@ include/assert.inc ['Asynchronous Replication Connection Failover is disabled']
 #    performance_schema.replication_connection_configuration.
 #
 # Adding debug point 'async_conn_failover_disable_weight_check' to @@GLOBAL.debug
-include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_CONNECT_RETRY=1, SOURCE_RETRY_COUNT=2, SOURCE_CONNECTION_AUTO_FAILOVER=1;
-include/start_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
+CHANGE REPLICATION SOURCE TO SOURCE_CONNECT_RETRY=1, SOURCE_RETRY_COUNT=2, SOURCE_CONNECTION_AUTO_FAILOVER=1 for channel "test";
+include/start_slave.inc [FOR CHANNEL 'test']
 include/assert.inc ['Asynchronous Replication Connection Failover is enabled']
 #
 # 4. Add asynchronous connection failover server. Verify that they are
 #    inserted successfully in
 #    performance_schema.replication_asynchronous_connection_failover.
 #
-SELECT asynchronous_connection_failover_add_source('', '127.0.0.1', SERVER_MYPORT_3, '', 50);;
-asynchronous_connection_failover_add_source('', '127.0.0.1', SERVER_MYPORT_3, '', 50)
+SELECT asynchronous_connection_failover_add_source('test', '127.0.0.1', SERVER_MYPORT_3, '', 50);;
+asynchronous_connection_failover_add_source('test', '127.0.0.1', SERVER_MYPORT_3, '', 50)
 The UDF asynchronous_connection_failover_add_source() executed successfully.
 include/assert.inc ['There are three rows in performance_schema.replication_asynchronous_connection_failover']
 #
@@ -49,7 +49,7 @@ include/rpl_start_server.inc [server_number=2]
 # Adding debug point 'async_conn_failover_crash' to @@GLOBAL.debug
 include/rpl_stop_server.inc [server_number=1]
 include/rpl_reconnect.inc
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 #
 # 6. Verify that asynchronous replication channel gets connected to
 #    server 3 and also verify that asynchronous replication tries
@@ -60,13 +60,12 @@ include/assert_grep.inc [Assert that the IO thread tried five times connecting t
 # 7. Clean up
 #
 [connection server_2]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 include/rpl_reset_slave.inc
-SELECT asynchronous_connection_failover_delete_source('', '127.0.0.1', SERVER_MYPORT_3, '');;
-asynchronous_connection_failover_delete_source('', '127.0.0.1', SERVER_MYPORT_3, '')
+SELECT asynchronous_connection_failover_delete_source('test', '127.0.0.1', SERVER_MYPORT_3, '');;
+asynchronous_connection_failover_delete_source('test', '127.0.0.1', SERVER_MYPORT_3, '')
 The UDF asynchronous_connection_failover_delete_source() executed successfully.
 DROP TABLE t1;
 [connection server_1]
 include/rpl_start_server.inc [server_number=1]
 DROP TABLE t1;
-include/rpl_end.inc

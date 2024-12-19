@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -129,6 +129,7 @@ typedef ulonglong sql_mode_t;
 struct db_worker_hash_entry;
 
 extern "C" MYSQL_PLUGIN_IMPORT char server_version[SERVER_VERSION_LENGTH];
+extern "C" MYSQL_PLUGIN_IMPORT char polardb_version[SERVER_VERSION_LENGTH];
 #if defined(MYSQL_SERVER)
 int ignored_error_code(int err_code);
 #endif
@@ -437,6 +438,8 @@ struct PRINT_EVENT_INFO {
   my_thread_id thread_id;
   bool thread_id_printed;
   uint8_t default_table_encryption;
+  uint8_t opt_flashback_area;
+  uint8_t opt_index_format_gpp_enabled;
 
   PRINT_EVENT_INFO();
 
@@ -1517,6 +1520,14 @@ class Query_log_event : public virtual binary_log::Query_event,
   /** Whether or not the statement represented by this event requires
       `Q_DEFAULT_TABLE_ENCRYPTION` to be logged along aside. */
   bool needs_default_table_encryption{false};
+
+  /** Whether or not the statement represented by this event requires
+      `Q_OPT_FLASHBACK_AREA` to be logged along aside. */
+  bool need_opt_flashback_area{false};
+
+  /** Whether or not the statement represented by this event requires
+      `Q_OPT_INDEX_FORMAT_GPP_ENABLED` to be logged along aside. */
+  bool need_opt_index_format_gpp_enabled{false};
 };
 
 /**

@@ -23,26 +23,26 @@ CREATE USER u1 IDENTIFIED BY 'Root@123';
 #
 # 6. Start replica
 [connection slave]
-call mtr.add_suppression("Slave SQL for channel '': ... The slave coordinator and worker threads are stopped.*");
-call mtr.add_suppression("Slave SQL for channel '':.*failed executing transaction.*");
-call mtr.add_suppression("Slave SQL for channel '': Error 'Table 'mysql.time_zone' doesn't exist' on query.*");
+call mtr.add_suppression("Slave SQL for channel 'test': ... The slave coordinator and worker threads are stopped.*");
+call mtr.add_suppression("Slave SQL for channel 'test':.*failed executing transaction.*");
+call mtr.add_suppression("Slave SQL for channel 'test': Error 'Table 'mysql.time_zone' doesn't exist' on query.*");
 call mtr.add_suppression("Slave: Unknown or incorrect time zone: 'UTC'.*");
-include/start_slave_io.inc
-include/wait_for_slave_io_to_start.inc
-START REPLICA SQL_THREAD;
+include/start_slave_io.inc [FOR CHANNEL 'test']
+include/wait_for_slave_io_to_start.inc [FOR CHANNEL 'test']
+START REPLICA SQL_THREAD for channel 'test';
 #
 # 7. Verify that replica sql thread failed with error
-include/wait_for_slave_sql_error.inc [errno=1146]
+include/wait_for_slave_sql_error.inc [errno=1146 FOR CHANNEL 'test']
 #
 # 8. Cleanup
-include/stop_slave_io.inc
+include/stop_slave_io.inc [FOR CHANNEL 'test']
 RESET REPLICA ALL;
-CHANGE REPLICATION SOURCE TO SOURCE_USER= 'root', SOURCE_HOST= "127.0.0.1", SOURCE_PORT= MASTER_MYPORT;;
+CHANGE REPLICATION SOURCE TO SOURCE_USER= 'root', SOURCE_HOST= "127.0.0.1", SOURCE_PORT= MASTER_MYPORT for channel "test";;
 Warnings:
 Note	1759	Sending passwords in plain text without SSL/TLS is extremely insecure.
 Note	1760	Storing MySQL user name or password information in the master info repository is not secure and is therefore not recommended. Please consider using the USER and PASSWORD connection options for START SLAVE; see the 'START SLAVE Syntax' in the MySQL Manual for more information.
 RENAME TABLE mysql.time_zone_bkup TO mysql.time_zone;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 DROP USER u1;
 DROP DATABASE db1;

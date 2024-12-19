@@ -1,4 +1,4 @@
-/* Copyright (c) 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -110,12 +110,6 @@ void Sql_cmd_xa_second_phase::release_locks() const {
   assert(this->m_detached_trx_context != nullptr);
   auto detached_xs = this->m_detached_trx_context->xid_state();
   detached_xs->get_xa_lock().unlock();
-}
-
-void Sql_cmd_xa_second_phase::attach_again() {
-  assert(this->m_detached_trx_context != nullptr);
-  auto detached_xs = this->m_detached_trx_context->xid_state();
-  detached_xs->attach_again();
 }
 
 void Sql_cmd_xa_second_phase::setup_thd_context(THD *thd) {

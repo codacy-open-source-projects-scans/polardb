@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -96,6 +96,9 @@ purge_node_t *row_purge_node_create(que_thr_t *parent, mem_heap_t *heap) {
 
   node->recs = nullptr;
   node->init();
+
+  node->is_2pp = false;
+  node->phase = lizard::PURGE_HISTORY_LIST;
 
   return (node);
 }
@@ -238,11 +241,17 @@ func_exit:
 /** Removes a clustered index record if it has not been modified after the
  delete marking.
  @retval true if the row was not found, or it was successfully removed
+              or pretend to be removed successfully because it's 2PC-Purge
  @retval false the purge needs to be suspended because of running out
  of file space. */
 [[nodiscard]] static bool row_purge_remove_clust_if_poss(
     purge_node_t *node) /*!< in/out: row purge node */
 {
+  if ((node->is_2pp && node->phase == lizard::PURGE_HISTORY_LIST) ||
+      (!node->is_2pp && node->phase == lizard::PURGE_SP_LIST)) {
+    return (true);
+  }
+
   if (row_purge_remove_clust_if_poss_low(node, BTR_MODIFY_LEAF)) {
     return (true);
   }
@@ -276,18 +285,23 @@ func_exit:
  @return true if the secondary index record can be purged */
 bool row_purge_poss_sec(purge_node_t *node,    /*!< in/out: row purge node */
                         dict_index_t *index,   /*!< in: secondary index */
-                        const dtuple_t *entry) /*!< in: secondary index entry */
+                        const dtuple_t *entry, /*!< in: secondary index entry */
+                        btr_cur_t *cur) /*!< in: cursor on secondary index */
 {
   bool can_delete;
+  bool found_clust;
   mtr_t mtr;
 
   ut_ad(!index->is_clustered());
   mtr_start(&mtr);
 
-  can_delete =
-      !row_purge_reposition_pcur(BTR_SEARCH_LEAF, node, &mtr) ||
-      !row_vers_old_has_index_entry(true, node->pcur.get_rec(), &mtr, index,
-                                    entry, node->roll_ptr, node->trx_id);
+  found_clust = lizard::row_purge_optimistic_reposition_pcur(BTR_SEARCH_LEAF,
+                                                             node, cur, &mtr) ||
+                row_purge_reposition_pcur(BTR_SEARCH_LEAF, node, &mtr);
+
+  can_delete = !found_clust || !row_vers_old_has_index_entry(
+                                   true, node->pcur.get_rec(), &mtr, index,
+                                   entry, node->roll_ptr, node->trx_id);
 
   /* Persistent cursor is closed if reposition fails. */
   if (node->found_clust) {
@@ -373,7 +387,7 @@ index tree.  Does not try to buffer the delete.
   which cannot be purged yet, requires its existence. If some requires,
   we should do nothing. */
 
-  if (row_purge_poss_sec(node, index, entry)) {
+  if (row_purge_poss_sec(node, index, entry, btr_cur)) {
     /* Remove the index record, which should have been
     marked for deletion. */
     if (!rec_get_deleted_flag(btr_cur_get_rec(btr_cur),
@@ -501,7 +515,7 @@ if possible.
     case ROW_FOUND:
       /* Before attempting to purge a record, check
       if it is safe to do so. */
-      if (row_purge_poss_sec(node, index, entry)) {
+      if (row_purge_poss_sec(node, index, entry, pcur.get_btr_cur())) {
         btr_cur_t *btr_cur = pcur.get_btr_cur();
 
         /* Only delete-marked records should be purged. */
@@ -590,6 +604,11 @@ static inline void row_purge_remove_sec_if_poss(
     /* The node->row must have lacked some fields of this
     index. This is possible when the undo log record was
     written before this index was created. */
+    return;
+  }
+
+  if (node->phase == lizard::PURGE_SP_LIST) {
+    /** Do not do purge seconary when erasing sp list. */
     return;
   }
 
@@ -745,6 +764,10 @@ static void row_purge_upd_exist_or_extern_func(IF_DEBUG(const que_thr_t *thr, )
   mem_heap_free(heap);
 
 skip_secondaries:
+  if ((node->is_2pp && node->phase == lizard::PURGE_HISTORY_LIST) ||
+      (!node->is_2pp && node->phase == lizard::PURGE_SP_LIST)) {
+    return;
+  }
 
   /* Free possible externally stored fields */
   for (ulint i = 0; i < upd_get_n_fields(node->update); i++) {
@@ -861,7 +884,8 @@ static bool row_purge_parse_undo_rec(purge_node_t *node,
   ut_ad(thr != nullptr);
 
   ptr = trx_undo_rec_get_pars(undo_rec, &type, &node->cmpl_info, updated_extern,
-                              &undo_no, &table_id, type_cmpl);
+                              &undo_no, &table_id, &node->is_2pp,
+                              type_cmpl);
 
   node->rec_type = type;
 
@@ -1067,6 +1091,7 @@ try_again:
   if (!(node->cmpl_info & UPD_NODE_NO_ORD_CHANGE)) {
     ptr = trx_undo_rec_get_partial_row(
         ptr, clust_index, &node->row, type == TRX_UNDO_UPD_DEL_REC, node->heap);
+    lizard::row_purge_alloc_gpp_field(node);
   }
 
   return (true);

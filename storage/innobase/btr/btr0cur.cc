@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 Copyright (c) 2008, Google Inc.
 Copyright (c) 2012, Facebook Inc.
 
@@ -53,6 +53,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include <assert.h>
 
+#include "lizard0mtr0log.h"
 #include "my_dbug.h"
 
 #ifndef UNIV_HOTBACKUP
@@ -912,7 +913,7 @@ void btr_cur_search_to_nth_level(
 #ifdef PAGE_CUR_LE_OR_EXTENDS
       ut_ad(mode == PAGE_CUR_L || mode == PAGE_CUR_LE ||
             RTREE_SEARCH_MODE(mode) || mode == PAGE_CUR_LE_OR_EXTENDS);
-#else  /* PAGE_CUR_LE_OR_EXTENDS */
+#else /* PAGE_CUR_LE_OR_EXTENDS */
       ut_ad(mode == PAGE_CUR_L || mode == PAGE_CUR_LE ||
             RTREE_SEARCH_MODE(mode));
 #endif /* PAGE_CUR_LE_OR_EXTENDS */
@@ -1004,7 +1005,7 @@ retry_page_get:
         ut_ad(fetch == Page_fetch::IF_IN_POOL_OR_WATCH);
         ut_ad(!dict_index_is_spatial(index));
 
-        if (!row_purge_poss_sec(cursor->purge_node, index, tuple)) {
+        if (!row_purge_poss_sec(cursor->purge_node, index, tuple, nullptr)) {
           /* The record cannot be purged yet. */
           cursor->flag = BTR_CUR_DELETE_REF;
         } else if (ibuf_insert(IBUF_OP_DELETE, tuple, index, page_id, page_size,
@@ -3170,8 +3171,7 @@ void btr_cur_update_in_place_log(ulint flags, const rec_t *rec,
 
   const bool opened = mlog_open_and_write_index(
       mtr, rec, index, MLOG_REC_UPDATE_IN_PLACE,
-      1 + DATA_ROLL_PTR_LEN + 14 + 2 + MLOG_BUF_MARGIN + DATA_UNDO_PTR_LEN +
-          DATA_GCN_ID_LEN + 14,
+      1 + REDO_SYS_FIELDS_LEN + REDO_LIZARD_FIELDS_LEN + 2 + MLOG_BUF_MARGIN,
       log_ptr);
 
   if (!opened) {
@@ -3482,19 +3482,14 @@ dberr_t btr_cur_update_in_place(ulint flags, btr_cur_t *cursor, ulint *offsets,
 
   if (thr) {
     trx = thr_get_trx(thr);
-    txn_rec.trx_id = trx->id;
-    txn_rec.scn = trx->txn_desc.cmmt.scn;
-    txn_rec.undo_ptr = trx->txn_desc.undo_ptr;
-    txn_rec.gcn = trx->txn_desc.cmmt.gcn;
+    txn_rec = {trx->id, trx->txn_desc.cmmt.scn, trx->txn_desc.undo_ptr,
+               trx->txn_desc.cmmt.gcn};
   } else {
     /** We found a case: update innodb_dynamic_metadata, flags will be
     set as BTR_KEEP_SYS_FLAG | ... , and trx is NULL. flags will also
     be written to redo log, and in recovery, the sys columns will be
     kept intact. */
-    txn_rec.trx_id = trx_id;
-    txn_rec.scn = 0;
-    txn_rec.undo_ptr = 0;
-    txn_rec.gcn = 0;
+    txn_rec = {trx_id, 0, 0, 0};
   }
 
   btr_cur_update_in_place_log(flags, rec, index, update, trx_id, roll_ptr,
@@ -4286,7 +4281,7 @@ static inline void btr_cur_del_mark_set_clust_rec_log(
 
   const bool opened = mlog_open_and_write_index(
       mtr, rec, index, MLOG_REC_CLUST_DELETE_MARK,
-      1 + 1 + DATA_ROLL_PTR_LEN + 14 + 2 + DATA_UNDO_PTR_LEN + 14, log_ptr);
+      1 + 1 + REDO_SYS_FIELDS_LEN + REDO_LIZARD_FIELDS_LEN + 2, log_ptr);
 
   if (!opened) {
     /* Logging in mtr is switched off during crash recovery */

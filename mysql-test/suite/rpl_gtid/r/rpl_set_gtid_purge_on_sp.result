@@ -7,7 +7,7 @@ Note	####	Storing MySQL user name or password information in the master info rep
 # 1. We create a table on server 1 for check purposes and extract its id
 [connection master]
 CREATE TABLE t1 (a INT PRIMARY KEY);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 #
 # 2. On the replica create a storage procedure that uses the `root` user
 #    security context to SET GTID_PURGED
@@ -36,7 +36,7 @@ include/assert.inc [@@GLOBAL.GTID_PURGED has changed]
 [connection master]
 INSERT INTO t1 values (2);
 INSERT INTO t1 values (3);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [Only one transaction was replicated]
 #
 # 6. Cleanup

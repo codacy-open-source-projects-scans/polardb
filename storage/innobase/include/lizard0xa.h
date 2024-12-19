@@ -120,18 +120,65 @@ extern bool trx_slot_check_validity(const trx_t *trx);
 /** Get XID of an external xa from THD.
 @param[in]      THD   thd
 @return nullptr if no external xa. */
-extern const XID *trx_slot_get_xa_xid_from_thd(THD *thd);
+extern const XID *get_external_xid_from_thd(THD *thd);
+
+/**
+  Search detached prepare XA transaction info by XID. NOTES:
+  Assume holding xid_state lock, can't happen parallel rollback or commit.
+
+  @param[in]  XID   xid
+  @param[out] info  XA trx info
+
+  @return true if found.
+          false if not found.
+*/
+extern bool trx_search_detach_prepare_by_xid(const XID *xid, MyXAInfo *info);
+
+/**
+  Search rollbacking trx in background by XID. If found, such a transaction is
+  considered as ATTACHED.
+
+  @param[in]  XID   xid
+  @param[out] info  XA trx info
+
+  @return true if found.
+          false if not found.
+*/
+extern bool trx_search_rollback_background_by_xid(const XID *xid,
+                                                  MyXAInfo *info);
 
 /**
   Find transactions in the finalized state by XID.
 
-  @params[in] xid               XID
-  @param[out] Transaction_info  Corresponding transaction info
+  @params[in]   xid               XID
+  @params[out]  info              Corresponding transaction info
 
   @retval     true if the corresponding transaction is found, false otherwise.
 */
-bool trx_search_by_xid(const XID *xid, Transaction_info *info);
+bool trx_search_history_by_xid(const XID *xid, MyXAInfo *info);
+
 }  // namespace xa
+
+/**
+  Decide (external/internal) XA releated status when prepare, including
+  PROPOSAL_GCN, CSR and others.
+
+  @params[in]       trx               releated trx
+  @params[in/out]   gcn               MyGCN that will be decided
+*/
+extern void decide_xa_when_prepare(MyGCN *gcn);
+
+/**
+  Decide (external/internal) XA releated status when commit, including
+  COMMIT_GCN, CSR, XA_MASTER_ADDR and others.
+
+  @params[in]       trx               releated trx
+  @params[in/out]   gcn               MyGCN that will be decided
+  @params[in/out]   master_addr       XA master address for AC
+*/
+extern void decide_xa_when_commit(const trx_t *trx, MyGCN *gcn,
+                                  xa_addr_t *master_addr);
+
 }  // namespace lizard
 
 #endif

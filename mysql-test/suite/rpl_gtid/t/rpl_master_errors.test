@@ -10,7 +10,7 @@ call mtr.add_suppression(".* You need to use --log-bin to make .* work.");
 CALL mtr.add_suppression("Failed to open log");
 --sync_slave_with_master
 --source include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 0;
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 0 for channel "test";
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
 
@@ -95,7 +95,7 @@ FLUSH BINARY LOGS;
 --let $debug_point= request_source_log_pos_3
 --source include/add_debug_point.inc
 
-START SLAVE IO_THREAD;
+START SLAVE IO_THREAD for channel 'test';
 --let $slave_io_errno= 13114
 call mtr.add_suppression(".* Got fatal error 1236 from master when reading data from binary log");
 --source include/wait_for_slave_io_error.inc
@@ -165,6 +165,6 @@ DROP TABLE t1;
 
 --source include/rpl_connection_slave.inc
 RESET MASTER;
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 --source include/start_slave.inc
 --source include/rpl_end.inc

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -772,6 +772,12 @@ struct upd_node_t {
   uint32_t upd_multi_val_pos;
 
   ulint magic_n;
+
+  /* Lizard-4.0: guess primary page no.
+     These are for newly inserted records, we just ignore the old record's gpp.
+   */
+  byte *gpp_no_buf;
+  gpp_no_t gpp_no;
 };
 
 constexpr uint32_t UPD_NODE_MAGIC_N = 1579975;

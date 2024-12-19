@@ -31,10 +31,17 @@
 #include "lizard0ha_innodb.h"
 #include "lizard0undo.h"
 #include "lizard0xa.h"
+#include "lizard0dict.h"
 
 #include <sql_class.h>
-#include "sql/package/proc_undo_purge.h"
 #include "sql/xa/lizard_xa_trx.h"
+#include "lizard0erase.h"
+#include "sql/package/proc_gpp.h"
+
+#include "libbinlogevents/include/gcn_event.h"
+#include "sql/lizard/lizard_service.h"
+
+extern trx_t *thd_to_trx_if_have(THD *thd);
 
 /**
   Compare whether the xid in thd is the same as the xid in trx (and aslo in
@@ -85,8 +92,10 @@ static bool innobase_start_trx_for_xa(handlerton *hton, THD *thd, bool rw) {
   return false;
 }
 
-bool innobase_assign_slot_for_xa(THD *thd, my_slot_ptr_t *slot_ptr_arg) {
-  slot_ptr_t *slot_ptr = static_cast<my_slot_ptr_t *>(slot_ptr_arg);
+bool innobase_assign_slot_for_xa(THD *thd, slot_ptr_t *slot_ptr_arg,
+                                 trx_id_t *trx_id_arg) {
+  slot_ptr_t *slot_ptr = static_cast<slot_ptr_t *>(slot_ptr_arg);
+  trx_id_t *trx_id = static_cast<trx_id_t *>(trx_id_arg);
   trx_t *trx = check_trx_exists(thd);
 
   /** check_trx_exists will create trx if no trx. */
@@ -101,25 +110,35 @@ bool innobase_assign_slot_for_xa(THD *thd, my_slot_ptr_t *slot_ptr_arg) {
   ut_ad(!trx->internal);
 
   /** Force to assign a TXN. */
-  if (lizard::trx_assign_txn_undo(trx, slot_ptr) != DB_SUCCESS) {
+  if (lizard::trx_assign_txn_undo(trx, slot_ptr, trx_id) != DB_SUCCESS) {
     return true;
   }
 
   return false;
 }
 
-static bool innobase_search_trx_by_xid(const XID *xid,
-                                       lizard::xa::Transaction_info *info) {
-  return lizard::xa::trx_search_by_xid(xid, info);
-}
-template <typename T>
-static my_trx_id_t innobase_search_up_limit_tid(const T &lhs) {
-  return static_cast<my_trx_id_t>(lizard::gcs_search_up_limit_tid<T>(lhs));
+static bool innobase_search_detach_prepare_trx_by_xid(const XID *xid,
+                                                      MyXAInfo *info) {
+  return lizard::xa::trx_search_detach_prepare_by_xid(xid, info);
 }
 
-template my_trx_id_t innobase_search_up_limit_tid<lizard::Snapshot_scn_vision>(
+static bool innobase_search_rollback_background_trx_by_xid(const XID *xid,
+                                                           MyXAInfo *info) {
+  return lizard::xa::trx_search_rollback_background_by_xid(xid, info);
+}
+
+static bool innobase_search_history_trx_by_xid(const XID *xid, MyXAInfo *info) {
+  return lizard::xa::trx_search_history_by_xid(xid, info);
+}
+
+template <typename T>
+static trx_id_t innobase_search_up_limit_tid(const T &lhs) {
+  return static_cast<trx_id_t>(lizard::gcs_search_up_limit_tid<T>(lhs));
+}
+
+template trx_id_t innobase_search_up_limit_tid<lizard::Snapshot_scn_vision>(
     const lizard::Snapshot_scn_vision &lhs);
-template my_trx_id_t innobase_search_up_limit_tid<lizard::Snapshot_gcn_vision>(
+template trx_id_t innobase_search_up_limit_tid<lizard::Snapshot_gcn_vision>(
     const lizard::Snapshot_gcn_vision &lhs);
 
 /**
@@ -148,37 +167,120 @@ uint64 innobase_load_gcn() { return lizard::gcs_load_gcn(); }
 
 uint64 innobase_load_scn() { return lizard::gcs_load_scn(); }
 
-bool innobase_snapshot_scn_too_old(my_scn_t scn) {
-  return scn < purge_sys->purged_scn.load();
+bool innobase_snapshot_scn_too_old(scn_t scn, bool flashback_area) {
+  if (flashback_area) {
+    return scn < lizard::erase_sys->erased_scn.load();
+  } else {
+    return scn < purge_sys->purged_scn.load();
+  }
 }
 
-bool innobase_snapshot_automatic_gcn_too_old(my_gcn_t gcn) {
-  return gcn < purge_sys->purged_gcn.get();
+bool innobase_snapshot_automatic_gcn_too_old(gcn_t gcn,
+                                             bool flashback_area) {
+  if (flashback_area) {
+    return gcn < lizard::erase_sys->erased_gcn.get();
+  } else {
+    return gcn < purge_sys->purged_gcn.get();
+  }
 }
 
-bool innobase_snapshot_assigned_gcn_too_old(my_gcn_t gcn) {
-  return gcn <= purge_sys->purged_gcn.get();
+bool innobase_snapshot_assigned_gcn_too_old(gcn_t gcn, bool flashback_area) {
+  if (flashback_area) {
+    return gcn <= lizard::erase_sys->erased_gcn.get();
+  } else {
+    return gcn <= purge_sys->purged_gcn.get();
+  }
 }
 
-void innobase_set_gcn_if_bigger(my_gcn_t gcn_arg) {
-  gcn_t gcn = static_cast<gcn_t>(gcn_arg);
-  lizard::gcs_set_gcn_if_bigger(gcn);
+void innobase_set_gcn_if_bigger(gcn_t gcn_arg) {
+  lizard::gcs_set_gcn_if_bigger(gcn_arg);
 }
 
-int innobase_conver_timestamp_to_scn(THD *thd, my_utc_t utc_arg,
-                                     my_scn_t *scn_arg) {
+int innobase_conver_timestamp_to_scn(THD *thd, utc_t utc_arg,
+                                     scn_t *scn_arg) {
   utc_t utc = static_cast<utc_t>(utc_arg);
   scn_t *scn = static_cast<scn_t *>(scn_arg);
   return lizard::convert_timestamp_to_scn(thd, utc, scn);
 }
 
-void innobase_get_undo_purge_status(im::Undo_purge_show_result *result) {
-  lizard::Undo_retention::instance()->get_stat_data(
-      &result->used_size, &result->file_size, &result->retained_time);
-  purge_sys->blocked_stat.get(&result->blocked_cause, &result->blocked_utc);
-  result->retention_time = lizard::Undo_retention::retention_time;
-  result->reserved_size = lizard::Undo_retention::space_reserve;
-  result->retention_size_limit = lizard::Undo_retention::space_limit;
+void innobase_trunc_status(std::vector<lizard::trunc_status_t> &array) {
+  lizard::trx_trunc_status(array);
+}
+
+void innobase_purge_status(lizard::purge_status_t &status) {
+  lizard::trx_purge_status(status);
+}
+
+void innobase_flush_gpp_stat() {
+  lizard::lizard_stats.index_scan_guess_clust_hit.reset();
+  lizard::lizard_stats.index_scan_guess_clust_miss.reset();
+  lizard::lizard_stats.index_purge_guess_clust_hit.reset();
+  lizard::lizard_stats.index_purge_guess_clust_miss.reset();
+  lizard::lizard_stats.index_lock_guess_clust_hit.reset();
+  lizard::lizard_stats.index_lock_guess_clust_miss.reset();
+  lizard::Gpp_index_stat_flusher flusher;
+  dict_sys->for_each_table(flusher);
+}
+
+void innobase_decide_xa_when_prepare(MyGCN *gcn) {
+  lizard::decide_xa_when_prepare(gcn);
+}
+
+void innobase_decide_xa_when_commit(THD *thd, MyGCN *gcn,
+                                    xa_addr_t *master_addr) {
+  /* We request to stop master thread in srv_shutdown, which is invoked
+  after DD has been shut down. Since that point of time, we must not need
+  transaction objects for any reasons. */
+  ut_ad(srv_shutdown_state_matches([](auto state) {
+    return state < SRV_SHUTDOWN_MASTER_STOP ||
+           state == SRV_SHUTDOWN_EXIT_THREADS;
+  }));
+
+  trx_t *trx = thd_to_trx_if_have(thd);
+
+  lizard::decide_xa_when_commit(trx, gcn, master_addr);
+}
+
+void innobase_decide_xa_when_commit_by_xid(handlerton *hton, XID *xid,
+                                           MyGCN *gcn, xa_addr_t *master_addr) {
+  trx_t *trx = trx_get_trx_by_xid(xid);
+
+  if (trx != nullptr) {
+    /* Side effect of retrieving the transaction is XID being set to null */
+    *trx->xid = *xid;
+  }
+
+  lizard::decide_xa_when_commit(trx, gcn, master_addr);
+}
+
+/**
+ * InnoDB storage copy external commit number (gcn) if assigned by user when
+ * commit
+ *
+ * @param[in]		user context
+ * @param[in/out]	innobase trx context */
+void innobase_copy_user_commit(THD *thd, trx_t *trx) {
+  ut_ad(trx->txn_desc.cmmt.gcn == GCN_NULL);
+  innobase_decide_xa_when_commit(thd, &thd->owned_commit_gcn,
+                                 &thd->owned_master_addr);
+
+  trx->txn_desc.copy_xa_when_commit(thd->owned_commit_gcn, thd->owned_master_addr);
+}
+
+/**
+ * InnoDB storage copy external proposal number (gcn) if assigned by user when
+ * prepare
+ * @param[in/out]	user context
+ * @param[in/out]	innobase trx context */
+void innobase_copy_user_prepare(THD *thd, trx_t *trx) {
+  ut_ad(trx->txn_desc.pmmt.is_null());
+
+  innobase_decide_xa_when_prepare(&thd->owned_commit_gcn);
+
+  if (thd->owned_commit_gcn.is_pmmt_gcn()) {
+    trx->txn_desc.copy_xa_when_prepare(thd->owned_commit_gcn,
+                                       thd->owned_xa_branch);
+  }
 }
 
 /**
@@ -199,13 +301,23 @@ void innobase_init_ext(handlerton *hton) {
   hton->ext.set_gcn_if_bigger = innobase_set_gcn_if_bigger;
   hton->ext.start_trx_for_xa = innobase_start_trx_for_xa;
   hton->ext.assign_slot_for_xa = innobase_assign_slot_for_xa;
-  hton->ext.search_trx_by_xid = innobase_search_trx_by_xid;
+  hton->ext.search_detach_prepare_trx_by_xid =
+      innobase_search_detach_prepare_trx_by_xid;
+  hton->ext.search_rollback_background_trx_by_xid =
+      innobase_search_rollback_background_trx_by_xid;
+  hton->ext.search_history_trx_by_xid = innobase_search_history_trx_by_xid;
   hton->ext.convert_timestamp_to_scn = innobase_conver_timestamp_to_scn;
   hton->ext.search_up_limit_tid_for_scn =
       innobase_search_up_limit_tid<lizard::Snapshot_scn_vision>;
   hton->ext.search_up_limit_tid_for_gcn =
       innobase_search_up_limit_tid<lizard::Snapshot_gcn_vision>;
-  hton->ext.get_undo_purge_status = innobase_get_undo_purge_status;
+  hton->ext.trunc_status = innobase_trunc_status;
+  hton->ext.purge_status = innobase_purge_status;
+  hton->ext.flush_gpp_stat = innobase_flush_gpp_stat;
+  hton->ext.decide_xa_when_prepare = innobase_decide_xa_when_prepare;
+  hton->ext.decide_xa_when_commit = innobase_decide_xa_when_commit;
+  hton->ext.decide_xa_when_commit_by_xid =
+      innobase_decide_xa_when_commit_by_xid;
 }
 
 enum_tx_isolation thd_get_trx_isolation(const THD *thd);

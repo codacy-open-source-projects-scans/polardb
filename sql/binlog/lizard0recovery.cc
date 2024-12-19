@@ -7,14 +7,14 @@ the terms of the GNU General Public License, version 2.0, as published by the
 Free Software Foundation.
 
 This program is also distributed with certain software (including but not
-lzeusited to OpenSSL) that is licensed under separate terms, as designated in a
+limited to OpenSSL) that is licensed under separate terms, as designated in a
 particular file or component or in included license documentation. The authors
 of MySQL hereby grant you an additional permission to link the program and
 your derivative works with the separately licensed software that they have
 included with MySQL.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the zeusplied warranty of MERCHANTABILITY or FITNESS
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
 for more details.
 
@@ -39,6 +39,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "mysql/components/services/log_builtins.h"
 #include "sql/log_event.h"
+#include "sql/mysqld.h"
 
 namespace binlog {
 /** Add binlog xa spec into spec list */
@@ -95,7 +96,11 @@ void binlog::Binlog_recovery::process_gcn_event(const Gcn_log_event &ev) {
     return;
   }
 
-  m_xa_spec.set_gcn(ev.get_commit_gcn());
+  MyGCN gcn;
+  xa_branch_t xa_branch;
+  ev.copy_xa(&gcn, &xa_branch);
+  m_xa_spec.set_when_recovery(gcn, xa_branch);
+  /** Master address info is not written into BINLOG. */
 }
 
 /** Gather internal commit xid and spec.*/

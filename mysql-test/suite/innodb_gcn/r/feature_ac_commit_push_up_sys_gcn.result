@@ -1,0 +1,15 @@
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+#####################################
+# ac_prepare will push up sys GCN.
+#####################################
+set session xa_detach_on_prepare = on;
+xa start 'ac_t5_b1';
+xa end 'ac_t5_b1';
+call dbms_xa.ac_prepare('ac_t5_b1', '', 1, 1, 1, commit_gcn)
+include/assert.inc [expect_sys_gcn == actual_sys_gcn]
+#####################################
+# ac_commit will push up sys GCN.
+#####################################
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_sys_gcn == actual_sys_gcn]

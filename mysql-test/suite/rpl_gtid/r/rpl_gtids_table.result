@@ -115,7 +115,7 @@ SELECT * FROM mysql.gtid_executed;
 source_uuid	interval_start	interval_end
 MASTER_UUID	1	11
 SET GLOBAL DEBUG= @debug_save;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 #
 # connection slave
 #

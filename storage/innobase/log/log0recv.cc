@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -83,6 +83,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "lizard0cleanout.h"
 #include "lizard0gcs.h"
+#include "lizard0btr0cur.h"
 
 std::list<space_id_t> recv_encr_ts_list;
 
@@ -2101,6 +2102,13 @@ static byte *recv_parse_or_apply_log_rec_body(
 
       ptr = btr_cur_parse_del_mark_set_sec_rec(ptr, end_ptr, page, page_zip);
       break;
+    
+    case MLOG_REC_SEC_GPP_NO:
+      ut_ad(!page || fil_page_type_is_index(page_type));
+
+      ptr = lizard::btr_cur_parse_gpp_no_upd_sec_rec(ptr, end_ptr, page,
+                                                     page_zip);
+      break;
 
     case MLOG_REC_UPDATE_IN_PLACE:
 
@@ -2732,7 +2740,7 @@ void recv_recover_page_func(
   }
 
   bool success = buf_page_get_known_nowait(
-      RW_X_LATCH, block, Cache_hint::KEEP_OLD, __FILE__, __LINE__, &mtr);
+      RW_X_LATCH, block, Cache_hint::KEEP_OLD, __FILE__, __LINE__, false, &mtr);
   ut_a(success);
 
   buf_block_dbg_add_level(block, SYNC_NO_ORDER_CHECK);
@@ -2985,7 +2993,7 @@ static ulint recv_parse_log_rec(mlog_id_t *type, byte *ptr, byte *end_ptr,
     case MLOG_GCN_METADATA:
     case MLOG_GCN_METADATA | MLOG_SINGLE_REC_FLAG:
 
-      gcn_t gcn = lizard::GCN_NULL;
+      gcn_t gcn = GCN_NULL;
 
       new_ptr =
           lizard::mlog_parse_initial_gcn_log_record(ptr, end_ptr, type, &gcn);
@@ -4268,6 +4276,9 @@ const char *get_mlog_string(mlog_id_t type) {
 
     case MLOG_REC_SEC_DELETE_MARK:
       return "MLOG_REC_SEC_DELETE_MARK";
+
+    case MLOG_REC_SEC_GPP_NO:
+      return "MLOG_REC_SEC_GPP_NO";
 
     case MLOG_REC_UPDATE_IN_PLACE_8027:
       return "MLOG_REC_UPDATE_IN_PLACE_8027";

@@ -17,5 +17,5 @@ INSERT INTO t1 VALUES (4);
 DROP TABLE t1;
 WAIT_FOR_EXECUTED_GTID_SET('MASTER_UUID:1-6', 10000)
 0
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/rpl_end.inc

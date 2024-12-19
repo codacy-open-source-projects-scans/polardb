@@ -1,0 +1,33 @@
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+
+create table t1 (id int);
+insert into t1 values (1);
+
+--let $as_of_gcn = `select @base_seq + 200`
+--echo SELECT * FROM t1 AS OF GCN #AS_OF_GCN
+--disable_query_log
+--eval select * from t1 as of gcn $as_of_gcn
+--enable_query_log
+
+--let $expect_gcn = `select @base_seq`
+--let $sys_gcn = `SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn'`
+--let $assert_text=AS OF QUERY SHOULD NOT PUSH UP SYS GCN
+--let $assert_cond="$expect_gcn" = "$sys_gcn"
+--source include/assert.inc
+
+begin;
+--let $set_var_gcn = `select @base_seq + 100`
+--echo set innodb_snapshot_seq = #SET_VAR_GCN
+--disable_query_log
+--eval set innodb_snapshot_seq = $set_var_gcn
+--enable_query_log
+select * from t1;
+commit;
+
+--let $expect_gcn = $set_var_gcn
+--let $sys_gcn = `SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn'`
+--let $assert_text= SET innodb_snapshot_seq WILL PUSH UP SYS GCN
+--let $assert_cond="$expect_gcn" = "$sys_gcn"
+--source include/assert.inc
+
+drop table t1;

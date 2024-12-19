@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+Copyright (c) 2000, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -93,6 +93,10 @@ struct upd_t;
 extern bool row_rollback_on_timeout;
 
 struct row_prebuilt_t;
+
+namespace lizard {
+class Index_policy;
+}
 
 /** Frees the blob heap in prebuilt when no longer needed. */
 void row_mysql_prebuilt_free_blob_heap(
@@ -315,10 +319,15 @@ kept in non-LRU list while on failure the 'table' object will be freed.
 @param[in]      create_info     HA_CREATE_INFO object
 @param[in,out]  trx             transaction
 @param[in]      heap            temp memory heap or nullptr
+@param[in]      ddl_policy      ddl policy from handler
+@param[in]      old_dd_tab      dd::Table from an old partition for partitioned
+                                table, NULL otherwise.
 @return error code or DB_SUCCESS */
 [[nodiscard]] dberr_t row_create_table_for_mysql(
     dict_table_t *&table, const char *compression,
-    const HA_CREATE_INFO *create_info, trx_t *trx, mem_heap_t *heap);
+    const HA_CREATE_INFO *create_info, trx_t *trx, mem_heap_t *heap,
+    const lizard::Ha_ddl_policy *ddl_policy,
+    const dd::Table *old_dd_tab = nullptr);
 
 /** Does an index creation operation for MySQL. TODO: currently failure
  to create an index results in dropping the whole table! This is no problem
@@ -334,7 +343,8 @@ kept in non-LRU list while on failure the 'table' object will be freed.
                                 index columns, which are
                                 then checked for not being too
                                 large. */
-    dict_table_t *handler);     /* ! in/out: table handler. */
+    dict_table_t *handler,      /* ! in/out: table handler. */
+    lizard::Ha_ddl_policy *ddl_policy);
 
 /** Loads foreign key constraints for the table being created. This
  function should be called after the indexes for a table have been

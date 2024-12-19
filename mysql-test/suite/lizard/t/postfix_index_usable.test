@@ -1,0 +1,62 @@
+
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+
+set global innodb_undo_retention = 9000;
+
+--let $gcn= `select @base_seq + 100`
+--echo call dbms_xa.advance_gcn_no_flush(sys_gcn)
+--disable_query_log
+--eval call dbms_xa.advance_gcn_no_flush($gcn)
+--enable_query_log
+create table t1 (id int primary key, c1 int, c2 int);
+
+--let $gcn= `select @base_seq + 200`
+--echo call dbms_xa.advance_gcn_no_flush(sys_gcn)
+--disable_query_log
+--eval call dbms_xa.advance_gcn_no_flush($gcn)
+--enable_query_log
+insert into t1 values (1, 10, 100);
+
+
+--let $gcn= `select @base_seq + 300`
+--echo call dbms_xa.advance_gcn_no_flush(sys_gcn)
+--disable_query_log
+--eval call dbms_xa.advance_gcn_no_flush($gcn)
+--enable_query_log
+update t1 set c1 = c1 + 1;
+
+--let $gcn= `select @base_seq + 400`
+--echo call dbms_xa.advance_gcn_no_flush(sys_gcn)
+--disable_query_log
+--eval call dbms_xa.advance_gcn_no_flush($gcn)
+--enable_query_log
+alter table t1 add index c1(c1);
+
+--let $gcn = `select @base_seq + 250`
+--disable_query_log
+--eval set innodb_snapshot_seq = $gcn
+--enable_query_log
+select * from t1;
+
+--let $gcn = `select @base_seq + 150`
+--disable_query_log
+--eval set innodb_snapshot_seq = $gcn
+--enable_query_log
+select * from t1;
+
+--let $gcn = `select @base_seq + 450`
+--disable_query_log
+--eval set innodb_snapshot_seq = $gcn
+--enable_query_log
+select c1 from t1 force index (c1);
+
+--let $gcn = `select @base_seq + 150`
+--disable_query_log
+--eval set innodb_snapshot_seq = $gcn
+--enable_query_log
+--error ER_AS_OF_TABLE_DEF_CHANGED
+select c1 from t1 force index (c1);
+
+set global innodb_undo_retention = default;
+
+drop table t1;

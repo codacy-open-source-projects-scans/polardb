@@ -1,0 +1,348 @@
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+
+--connect (conn1,127.0.0.1,root,,test,$MYPORT_1)
+connection conn1;
+set sql_log_bin = 0;
+
+connection default;
+set sql_log_bin = 0;
+
+create table t1 (id int);
+
+--echo ############################
+--echo # Case: regular transaction, commit
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 10000`
+
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+
+insert into t1 values (1);
+
+connection conn1;
+--let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+--let assert_text=expect_gcn == actual_gcn
+--let $assert_cond=$expect_gcn = $actual_gcn
+--source include/assert.inc
+
+--echo ############################
+--echo # Case: regular transaction, rollback
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 10100`
+
+begin;
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+
+insert into t1 values (1);
+rollback;
+
+connection conn1;
+--let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+--let assert_text=expect_gcn == actual_gcn
+--let $assert_cond=$expect_gcn = $actual_gcn
+--source include/assert.inc
+
+--echo ############################
+--echo # Case: xa transaction, prepare, detach=on
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 10200`
+set xa_detach_on_prepare = on;
+
+xa start 'asgc_nobinlog_b1';
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b1';
+xa prepare 'asgc_nobinlog_b1';
+
+#######################################
+# GCN of prepare when no binlog is meaningless
+#######################################
+# connection conn1;
+# --let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+# --let assert_text=expect_gcn == actual_gcn
+# --let $assert_cond=$expect_gcn = $actual_gcn
+# --source include/assert.inc
+
+--echo ############################
+--echo # Case: xa transaction, commit, detach=on
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 10300`
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+xa commit 'asgc_nobinlog_b1';
+
+connection conn1;
+--let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+--let assert_text=expect_gcn == actual_gcn
+--let $assert_cond=$expect_gcn = $actual_gcn
+--source include/assert.inc
+
+--echo ############################
+--echo # Case: xa transaction, prepare, detach=off
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 10400`
+set xa_detach_on_prepare = off;
+
+xa start 'asgc_nobinlog_b2';
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b2';
+xa prepare 'asgc_nobinlog_b2';
+
+#######################################
+# GCN of prepare when no binlog is meaningless
+#######################################
+# connection conn1;
+# --let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+# --let assert_text=expect_gcn == actual_gcn
+# --let $assert_cond=$expect_gcn = $actual_gcn
+# --source include/assert.inc
+
+--echo ############################
+--echo # Case: xa transaction, commit, detach=on
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 10500`
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+xa commit 'asgc_nobinlog_b2';
+
+connection conn1;
+--let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+--let assert_text=expect_gcn == actual_gcn
+--let $assert_cond=$expect_gcn = $actual_gcn
+--source include/assert.inc
+
+--echo ############################
+--echo # Case: xa transaction, commit one phase
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 10600`
+set xa_detach_on_prepare = off;
+
+xa start 'asgc_nobinlog_b3';
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b3';
+xa commit 'asgc_nobinlog_b3' one phase;
+
+connection conn1;
+--let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+--let assert_text=expect_gcn == actual_gcn
+--let $assert_cond=$expect_gcn = $actual_gcn
+--source include/assert.inc
+
+connection default;
+set xa_detach_on_prepare = default;
+
+--echo ############################
+--echo # Case: xa transaction, ac_prepare, detach=off
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 10700`
+--let $save_expect_gcn = `select @base_seq + 10700`
+set xa_detach_on_prepare = off;
+
+xa start 'asgc_nobinlog_b4';
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b4';
+
+--let $expect_gcn= $expect_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $my_xid= 'asgc_nobinlog_b4', '', 1
+--let $ac_args= 1, 1, $expect_gcn
+--let $ac_conn=default
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+--let $m_trx_id= $ac_prepare_trx_id
+--let $m_uba= $ac_prepare_uba
+--let $server_uuid= $ac_prepare_uuid
+--let $expect_gcn= $save_expect_gcn
+
+connection conn1;
+--let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+--let assert_text=expect_gcn == actual_gcn
+--let $assert_cond=$expect_gcn = $actual_gcn
+--source include/assert.inc
+
+--echo ############################
+--echo # Case: xa transaction, ac_commit, detach=off
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 10800`
+--let $save_expect_gcn = `select @base_seq + 10800`
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+
+--let $my_xid= 'asgc_nobinlog_b4', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $expect_gcn
+# TODO: pmmt not work because set_prepare_in_tc is not called in such a case
+--let $expect_csr= ASSIGNED_GCN
+--let $server_uuid= $server_uuid
+--let $expect_m_trx_id= NULL
+--let $expect_m_uba= NULL
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+--let $expect_gcn = $save_expect_gcn
+
+connection conn1;
+--let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+--let assert_text=expect_gcn == actual_gcn
+--let $assert_cond=$expect_gcn = $actual_gcn
+--source include/assert.inc
+
+connection default;
+set xa_detach_on_prepare = default;
+
+--echo ############################
+--echo # Case: xa transaction, ac_prepare, detach=on
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 10900`
+--let $save_expect_gcn = `select @base_seq + 10900`
+set xa_detach_on_prepare = on;
+
+xa start 'asgc_nobinlog_b5';
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b5';
+
+--let $expect_gcn= $expect_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $my_xid= 'asgc_nobinlog_b5', '', 1
+--let $ac_args= 1, 1, $expect_gcn
+--let $ac_conn=default
+--source suite/innodb_gcn/include/xa_proc_ac_prepare_verify.inc
+--let $m_trx_id= $ac_prepare_trx_id
+--let $m_uba= $ac_prepare_uba
+--let $server_uuid= $ac_prepare_uuid
+--let $expect_gcn = $save_expect_gcn
+
+connection conn1;
+--let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+--let assert_text=expect_gcn == actual_gcn
+--let $assert_cond=$expect_gcn = $actual_gcn
+--source include/assert.inc
+
+--echo ############################
+--echo # Case: xa transaction, ac_commit, detach=on
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 11000`
+--let $save_expect_gcn = `select @base_seq + 11000`
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+
+--let $my_xid= 'asgc_nobinlog_b5', '', 1
+--let $m_phyid= $m_trx_id, $m_uba
+--let $expect_gcn= $expect_gcn
+--let $expect_csr= ASSIGNED_GCN
+--let $server_uuid= $server_uuid
+--let $expect_m_trx_id= NULL
+--let $expect_m_uba= NULL
+--source suite/innodb_gcn/include/xa_proc_ac_commit_verify.inc
+--let $expect_gcn = $save_expect_gcn
+
+connection conn1;
+--let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+--let assert_text=expect_gcn == actual_gcn
+--let $assert_cond=$expect_gcn = $actual_gcn
+--source include/assert.inc
+
+--echo ############################
+--echo # Case: xa transaction, rollback, detach=on
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 11100`
+set xa_detach_on_prepare = on;
+
+xa start 'asgc_nobinlog_b6';
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b6';
+xa prepare 'asgc_nobinlog_b6';
+
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+xa rollback 'asgc_nobinlog_b6';
+
+connection conn1;
+--let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+--let assert_text=expect_gcn == actual_gcn
+--let $assert_cond=$expect_gcn = $actual_gcn
+--source include/assert.inc
+
+--echo ############################
+--echo # Case: xa transaction, rollback, detach=off
+--echo ############################
+connection default;
+--let $expect_gcn = `select @base_seq + 11200`
+set xa_detach_on_prepare = off;
+
+xa start 'asgc_nobinlog_b7';
+insert into t1 values (1);
+xa end 'asgc_nobinlog_b7';
+xa prepare 'asgc_nobinlog_b7';
+
+--echo set innodb_commit_seq = expect_gcn
+--disable_query_log
+--eval set innodb_commit_seq = $expect_gcn
+--enable_query_log
+xa rollback 'asgc_nobinlog_b7';
+
+connection conn1;
+--let $actual_gcn = query_get_value('show status like "Lizard_current_gcn"', Value, 1)
+--let assert_text=expect_gcn == actual_gcn
+--let $assert_cond=$expect_gcn = $actual_gcn
+--source include/assert.inc
+
+connection default;
+set xa_detach_on_prepare = default;
+
+--echo ############################
+--echo # Cleanup
+--echo ############################
+disconnect conn1;
+connection default;
+set xa_detach_on_prepare = default;
+set sql_log_bin = on;
+drop table t1;

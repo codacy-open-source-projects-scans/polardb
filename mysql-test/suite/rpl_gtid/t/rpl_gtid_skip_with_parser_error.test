@@ -73,7 +73,7 @@
 --source include/sync_slave_io_with_master.inc
 
 # Start slave's applier thread. It should stop with ER_PARSE_ERROR.
-START SLAVE SQL_THREAD;
+START SLAVE SQL_THREAD for channel 'test';
 --let $slave_sql_errno= convert_error(ER_PARSE_ERROR)
 --source include/wait_for_slave_sql_error.inc
 

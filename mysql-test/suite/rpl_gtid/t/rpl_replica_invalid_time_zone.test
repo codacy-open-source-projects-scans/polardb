@@ -53,13 +53,13 @@ CREATE USER u1 IDENTIFIED BY 'Root@123';
 --echo #
 --echo # 6. Start replica
 --source include/rpl_connection_slave.inc
-call mtr.add_suppression("Slave SQL for channel '': ... The slave coordinator and worker threads are stopped.*");
-call mtr.add_suppression("Slave SQL for channel '':.*failed executing transaction.*");
-call mtr.add_suppression("Slave SQL for channel '': Error 'Table 'mysql.time_zone' doesn't exist' on query.*");
+call mtr.add_suppression("Slave SQL for channel 'test': ... The slave coordinator and worker threads are stopped.*");
+call mtr.add_suppression("Slave SQL for channel 'test':.*failed executing transaction.*");
+call mtr.add_suppression("Slave SQL for channel 'test': Error 'Table 'mysql.time_zone' doesn't exist' on query.*");
 call mtr.add_suppression("Slave: Unknown or incorrect time zone: 'UTC'.*");
 --source include/start_slave_io.inc
 --source include/wait_for_slave_io_to_start.inc
-START REPLICA SQL_THREAD;
+START REPLICA SQL_THREAD for channel 'test';
 
 --echo #
 --echo # 7. Verify that replica sql thread failed with error
@@ -71,7 +71,7 @@ START REPLICA SQL_THREAD;
 --source include/stop_slave_io.inc
 RESET REPLICA ALL;
 --replace_result $MASTER_MYPORT MASTER_MYPORT
---eval CHANGE REPLICATION SOURCE TO SOURCE_USER= 'root', SOURCE_HOST= "127.0.0.1", SOURCE_PORT= $MASTER_MYPORT;
+--eval CHANGE REPLICATION SOURCE TO SOURCE_USER= 'root', SOURCE_HOST= "127.0.0.1", SOURCE_PORT= $MASTER_MYPORT for channel "test";
 RENAME TABLE mysql.time_zone_bkup TO mysql.time_zone;
 --source include/start_slave.inc
 

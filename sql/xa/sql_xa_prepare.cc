@@ -1,4 +1,4 @@
-/* Copyright (c) 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -178,6 +178,9 @@ bool Sql_cmd_xa_prepare::trans_xa_prepare(THD *thd) {
                        (ha_rollback_trans(thd, true), true), false) ||
       ::process_xa_prepare(thd))
     return true;
+
+  // Lizard: Save proposal gcn info to avoid losing it
+  set_proposal_gcn(thd->owned_commit_gcn);
 
   xid_state->set_state(XID_STATE::XA_PREPARED);
   MYSQL_SET_TRANSACTION_XA_STATE(thd->m_transaction_psi,

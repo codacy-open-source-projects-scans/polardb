@@ -246,7 +246,7 @@ insert into t5 select * from t4;
 save_master_pos;
 
 connection slave;
-start slave;
+start slave for channel 'test';
 sync_with_master;
 select * from t5 /* must be 1 after reconnection */;
 

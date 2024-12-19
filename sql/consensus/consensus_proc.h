@@ -38,6 +38,7 @@
     dbms_consensus.configure_follower
     dbms_consensus.configure_learner
     dbms_consensus.force_single_mode
+    dbms_consensus.force_learner_node
     dbms_consensus.fix_cluster_id
     dbms_consensus.fix_matchindex
 
@@ -542,6 +543,32 @@ class Consensus_proc_force_single_mode final : public Consensus_proc {
   Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("force_single_mode");
+  }
+};
+
+/**
+  dbms_consensus.force_learner_node()
+*/
+class Sql_cmd_consensus_proc_force_learner_node : public Sql_cmd_consensus_proc {
+ public:
+  Sql_cmd_consensus_proc_force_learner_node(THD *thd,
+                                           mem_root_deque<Item *> *list,
+                                           const Consensus_proc *proc)
+      : Sql_cmd_consensus_proc(thd, list, proc) {}
+  virtual bool pc_execute(THD *thd) override;
+};
+
+class Consensus_proc_force_learner_node final : public Consensus_proc {
+  using Sql_cmd_type = Sql_cmd_consensus_proc_force_learner_node;
+
+ public:
+  explicit Consensus_proc_force_learner_node(PSI_memory_key key)
+      : Consensus_proc(key) {}
+  ~Consensus_proc_force_learner_node() override {}
+  static Proc *instance();
+  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  const std::string str() const override {
+    return std::string("force_learner_node");
   }
 };
 

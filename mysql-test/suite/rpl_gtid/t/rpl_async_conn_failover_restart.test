@@ -63,10 +63,10 @@ SET SESSION sql_log_bin= 1;
 --echo #    connected to server 1.
 --echo #
 --let $assert_text= 'Asynchronous Replication Connection Failover is disabled'
---let $assert_cond= [SELECT SOURCE_CONNECTION_AUTO_FAILOVER FROM performance_schema.replication_connection_configuration, SOURCE_CONNECTION_AUTO_FAILOVER, 1] = 0
+--let $assert_cond= [SELECT SOURCE_CONNECTION_AUTO_FAILOVER FROM performance_schema.replication_connection_configuration where channel_name="test", SOURCE_CONNECTION_AUTO_FAILOVER, 1] = 0
 --source include/assert.inc
 
---let $wait_condition= SELECT COUNT(*) = 1 FROM performance_schema.replication_connection_configuration WHERE CHANNEL_NAME='' AND PORT=$MASTER_MYPORT
+--let $wait_condition= SELECT COUNT(*) = 1 FROM performance_schema.replication_connection_configuration WHERE CHANNEL_NAME='test' AND PORT=$MASTER_MYPORT
 --source include/wait_condition.inc
 
 
@@ -80,12 +80,12 @@ SET SESSION sql_log_bin= 1;
 --source include/add_debug_point.inc
 
 --source include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_CONNECT_RETRY=1, SOURCE_RETRY_COUNT=2, SOURCE_CONNECTION_AUTO_FAILOVER=1;
+CHANGE REPLICATION SOURCE TO SOURCE_CONNECT_RETRY=1, SOURCE_RETRY_COUNT=2, SOURCE_CONNECTION_AUTO_FAILOVER=1 for channel "test";
 --source include/start_slave.inc
 
 # Verify Asynchronous Replication Connection Failover is enabled.
 --let $assert_text= 'Asynchronous Replication Connection Failover is enabled'
---let $assert_cond= [SELECT SOURCE_CONNECTION_AUTO_FAILOVER FROM performance_schema.replication_connection_configuration, SOURCE_CONNECTION_AUTO_FAILOVER, 1] = 1
+--let $assert_cond= [SELECT SOURCE_CONNECTION_AUTO_FAILOVER FROM performance_schema.replication_connection_configuration where channel_name="test", SOURCE_CONNECTION_AUTO_FAILOVER, 1] = 1
 --source include/assert.inc
 
 
@@ -96,7 +96,7 @@ CHANGE REPLICATION SOURCE TO SOURCE_CONNECT_RETRY=1, SOURCE_RETRY_COUNT=2, SOURC
 --echo #
 
 --replace_result $SERVER_MYPORT_3 SERVER_MYPORT_3
---eval SELECT asynchronous_connection_failover_add_source('', '127.0.0.1', $SERVER_MYPORT_3, '', 50);
+--eval SELECT asynchronous_connection_failover_add_source('test', '127.0.0.1', $SERVER_MYPORT_3, '', 50);
 
 --let $assert_text= 'There are three rows in performance_schema.replication_asynchronous_connection_failover'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 1
@@ -132,7 +132,7 @@ CHANGE REPLICATION SOURCE TO SOURCE_CONNECT_RETRY=1, SOURCE_RETRY_COUNT=2, SOURC
 --echo #    server 3 and also verify that asynchronous replication tries
 --echo #    connecting to server 1 two (retry_count=2) times.
 --echo #
---let $wait_condition= SELECT COUNT(*) = 1 FROM performance_schema.replication_connection_configuration WHERE CHANNEL_NAME='' AND PORT=$SERVER_MYPORT_3
+--let $wait_condition= SELECT COUNT(*) = 1 FROM performance_schema.replication_connection_configuration WHERE CHANNEL_NAME='test' AND PORT=$SERVER_MYPORT_3
 --source include/wait_condition.inc
 
 # Verify that it tried connecting to server_1 two (retry_count=2) times.
@@ -160,7 +160,7 @@ CHANGE REPLICATION SOURCE TO SOURCE_CONNECT_RETRY=1, SOURCE_RETRY_COUNT=2, SOURC
 --let $rpl_reset_slave_all=
 
 --replace_result $SERVER_MYPORT_3 SERVER_MYPORT_3
---eval SELECT asynchronous_connection_failover_delete_source('', '127.0.0.1', $SERVER_MYPORT_3, '');
+--eval SELECT asynchronous_connection_failover_delete_source('test', '127.0.0.1', $SERVER_MYPORT_3, '');
 
 DROP TABLE t1;
 
@@ -172,6 +172,6 @@ DROP TABLE t1;
 
 DROP TABLE t1;
 
---let $rpl_skip_sync= 1
---let $rpl_only_running_threads= 1
---source include/rpl_end.inc
+#--let $rpl_skip_sync= 1
+#--let $rpl_only_running_threads= 1
+#--source include/rpl_end.inc

@@ -1,4 +1,4 @@
-/*  Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+/*  Copyright (c) 2015, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -1290,8 +1290,12 @@ bool Srv_session::is_srv_session_thread() {
 
 void Srv_session::set_safe(bool safe) {
   safe_session = safe;
-  if (safe)
+  if (safe) {
     m_thd->remove_srv_session_mark();
-  else
+    // todo: temporarily disable audit log(bad performance)
+    // m_thd->m_audited = true;
+  } else {
     m_thd->mark_as_srv_session();
+    // m_thd->m_audited = false;
+  }
 }

@@ -7,14 +7,14 @@ the terms of the GNU General Public License, version 2.0, as published by the
 Free Software Foundation.
 
 This program is also distributed with certain software (including but not
-lzeusited to OpenSSL) that is licensed under separate terms, as designated in a
+limited to OpenSSL) that is licensed under separate terms, as designated in a
 particular file or component or in included license documentation. The authors
 of MySQL hereby grant you an additional permission to link the program and
 your derivative works with the separately licensed software that they have
 included with MySQL.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the zeusplied warranty of MERCHANTABILITY or FITNESS
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
 for more details.
 
@@ -65,12 +65,14 @@ typedef byte gcs_sysf_t;
    Revision history:
    ------------------------------------------------------
    1. Add purged_gcn
+   2. Add erased_gcn
 */
-
 #define GCS_DATA_PURGE_GCN (GCS_DATA_FSEG_HEADER + FSEG_HEADER_SIZE)
 
+#define GCS_DATA_ERASE_GCN (GCS_DATA_PURGE_GCN + 8)
+
 /** The start of not used */
-#define GCS_DATA_NOT_USED (GCS_DATA_PURGE_GCN + 8)
+#define GCS_DATA_NOT_USED (GCS_DATA_ERASE_GCN + 8)
 /**-----------------------------------------------------------------------*/
 
 /** The page number of GCS system header in lizard tablespace */
@@ -89,6 +91,40 @@ extern mysql_pfs_key_t gcn_persist_mutex_key;
 #endif
 
 namespace lizard {
+
+/** Persisted gcn. now for purged gcn and erased gcn. */
+template <unsigned long long POS>
+class Persisted_gcn {
+ public:
+  Persisted_gcn() : m_gcn(GCN_INITIAL), m_inited(false) {}
+  virtual ~Persisted_gcn() {}
+
+  void init();
+  /**
+    Attention:
+
+    If flush commit number > m_purged_xcn, it will flush commit number into
+    lizard tablespace, but it didn't sync the redo of modification.  if
+    related undo content has been purged, it mean that those undo's redo
+    has been synced, because the redo of flushing commit number is prior of
+    undo's redo. so it's unnecessary to sync it specially.
+  */
+  void flush(gcn_t gcn);
+
+  gcn_t get();
+
+ private:
+  gcn_t read();
+
+  void write(gcn_t gcn);
+
+ private:
+  std::atomic<gcn_t> m_gcn;
+  bool m_inited;
+};
+
+using Purged_gcn = Persisted_gcn<GCS_DATA_PURGE_GCN>;
+using Erased_gcn = Persisted_gcn<GCS_DATA_ERASE_GCN>;
 
 class CSnapshot_mgr;
 
@@ -173,6 +209,14 @@ struct gcs_t {
 
   /** New trx commit. */
   commit_mark_t new_commit(trx_t *trx, mtr_t *mtr);
+  /** Prepare also generate commit number if has proposal, it only
+   *  produce gcn, and left scn until real commit.
+   *
+   * @param[in/out]	trx
+   * @param[in/out]	mtr
+   *
+   * @retval	proposal mark */
+  proposal_mark_t new_prepare(trx_t *trx, mtr_t *mtr);
 
   /** Persisted gcn value. */
   std::atomic<gcn_t> m_persisted_gcn;

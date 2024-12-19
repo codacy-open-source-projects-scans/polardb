@@ -31,22 +31,22 @@ SET @@global.replica_transaction_retries=0;
 #  of relay logs
 
 # Case-1 :At the time of server started, a new relaylog
-#  slave-relay-bin.000001
+#  slave-relay-bin-test.000001
 --connection slave
 --let $slave_datadir=`select @@datadir`
 
 # Case-2 : Start IO thread , relay log will be rotated to
-#  slave-relay-bin.000002
+#  slave-relay-bin-test.000002
 --source include/start_slave_io.inc
 
 # Case-3 : Restart IO thread, relay log will be rotated to
-#  slave-relay-bin.000003
+#  slave-relay-bin-test.000003
 --source include/stop_slave_io.inc
 --source include/start_slave_io.inc
 
 # Case-4 Lets put (more than) 4096 data in binary log and when it
 #  reaches slave, relaylog will be rotated (please relay-log-file-size
-#  is set to in .opt file) to slave-relay-bin.000004/
+#  is set to in .opt file) to slave-relay-bin-test.000004/
 --connection master
 CREATE TABLE t1(i INT);
 --let $i=20
@@ -58,13 +58,13 @@ dec $i;
 DROP TABLE t1;
 
 # Case-5 (FLUSH LOGS on slave will rotate to relaylog
-#  slave-relay-bin.000005)
+#  slave-relay-bin-test.000005)
 --connection slave
 FLUSH LOGS;
 
 # Case-6 (FLUSH LOGS on master will reach slave and relaylog will be rotated
-# at slave, generating two new slave bins slave-relay-bin.000006,
-# slave-relay-bin.000007)
+# at slave, generating two new slave bins slave-relay-bin-test.000006,
+# slave-relay-bin-test.000007)
 --connection master
 FLUSH LOGS;
 --source include/sync_slave_io_with_master.inc

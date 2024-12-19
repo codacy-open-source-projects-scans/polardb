@@ -72,4 +72,4 @@ include/assert.inc ['There are 0 rows in performance_schema.replication_asynchro
 include/rpl_reset_slave.inc
 include/rpl_end.inc
 Warnings:
-Note	3084	Replication thread(s) for channel '' are already stopped.
+Note	3084	Replication thread(s) for channel 'test' are already stopped.

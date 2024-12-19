@@ -20,7 +20,7 @@ include/assert.inc [server_2 immediate_server_version must be equal its own serv
 include/assert.inc [server_3 immediate_server_version must be equal its own server version]
 [connection server_2]
 INSERT INTO t1 VALUES (1);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection server_2]
 [connection server_3]
 include/assert.inc [server_2 original_server_version must be equal its own server version]

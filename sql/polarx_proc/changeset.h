@@ -1,3 +1,30 @@
+/*****************************************************************************
+
+Copyright (c) 2023, 2024, Alibaba and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License, version 2.0, as published by the
+Free Software Foundation.
+
+This program is also distributed with certain software (including but not
+limited to OpenSSL) that is licensed under separate terms, as designated in a
+particular file or component or in included license documentation. The authors
+of MySQL hereby grant you an additional permission to link the program and
+your derivative works with the separately licensed software that they have
+included with MySQL.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
+for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
+
+*****************************************************************************/
+
+
 #ifndef POLARX_PROC_CHANGESET_H
 #define POLARX_PROC_CHANGESET_H
 
@@ -55,6 +82,23 @@ class ChangesetResult {
   }
 
   void operator delete(void *ptr) { my_free(ptr); }
+
+  bool operator< (const ChangesetResult& other) const {
+    std::list<Field *>::const_iterator it = pk_field_list.cbegin();
+    std::list<Field *>::const_iterator it_other = other.pk_field_list.cbegin();
+    for (; it != pk_field_list.cend() && it_other != other.pk_field_list.cend(); ++it, ++it_other) {
+      int cmp_res = (*it)->cmp((*it_other)->field_ptr());
+      if (cmp_res < 0) {
+        return true;
+      } else if (cmp_res > 0) {
+        return false;
+      } else {
+        continue;
+      }
+    }
+
+    return type < other.type;
+  } 
 
   std::string get_op_string() const {
     std::string ret;
@@ -144,17 +188,17 @@ class Changeset {
 
   void fetch_pk(bool delete_last_cs,
                 std::vector<ChangesetResult *> &res,
-                TABLE_SHARE *table_share);
+                TABLE *table);
 
   void get_result_list(
       std::unordered_map<std::string, std::unique_ptr<Change>> &pk_map,
-      std::vector<ChangesetResult *> &res, TABLE_SHARE *table_share);
+      std::vector<ChangesetResult *> &res, TABLE *table);
 
   void get_result_list(const char *file_name,
                        std::vector<ChangesetResult *> &res,
-                       TABLE_SHARE *table_share);
+                       TABLE *table);
 
-  std::list<Field *> make_pk_fields(KEY *key_info, uchar *pk,
+  std::list<Field *> make_pk_fields(TABLE *table, uchar *pk,
                                     MEM_ROOT *mem_root);
 
   void set_stop(bool stop) { this->stop = stop; }

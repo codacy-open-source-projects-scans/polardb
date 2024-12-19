@@ -152,7 +152,7 @@ if ($rpl_corrupt_channel_name != "''")
 ################################################################################
 --echo ===== START SLAVE without 'FOR CHANNEL' clause.
 --error ER_SLAVE_RLI_INIT_REPOSITORY
-START SLAVE;
+START SLAVE for channel 'test';
 
 --echo === Assert that all channels IO and SQL threads are in expected state ===
 --let $assert_text= Corrupted channel's IO thread should be in OFF state.
@@ -189,7 +189,7 @@ SHOW RELAYLOG EVENTS;
 
 --echo ===== SELECT SOURCE_POS_WAIT(...) without 'FOR CHANNEL' argument should throw error.
 --error ER_SLAVE_MULTIPLE_CHANNELS_CMD
-SELECT SOURCE_POS_WAIT('server1-bin.000001', 120, 5);
+SELECT SOURCE_POS_WAIT('server1-bin.000001', 120, 5, 'test');
 
 ###############################################################################
 # Step-3.5: WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS function without 3rd argument
@@ -199,7 +199,7 @@ SELECT SOURCE_POS_WAIT('server1-bin.000001', 120, 5);
 
 --echo ===== SELECT WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS(...) without 'FOR CHANNEL' argument should throw error.
 --error ER_SLAVE_MULTIPLE_CHANNELS_CMD
-SELECT WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS('01010101-0101-0101-0101-010101010101:1', 1);
+SELECT WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS('01010101-0101-0101-0101-010101010101:1', 1, 'test');
 
 ###############################################################################
 # Step-3.6: CHANGE MASTER TO without 'FOR CHANNEL' clause when we have multiple
@@ -208,7 +208,7 @@ SELECT WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS('01010101-0101-0101-0101-010101010101:1
 
 --echo ===== CHANGE MASTER without 'FOR CHANNEL' clause should throw error.
 --error ER_SLAVE_MULTIPLE_CHANNELS_CMD
-CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD=10,  SOURCE_CONNECT_RETRY=10, SOURCE_RETRY_COUNT=10;
+CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD=10,  SOURCE_CONNECT_RETRY=10, SOURCE_RETRY_COUNT=10 for channel 'test';
 
 ###############################################################################
 # Step-3.7: Flush relay logs without empty channel acts on all replication

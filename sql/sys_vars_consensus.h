@@ -67,6 +67,7 @@ extern bool opt_consensus_replicate_with_cache_log;
 extern bool opt_consensus_old_compact_mode;
 extern bool opt_consensus_leader_stop_apply;
 extern ulong opt_consensus_leader_stop_apply_time;
+extern ulonglong opt_consensus_stop_apply_index;
 extern ulonglong opt_consensus_force_sync_epoch_diff;
 extern bool opt_consensus_force_recovery;
 extern bool opt_enable_appliedindex_checker;
@@ -90,6 +91,8 @@ extern uint64 opt_consensus_start_index;
 extern bool opt_cluster_dump_meta;
 extern ulonglong opt_cluster_current_term;
 extern ulonglong opt_cluster_force_recover_index;
+extern ulonglong opt_cluster_follower_force_recover_index;
+extern ulonglong opt_consensus_mts_force_apply_index;
 extern bool opt_cluster_force_single_mode;
 extern bool opt_commit_pos_watcher;
 extern ulonglong opt_commit_pos_watcher_interval;
@@ -102,5 +105,6 @@ extern bool opt_consensuslog_revise;
 extern bool opt_recover_snapshot;
 extern ulong thread_stack_warning;
 extern ulong opt_configured_event_scheduler;
+extern bool opt_consensus_reset_mts_info;
 
 #endif

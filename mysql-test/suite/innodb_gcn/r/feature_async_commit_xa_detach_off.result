@@ -1,0 +1,447 @@
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+set global innodb_undo_retention = 9000;
+set global xa_detach_on_prepare = off;
+set session xa_detach_on_prepare = off;
+###############################
+# LOAD DATA
+###############################
+create table t1 (id int primary key, balance int);
+insert into t1 values (1, 1000);
+insert into t1 values (2, 1000);
+###############################
+# Case: Async Commit Assigned GCN
+###############################
+xa start 'ac_t1_b1';
+update t1 set balance = balance - 10 where id = 1;
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b1';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+connection con1;
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con1;
+connection con1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con1;
+connection con1;
+include/assert.inc [expect_csr == actual_csr]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con1;
+connection con1;
+###############################
+# Case: Async Commit Automatic GCN
+###############################
+connection default;
+call dbms_xa.advance_gcn_no_flush(sys_gcn)
+connection con1;
+xa start 'ac_t1_b2';
+update t1 set balance = balance - 10 where id = 1;
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b2';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+connection con1;
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con1;
+connection con1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con1;
+connection con1;
+include/assert.inc [expect_csr == actual_csr]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con1;
+connection con1;
+###############################
+# Case: Single-shard read is initiated between two branch commits (AUTOMATIC)
+###############################
+connection default;
+call dbms_xa.advance_gcn_no_flush(sys_gcn)
+connection con1;
+xa start 'ac_t1_b3';
+update t1 set balance = balance - 10 where id = 1;
+xa end 'ac_t1_b3';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+connection con2;
+xa start 'ac_t1_b4';
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b4';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+###############
+# commit ac_t1_b3
+###############
+connection con1;
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con1;
+connection con1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con1;
+connection con1;
+include/assert.inc [expect_csr == actual_csr]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con1;
+connection con1;
+connection con3;
+begin;
+set innodb_current_snapshot_seq = true;
+select * from t1;;
+###############
+# commit ac_t1_b4
+###############
+connection con2;
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con2;
+connection con2;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con2;
+connection con2;
+include/assert.inc [expect_csr == actual_csr]
+connection con2;
+connection con2;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con2;
+connection con2;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con2;
+connection con2;
+connection con3;
+id	balance
+1	970
+2	1030
+commit;
+select * from t1;
+id	balance
+1	970
+2	1030
+###############################
+# Case: Single-shard read is initiated after two branch commits (AUTOMATIC)
+###############################
+connection default;
+call dbms_xa.advance_gcn_no_flush(sys_gcn)
+connection con1;
+xa start 'ac_t1_b5';
+update t1 set balance = balance - 10 where id = 1;
+xa end 'ac_t1_b5';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+connection con2;
+xa start 'ac_t1_b6';
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b6';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+###############
+# commit ac_t1_b5
+###############
+connection con1;
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con1;
+connection con1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con1;
+connection con1;
+include/assert.inc [expect_csr == actual_csr]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con1;
+connection con1;
+###############
+# commit ac_t1_b6
+###############
+connection con2;
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con2;
+connection con2;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con2;
+connection con2;
+include/assert.inc [expect_csr == actual_csr]
+connection con2;
+connection con2;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con2;
+connection con2;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con2;
+connection con2;
+connection con3;
+begin;
+set innodb_current_snapshot_seq = true;
+select * from t1;
+id	balance
+1	960
+2	1040
+commit;
+###############################
+# Case: Single-shard read is initiated before two branch commits (AUTOMATIC)
+###############################
+connection default;
+call dbms_xa.advance_gcn_no_flush(sys_gcn)
+connection con3;
+begin;
+set transaction_isolation = "repeatable-read";
+set innodb_current_snapshot_seq = true;
+select * from t1;
+id	balance
+1	960
+2	1040
+connection con1;
+xa start 'ac_t1_b7';
+update t1 set balance = balance - 10 where id = 1;
+xa end 'ac_t1_b7';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+connection con2;
+xa start 'ac_t1_b8';
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b8';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+###############
+# commit ac_t1_b7
+###############
+connection con1;
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con1;
+connection con1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con1;
+connection con1;
+include/assert.inc [expect_csr == actual_csr]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con1;
+connection con1;
+###############
+# commit ac_t1_b8
+###############
+connection con2;
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con2;
+connection con2;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con2;
+connection con2;
+include/assert.inc [expect_csr == actual_csr]
+connection con2;
+connection con2;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con2;
+connection con2;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con2;
+connection con2;
+connection con3;
+select * from t1;
+id	balance
+1	960
+2	1040
+commit;
+select * from t1;
+id	balance
+1	950
+2	1050
+###############################
+# Case: Single-shard read is initiated between two branch commits (ASSIGNED)
+###############################
+connection default;
+connection con1;
+xa start 'ac_t1_b9';
+update t1 set balance = balance - 10 where id = 1;
+xa end 'ac_t1_b9';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+connection con2;
+xa start 'ac_t1_b10';
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b10';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+###############
+# commit ac_t1_b9
+###############
+connection con1;
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con1;
+connection con1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con1;
+connection con1;
+include/assert.inc [expect_csr == actual_csr]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con1;
+connection con1;
+connection con3;
+begin;
+set innodb_current_snapshot_seq = true;
+select * from t1;;
+###############
+# commit ac_t1_b10
+###############
+connection con2;
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con2;
+connection con2;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con2;
+connection con2;
+include/assert.inc [expect_csr == actual_csr]
+connection con2;
+connection con2;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con2;
+connection con2;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con2;
+connection con2;
+connection con3;
+id	balance
+1	940
+2	1060
+commit;
+select * from t1;
+id	balance
+1	940
+2	1060
+###############################
+# Case: Single-shard read is initiated after two branch commits (ASSIGNED)
+###############################
+connection default;
+connection con1;
+xa start 'ac_t1_b11';
+update t1 set balance = balance - 10 where id = 1;
+xa end 'ac_t1_b11';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+connection con2;
+xa start 'ac_t1_b12';
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t1_b12';
+call dbms_xa.ac_prepare(#gtrid, #bqual, #formatID, #N_BRANCH, #N_LOCAL_BRANCH, #gcn)
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+###############
+# commit ac_t1_b11
+###############
+connection con1;
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con1;
+connection con1;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con1;
+connection con1;
+include/assert.inc [expect_csr == actual_csr]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con1;
+connection con1;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con1;
+connection con1;
+###############
+# commit ac_t1_b12
+###############
+connection con2;
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+connection con2;
+connection con2;
+include/assert.inc [expect_gcn == actual_gcn]
+connection con2;
+connection con2;
+include/assert.inc [expect_csr == actual_csr]
+connection con2;
+connection con2;
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+connection con2;
+connection con2;
+include/assert.inc [expect_m_uba == actual_m_uba]
+connection con2;
+connection con2;
+connection con3;
+begin;
+set innodb_current_snapshot_seq = true;
+select * from t1;
+id	balance
+1	930
+2	1070
+commit;
+select * from t1;
+id	balance
+1	930
+2	1070
+###############################
+# cleanup
+###############################
+disconnect con1;
+disconnect con2;
+disconnect con3;
+connection default;
+set global innodb_undo_retention = default;
+set global xa_detach_on_prepare = default;
+set session xa_detach_on_prepare = default;
+drop table t1;

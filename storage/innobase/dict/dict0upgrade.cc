@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -667,10 +667,9 @@ static void dd_upgrade_process_index(Index dd_index, dict_index_t *index,
   p.set(dd_index_key_strings[DD_INDEX_SPACE_ID], index->space);
   p.set(dd_index_key_strings[DD_INDEX_ID], index->id);
   p.set(dd_index_key_strings[DD_TABLE_ID], index->table->id);
-  p.set(dd_index_key_strings[DD_INDEX_TRX_ID], 0);
-  p.set(dd_index_key_strings[DD_INDEX_UBA], txn_desc->undo_ptr);
-  p.set(dd_index_key_strings[DD_INDEX_SCN], txn_desc->cmmt.scn);
-  p.set(dd_index_key_strings[DD_INDEX_GCN], txn_desc->cmmt.gcn);
+  dd_index_set_se_private_for_system_cols(
+      dd_index, 0,
+      txn_info_t{txn_desc->cmmt.scn, txn_desc->undo_ptr, txn_desc->cmmt.gcn});
 
   if (has_auto_inc) {
     ut_ad(auto_inc_index_name != nullptr);

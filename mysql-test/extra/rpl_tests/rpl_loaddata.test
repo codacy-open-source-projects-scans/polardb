@@ -102,15 +102,15 @@ connection slave;
 # CHANGE MASTER and see if error is cleared in SHOW SLAVE STATUS.
 --source include/stop_slave_io.inc
 --replace_column 2 ####
-CHANGE REPLICATION SOURCE to SOURCE_USER='test';
+CHANGE REPLICATION SOURCE to SOURCE_USER='test' for channel 'test';
 --replace_column 2 ####
-CHANGE REPLICATION SOURCE to SOURCE_USER='root';
+CHANGE REPLICATION SOURCE to SOURCE_USER='root' for channel 'test';
 --source include/check_slave_no_error.inc
 
 # Trigger error again to test RESET SLAVE
 
 set global sql_replica_skip_counter=1;
-start slave;
+start slave for channel 'test';
 sync_with_master;
 connection master;
 set sql_log_bin=0;
@@ -142,7 +142,7 @@ terminated by ',' optionally enclosed by '%' escaped by '@' lines terminated by
 select * from t2;
 save_master_pos;
 connection slave;
-start slave;
+start slave for channel 'test';
 sync_with_master;
 select * from t2;
 

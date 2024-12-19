@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+Copyright (c) 2017, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -80,6 +80,7 @@ Data dictionary interface */
 #include "lizard0dict.h"
 #include "lizard0page.h"
 #include "lizard0row.h"
+#include "sql/dd/lizard_policy_types.h"
 
 const char *DD_instant_col_val_coder::encode(const byte *stream, size_t in_len,
                                              size_t *out_len) {
@@ -262,6 +263,15 @@ bool dd_table_match(const dict_table_t *table, const Table *dd_table) {
     ib::warn(ER_IB_MSG_166)
         << "Table id in InnoDB is " << table->id
         << " while the id in global DD is " << dd_table->se_private_id();
+    match = false;
+  }
+
+  if (!lizard::dd_check_table_fba(table, dd_table->table())) {
+    ib::warn(ER_IB_MSG_166)
+        << "Flashback area mismatch. Table in InnoDB has flashback area "
+           "option: "
+        << (table->is_2pp ? "enabled" : "disabled")
+        << " while the flashback area option in the global DD does not match.";
     match = false;
   }
 
@@ -1627,9 +1637,14 @@ void dd_copy_private(Table &new_table, const Table &old_table) {
 
     new_index->set_se_private_data(old_index->se_private_data());
     new_index->set_tablespace_id(old_index->tablespace_id());
+
+    /** Lizard-4.0: IFT options actually is SE private meta */
+    lizard::dd_copy_index_format(new_index->options(), old_index->options());
   }
 
   new_table.table().set_row_format(old_table.table().row_format());
+
+  lizard::dd_copy_table_fba(old_table, new_table);
 }
 
 template void dd_copy_private<dd::Table>(dd::Table &, const dd::Table &);
@@ -2488,7 +2503,8 @@ void dd_import_instant_add_columns(const dict_table_t *table,
 @param[in]      index           InnoDB index object */
 template <typename Index>
 static void dd_write_index(dd::Object_id dd_space_id, Index *dd_index,
-                           const dict_index_t *index) {
+                           const dict_index_t *index,
+                           const lizard::Ha_ddl_policy *ddl_policy) {
   ut_ad(index->id != 0);
   ut_ad(index->page >= FSP_FIRST_INODE_PAGE_NO);
 
@@ -2499,21 +2515,25 @@ static void dd_write_index(dd::Object_id dd_space_id, Index *dd_index,
   p.set(dd_index_key_strings[DD_INDEX_SPACE_ID], index->space);
   p.set(dd_index_key_strings[DD_TABLE_ID], index->table->id);
   p.set(dd_index_key_strings[DD_INDEX_ROOT], index->page);
-  p.set(dd_index_key_strings[DD_INDEX_TRX_ID], index->trx_id);
-  p.set(dd_index_key_strings[DD_INDEX_UBA], index->txn.uba.load());
-  p.set(dd_index_key_strings[DD_INDEX_SCN], index->txn.scn.load());
-  p.set(dd_index_key_strings[DD_INDEX_GCN], index->txn.gcn.load());
+  dd_index_set_se_private_for_system_cols(
+      dd_index, index->trx_id,
+      txn_info_t{index->txn.scn, index->txn.uba, index->txn.gcn});
+
+  dd::Properties &options = dd_index->options();
+  lizard::dd_write_index_format(&options, index, ddl_policy);
 }
 
 template void dd_write_index<dd::Index>(dd::Object_id, dd::Index *,
-                                        const dict_index_t *);
-template void dd_write_index<dd::Partition_index>(dd::Object_id,
-                                                  dd::Partition_index *,
-                                                  const dict_index_t *);
+                                        const dict_index_t *,
+                                        const lizard::Ha_ddl_policy *ddl_policy);
+template void dd_write_index<dd::Partition_index>(
+    dd::Object_id, dd::Partition_index *, const dict_index_t *,
+    const lizard::Ha_ddl_policy *ddl_policy);
 
 template <typename Table>
 void dd_write_table(dd::Object_id dd_space_id, Table *dd_table,
-                    const dict_table_t *table) {
+                    const dict_table_t *table,
+                    const lizard::Ha_ddl_policy *ddl_policy) {
   /* Only set the tablespace id for tables in innodb_system tablespace */
   if (dd_space_id == dict_sys_t::s_dd_sys_space_id) {
     dd_table->set_tablespace_id(dd_space_id);
@@ -2527,6 +2547,8 @@ void dd_write_table(dd::Object_id dd_space_id, Table *dd_table,
         dd_table_key_strings[DD_TABLE_DATA_DIRECTORY], true);
   }
 
+  lizard::dd_write_table_fba(table, dd_table);
+
   for (auto dd_index : *dd_table->indexes()) {
     /* Don't assume the index orders are the same, even on
     CREATE TABLE. This could be called from TRUNCATE path,
@@ -2534,7 +2556,7 @@ void dd_write_table(dd::Object_id dd_space_id, Table *dd_table,
     the out-of-sync order */
     const dict_index_t *index = dd_find_index(table, dd_index);
     ut_ad(index != nullptr);
-    dd_write_index(dd_space_id, dd_index, index);
+    dd_write_index(dd_space_id, dd_index, index, ddl_policy);
   }
 
   bool has_row_versions = table->has_row_versions();
@@ -2607,9 +2629,11 @@ void dd_write_table(dd::Object_id dd_space_id, Table *dd_table,
 }
 
 template void dd_write_table<dd::Table>(dd::Object_id, dd::Table *,
-                                        const dict_table_t *);
+                                        const dict_table_t *,
+                                        const lizard::Ha_ddl_policy *ddl_policy);
 template void dd_write_table<dd::Partition>(dd::Object_id, dd::Partition *,
-                                            const dict_table_t *);
+                                            const dict_table_t *,
+                                            const lizard::Ha_ddl_policy *ddl_policy);
 
 template <typename Table>
 void dd_set_table_options(Table *dd_table, const dict_table_t *table) {
@@ -2795,10 +2819,9 @@ template const dict_index_t *dd_find_index<dd::Partition_index>(
 @retval         0 on success
 @retval         HA_ERR_INDEX_COL_TOO_LONG if a column is too long
 @retval         HA_ERR_TOO_BIG_ROW if the record is too long */
-[[nodiscard]] static int dd_fill_one_dict_index(const dd::Index *dd_index,
-                                                dict_table_t *table,
-                                                const TABLE_SHARE *form,
-                                                uint key_num) {
+[[nodiscard]] static int dd_fill_one_dict_index(
+    const dd::Index *dd_index, dict_table_t *table, const TABLE_SHARE *form,
+    uint key_num, const lizard::Index_policy &index_policy) {
   const KEY &key = form->key_info[key_num];
   ulint type = 0;
   unsigned n_fields = key.user_defined_key_parts;
@@ -2833,6 +2856,9 @@ template const dict_index_t *dd_find_index<dd::Partition_index>(
 
   dict_index_t *index =
       dict_mem_index_create(table->name.m_name, key.name, 0, type, n_fields);
+
+  /** Lizard-4.0: Set stored gpp. */
+  lizard::dd_fill_dict_index_format(index_policy, table, index);
 
   index->n_uniq = n_uniq;
 
@@ -3067,12 +3093,16 @@ inline void dd_copy_from_table_share(THD *thd, dict_table_t *table,
 @param[in]      m_form          MySQL table definition
 @param[in,out]  m_table         InnoDB table definition
 @param[in]      m_thd           THD instance
+@param[in]      indexes_policy  Indexes policy
 @return 0 if successful, otherwise error number */
 inline int dd_fill_dict_index(const dd::Table &dd_table, const TABLE *m_form,
-                              dict_table_t *m_table, THD *m_thd) {
+                              dict_table_t *m_table, THD *m_thd,
+                              const lizard::Indexes_policy &indexes_policy) {
   int error = 0;
 
   ut_ad(!dict_sys_mutex_own());
+
+  ut_a(indexes_policy.size() == dd_table.indexes().size());
 
   /* Create the keys */
   if (m_form->s->keys == 0 || m_form->s->primary_key == MAX_KEY) {
@@ -3092,7 +3122,8 @@ inline int dd_fill_dict_index(const dd::Table &dd_table, const TABLE *m_form,
     /* In InnoDB, the clustered index must always be
     created first. */
     error = dd_fill_one_dict_index(dd_table.indexes()[m_form->s->primary_key],
-                                   m_table, m_form->s, m_form->s->primary_key);
+                                   m_table, m_form->s, m_form->s->primary_key,
+                                   indexes_policy[m_form->s->primary_key]);
     if (error != 0) {
       goto dd_error;
     }
@@ -3102,7 +3133,7 @@ inline int dd_fill_dict_index(const dd::Table &dd_table, const TABLE *m_form,
     ulint dd_index_num = i + ((m_form->s->primary_key == MAX_KEY) ? 1 : 0);
 
     error = dd_fill_one_dict_index(dd_table.indexes()[dd_index_num], m_table,
-                                   m_form->s, i);
+                                   m_form->s, i, indexes_policy[dd_index_num]);
     if (error != 0) {
       goto dd_error;
     }
@@ -3150,6 +3181,17 @@ inline int dd_fill_dict_index(const dd::Table &dd_table, const TABLE *m_form,
         doc_id_index = dict_mem_index_create(
             m_table->name.m_name, FTS_DOC_ID_INDEX_NAME, 0, DICT_UNIQUE, 1);
         doc_id_index->add_field(FTS_DOC_ID_COL_NAME, 0, true);
+
+        const lizard::Index_policy *index_policy = nullptr;
+        for (ulint i = 0; i < dd_table.indexes().size(); i++) {
+          if (dd_table.indexes()[i]->name() == FTS_DOC_ID_INDEX_NAME) {
+            index_policy = &indexes_policy[i];
+            break;
+          }
+        }
+        ut_ad(index_policy);
+        /** Lizard-4.0: Set stored gpp. */
+        lizard::dd_fill_dict_index_format(*index_policy, m_table, doc_id_index);
 
         dberr_t new_err = dict_index_add_to_cache(m_table, doc_id_index,
                                                   doc_id_index->page, false);
@@ -3637,14 +3679,13 @@ without any indexes.
 @param[in]      strict          whether to use innodb_strict_mode=ON
 @param[in]      m_thd           thread THD
 @param[in]      is_implicit     if it is an implicit tablespace
+@param[in]      table_policy    table policy
 @return created dict_table_t on success or nullptr */
 template <typename Table>
-static inline dict_table_t *dd_fill_dict_table(const Table *dd_tab,
-                                               const TABLE *m_form,
-                                               const char *norm_name,
-                                               HA_CREATE_INFO *create_info,
-                                               bool zip_allowed, bool strict,
-                                               THD *m_thd, bool is_implicit) {
+static inline dict_table_t *dd_fill_dict_table(
+    const Table *dd_tab, const TABLE *m_form, const char *norm_name,
+    HA_CREATE_INFO *create_info, bool zip_allowed, bool strict, THD *m_thd,
+    bool is_implicit, const lizard::Table_policy &table_policy) {
   ut_ad(dd_tab != nullptr);
   ut_ad(m_thd != nullptr);
   ut_ad(norm_name != nullptr);
@@ -3876,6 +3917,8 @@ static inline dict_table_t *dd_fill_dict_table(const Table *dd_tab,
     encryption flag */
     DICT_TF2_FLAG_SET(m_table, DICT_TF2_ENCRYPTION_FILE_PER_TABLE);
   }
+
+  lizard::dd_fill_dict_table_fba(table_policy, m_table);
 
   mem_heap_t *heap = mem_heap_create(1000, UT_LOCATION_HERE);
 
@@ -4936,16 +4979,22 @@ dict_table_t *dd_open_table_one(dd::cache::Dictionary_client *client,
   bool first_index = true;
 
   /* Create dict_table_t for the table */
-  dict_table_t *m_table = dd_fill_dict_table(
-      dd_table, table, norm_name, nullptr, zip_allowed, strict, thd, implicit);
+  lizard::Table_policy table_policy;
+  lizard::dd_fill_table_policy(table_policy, dd_table->table());
+  dict_table_t *m_table =
+      dd_fill_dict_table(dd_table, table, norm_name, nullptr, zip_allowed,
+                         strict, thd, implicit, table_policy);
 
   if (m_table == nullptr) {
     return nullptr;
   }
 
   /* Create dict_index_t for the table */
+  const auto indexes_policy = lizard::dd_fill_indexes_policy(dd_table);
+
   int ret;
-  ret = dd_fill_dict_index(dd_table->table(), table, m_table, thd);
+  ret = dd_fill_dict_index(dd_table->table(), table, m_table, thd,
+                           indexes_policy);
 
   if (ret != 0) {
     return nullptr;
@@ -6429,7 +6478,7 @@ bool dd_create_fts_index_table(const dict_table_t *parent_table,
 
   table->dd_space_id = dd_space_id;
 
-  dd_write_table(dd_space_id, dd_table, table);
+  dd_write_table(dd_space_id, dd_table, table, nullptr);
 
   MDL_ticket *mdl_ticket = nullptr;
   if (dd::acquire_exclusive_table_mdl(thd, db_name.c_str(), table_name.c_str(),
@@ -6570,7 +6619,7 @@ bool dd_create_fts_common_table(const dict_table_t *parent_table,
 
   table->dd_space_id = dd_space_id;
 
-  dd_write_table(dd_space_id, dd_table, table);
+  dd_write_table(dd_space_id, dd_table, table, nullptr);
 
   MDL_ticket *mdl_ticket = nullptr;
   if (dd::acquire_exclusive_table_mdl(thd, db_name.c_str(), table_name.c_str(),

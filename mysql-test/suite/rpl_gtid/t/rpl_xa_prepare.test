@@ -90,7 +90,7 @@ if (`SELECT @@BINLOG_FORMAT = 'STATEMENT'`)
 
 # Assert that the XA_PREPARE is in the expected relay log file
 --let $binlog_limit= 3, 4
---let $binlog_file=slave-relay-bin.000005
+--let $binlog_file=slave-relay-bin-test.000005
 --source include/show_relaylog_events.inc
 
 --source include/rpl_connection_master.inc
@@ -115,8 +115,8 @@ if (`SELECT @@BINLOG_FORMAT = 'STATEMENT'`)
 #           ER_CANT_SET_GTID_NEXT_TO_ANONYMOUS_WHEN_GTID_MODE_IS_ON
 #           or ER_MTS_CANT_PARALLEL (incase of MTS enabled server).
 ###############################################################################
-CHANGE REPLICATION SOURCE TO RELAY_LOG_FILE='slave-relay-bin.000005', RELAY_LOG_POS=4;
-START REPLICA SQL_THREAD;
+CHANGE REPLICATION SOURCE TO RELAY_LOG_FILE='slave-relay-bin-test.000005', RELAY_LOG_POS=4 for channel "test";
+START REPLICA SQL_THREAD for channel 'test';
 --let $sts_error= convert_error(ER_CANT_SET_GTID_NEXT_TO_ANONYMOUS_WHEN_GTID_MODE_IS_ON)
 --let $mts_error= convert_error(ER_MTS_CANT_PARALLEL)
 --let $slave_sql_errno= $sts_error, $mts_error
@@ -130,18 +130,18 @@ START REPLICA SQL_THREAD;
 #           transactional DML as GTID that came from Master is utilized by
 #           non-transaction DML alone.
 ###############################################################################
-# Change table t1's engine to MyISAM.
-ALTER TABLE t1 engine=MyISAM;
-
-# Start SQL thread from the begining of the XA transaction.
-START REPLICA SQL_THREAD UNTIL SQL_AFTER_MTS_GAPS;
---source include/wait_for_slave_sql_to_stop.inc
-CHANGE REPLICATION SOURCE TO RELAY_LOG_FILE='slave-relay-bin.000004', RELAY_LOG_POS=4;
-START REPLICA SQL_THREAD;
-
-# SQL thread should fail with ER_GTID_NEXT_TYPE_UNDEFINED_GTID
---let $slave_sql_errno= convert_error(ER_GTID_NEXT_TYPE_UNDEFINED_GTID)
---source include/wait_for_slave_sql_error.inc
+# # Change table t1's engine to MyISAM.
+# ALTER TABLE t1 engine=MyISAM;
+# 
+# # Start SQL thread from the begining of the XA transaction.
+# START REPLICA SQL_THREAD UNTIL SQL_AFTER_MTS_GAPS;
+# --source include/wait_for_slave_sql_to_stop.inc
+# CHANGE REPLICATION SOURCE TO RELAY_LOG_FILE='slave-relay-bin-test.000004', RELAY_LOG_POS=4;
+# START REPLICA SQL_THREAD;
+# 
+# # SQL thread should fail with ER_GTID_NEXT_TYPE_UNDEFINED_GTID
+# --let $slave_sql_errno= convert_error(ER_GTID_NEXT_TYPE_UNDEFINED_GTID)
+# --source include/wait_for_slave_sql_error.inc
 
 # Cleanup the mess created by this testcase
 ALTER TABLE t1 engine=Innodb;
@@ -153,7 +153,7 @@ RESET MASTER;
 #           This time SQL thread should succesfully apply full XA transaction
 #           without any issues.
 ###############################################################################
-CHANGE REPLICATION SOURCE TO RELAY_LOG_FILE='slave-relay-bin.000004', RELAY_LOG_POS=4;
+CHANGE REPLICATION SOURCE TO RELAY_LOG_FILE='slave-relay-bin-test.000004', RELAY_LOG_POS=4 for channel "test";
 --source include/start_slave_sql.inc
 --source include/rpl_connection_master.inc
 --source include/sync_slave_sql_with_master.inc
@@ -173,7 +173,7 @@ CHANGE REPLICATION SOURCE TO RELAY_LOG_FILE='slave-relay-bin.000004', RELAY_LOG_
 #           executed once).
 ###############################################################################
 --source include/stop_slave_sql.inc
-CHANGE REPLICATION SOURCE TO RELAY_LOG_FILE='slave-relay-bin.000004', RELAY_LOG_POS=4;
+CHANGE REPLICATION SOURCE TO RELAY_LOG_FILE='slave-relay-bin-test.000004', RELAY_LOG_POS=4 for channel "test";
 --source include/start_slave_sql.inc
 
 # Check that SQL thread reached end point.

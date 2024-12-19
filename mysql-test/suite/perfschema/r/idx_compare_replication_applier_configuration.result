@@ -5,7 +5,7 @@ Note	####	Storing MySQL user name or password information in the master info rep
 [connection master]
 select * from performance_schema.replication_applier_configuration;
 CHANNEL_NAME	DESIRED_DELAY	PRIVILEGE_CHECKS_USER	REQUIRE_ROW_FORMAT	REQUIRE_TABLE_PRIMARY_KEY_CHECK	ASSIGN_GTIDS_TO_ANONYMOUS_TRANSACTIONS_TYPE	ASSIGN_GTIDS_TO_ANONYMOUS_TRANSACTIONS_VALUE
-	0	NULL	NO	STREAM	OFF	NULL
+test	0	NULL	NO	STREAM	OFF	NULL
 set @pfs_columns = "*";
 TABLE: "replication_applier_configuration"
 INDEXES: PK (CHANNEL_NAME)
@@ -35,7 +35,7 @@ SELECT * FROM performance_schema.replication_applier_configuration WHERE CHANNEL
 
 OK: Handler_read_key
 
-OK: Result set: Non-empty  Expected: Non-empty
+OK: Result set: Empty  Expected: Empty
 
 OK: Extra rows: 0  Missing rows: 0
 ========
@@ -43,7 +43,7 @@ SELECT * FROM performance_schema.replication_applier_configuration WHERE CHANNEL
 
 OK: Handler_read_key
 
-OK: Result set: Empty  Expected: Empty
+OK: Result set: Non-empty  Expected: Non-empty
 
 OK: Extra rows: 0  Missing rows: 0
 ========

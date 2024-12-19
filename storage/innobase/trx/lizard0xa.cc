@@ -30,20 +30,22 @@ this program; if not, write to the Free Software Foundation, Inc.,
  Created 2021-08-10 by Jianwei.zhao
  *******************************************************/
 
-#include "lizard0xa.h"
 #include "ha_innodb.h"
-#include "lizard0ha_innodb.h"
-#include "lizard0read0types.h"
-#include "lizard0undo.h"
-#include "lizard0ut.h"
+#include "trx0sys.h"
+
 #include "m_ctype.h"
 #include "mysql/plugin.h"
 #include "sql/sql_class.h"
 #include "sql/xa.h"
-#include "trx0sys.h"
-
 #include "sql/sql_class.h"
 #include "sql/sql_plugin_var.h"
+
+#include "lizard0xa.h"
+#include "lizard0ha_innodb.h"
+#include "lizard0read0types.h"
+#include "lizard0undo.h"
+#include "lizard0ut.h"
+#include "lizard0undo.h"
 
 /** Bqual format: 'xxx@nnnn' */
 static unsigned int XID_GROUP_SUFFIX_SIZE = 5;
@@ -197,107 +199,7 @@ struct TrxSysLockable {
   void unlock() { trx_sys_mutex_exit(); }
 };
 
-static bool search_recovery_rollback_trx_by_xid(const XID *xid,
-                                                Transaction_info *info) {
-  bool is_recovered;
-  trx_state_t state;
-
-  if (!srv_thread_is_active(srv_threads.m_trx_recovery_rollback)) {
-    return false;
-  }
-
-  std::lock_guard<TrxSysLockable> lock_guard(TrxSysLockable::instance());
-  for (auto trx : trx_sys->rw_trx_list) {
-    assert_trx_in_rw_list(trx);
-    ut_ad(trx_sys_mutex_own());
-
-    trx_mutex_enter(trx);
-    is_recovered = trx->is_recovered;
-    state = trx->state.load(std::memory_order_relaxed);
-    trx_mutex_exit(trx);
-
-    /** The trx that (is_recovered = 1 && state == TRX_STATE_ACTIVE) must being
-    rollbacked. */
-    if (trx->xid->eq(xid) && is_recovered) {
-      switch (state) {
-        case TRX_STATE_COMMITTED_IN_MEMORY:
-        case TRX_STATE_ACTIVE:
-          info->state = TRANS_STATE_ROLLBACKING_BACKGROUND;
-          info->gcn.set(MYSQL_GCN_NULL, MYSQL_CSR_NONE);
-          return true;
-        case TRX_STATE_PREPARED:
-          /** In actual use, the transaction_cache will be searched first, and
-          then the transaction information will be searched in the engine. So
-          actually can't come into here. */
-          return false;
-        case TRX_STATE_NOT_STARTED:
-        case TRX_STATE_FORCED_ROLLBACK:
-          ut_error;
-          break;
-      }
-    }
-  }
-
-  return false;
-}
-
-/**
-  Find transactions in the finalized state by XID.
-
-  @params[in] xid               XID
-  @param[out] Transaction_info  Corresponding transaction info
-
-  @retval     true if the corresponding transaction is found, false otherwise.
-*/
-static bool serach_history_trx_by_xid(const XID *xid, Transaction_info *info) {
-  trx_rseg_t *rseg;
-  txn_undo_hdr_t txn_hdr;
-  bool found;
-
-  rseg = get_txn_rseg_by_xid(xid);
-
-  ut_ad(rseg);
-
-  found = txn_rseg_find_trx_info_by_xid(rseg, xid, &txn_hdr);
-
-  if (found) {
-    switch (txn_hdr.state) {
-      case TXN_UNDO_LOG_COMMITED:
-      case TXN_UNDO_LOG_PURGED:
-        if (!txn_hdr.have_tags_1()) {
-          info->state = TRANS_STATE_UNKNOWN;
-        } else {
-          info->state = txn_hdr.is_rollback() ? TRANS_STATE_ROLLBACK
-                                              : TRANS_STATE_COMMITTED;
-        }
-        txn_hdr.image.copy_to_my_gcn(&info->gcn);
-        break;
-      case TXN_UNDO_LOG_ACTIVE:
-        /** Skip txn in active state. */
-        found = false;
-        break;
-      default:
-        ut_error;
-    }
-  }
-  return found;
-}
-
-bool trx_search_by_xid(const XID *xid, Transaction_info *info) {
-  info->state = TRANS_STATE_UNKNOWN;
-  info->gcn.set(MYSQL_GCN_NULL, MYSQL_CSR_NONE);
-
-  /** 1. Search trx that being rollbacked by backgroud thread in trx active
-  list. */
-  if (search_recovery_rollback_trx_by_xid(xid, info)) {
-    return true;
-  }
-
-  /** 2. Search history transaction in the rseg. */
-  return serach_history_trx_by_xid(xid, info);
-}
-
-const XID *trx_slot_get_xa_xid_from_thd(THD *thd) {
+const XID *get_external_xid_from_thd(THD *thd) {
   const XID *xid;
 
   if (!thd) {
@@ -315,6 +217,200 @@ const XID *trx_slot_get_xa_xid_from_thd(THD *thd) {
   ut_ad(!xid->is_null() && !xid->get_my_xid());
 
   return xid;
+}
+
+static void trx_load_xa_info(trx_t *trx, MyXAInfo *info) {
+  trx_undo_t *txn_undo = nullptr;
+  slot_ptr_t slot_ptr = 0;
+  /** Only used for detached xa for now. */
+  ut_ad(info->status == XA_status::DETACHED_PREPARE);
+
+  txn_undo = txn_undo_get(trx);
+  if (txn_undo) {
+    undo_encode_slot_addr(txn_undo->slot_addr, &slot_ptr);
+    info->slot = {trx->id, slot_ptr};
+    if (!txn_undo->pmmt.is_null()) {
+      txn_undo->pmmt.copy_to_my_gcn(&info->gcn);
+    } else {
+      /* Case: prepare without ac_prepare. */
+      info->gcn.reset();
+    }
+    info->branch = txn_undo->branch;
+    info->maddr = txn_undo->maddr;
+  } else {
+    /** It seems impossible to get here for detached XA, because empty detached
+    xa trx will be rollback directly when doing "xa prepare". See
+    innodb_replace_trx_in_thd. */
+    info->slot = {trx->id, 0};
+    info->gcn.reset();
+    info->branch.reset();
+    info->maddr.reset();
+  }
+}
+
+/**
+  Search detached prepare XA transaction info by XID. NOTES:
+  Assume holding xid_state lock, can't happen parallel rollback or commit.
+
+  @param[in]  XID   xid
+  @param[out] info  XA trx info
+
+  @return true if found.
+          false if not found.
+*/
+bool trx_search_detach_prepare_by_xid(const XID *xid, MyXAInfo *info) {
+  trx_state_t state;
+
+  std::lock_guard<TrxSysLockable> lock_guard(TrxSysLockable::instance());
+  for (auto trx : trx_sys->rw_trx_list) {
+    trx_mutex_enter(trx);
+    state = trx->state.load(std::memory_order_relaxed);
+    trx_mutex_exit(trx);
+
+    if (state != TRX_STATE_PREPARED || !trx->xid->eq(xid)) {
+      continue;
+    }
+
+    /**
+      1. The transaction was detached once. So the undo state must be at
+         least PREPARED_IN_TC.
+      2. Holding the trx_sys mutex, so cannot become
+         TRX_STATE_COMMITTED_IN_MEMORY.
+      3. Holding the XID_STATE lock, so no concurrent commits or rollbacks are
+         in progress.
+    */
+    ut_a(trx->mysql_thd == nullptr);
+    ut_a(trx_is_prepared_in_tc(trx));
+
+    info->status = XA_status::DETACHED_PREPARE;
+    trx_load_xa_info(trx, info);
+
+    return true;
+  }
+
+  return false;
+}
+
+/**
+  Search rollbacking trx in background by XID. If found, such a transaction is
+  considered as ATTACHED.
+
+  @param[in]  XID   xid
+  @param[out] info  XA trx info
+
+  @return true if found.
+          false if not found.
+*/
+bool trx_search_rollback_background_by_xid(const XID *xid, MyXAInfo *info) {
+  bool is_recovered;
+  trx_state_t state;
+
+  std::lock_guard<TrxSysLockable> lock_guard(TrxSysLockable::instance());
+  for (auto trx : trx_sys->rw_trx_list) {
+    trx_mutex_enter(trx);
+    is_recovered = trx->is_recovered;
+    state = trx->state.load(std::memory_order_relaxed);
+    trx_mutex_exit(trx);
+
+    if (!is_recovered) continue;
+
+    switch (state) {
+      case TRX_STATE_COMMITTED_IN_MEMORY:
+      case TRX_STATE_NOT_STARTED:
+      case TRX_STATE_FORCED_ROLLBACK:
+        /** recovered transaction can only be TRX_STATE_PREPARED or
+        TRX_STATE_ACTIVE. See trx_lists_init_at_db_start. */
+        ut_error;
+        break;
+      case TRX_STATE_PREPARED:
+        if (trx->xid->eq(xid)) {
+          /** In actual use, the transaction_cache will be searched first, and
+          then the transaction information will be searched in the engine. So
+          actually can't come into here. */
+          return false;
+        }
+        continue;
+      case TRX_STATE_ACTIVE:
+        if (!trx->xid->eq(xid)) {
+          continue;
+        }
+        break;
+    }
+
+    /**
+      1. The trx that (is_recovered = 1 && state == TRX_STATE_ACTIVE) must being
+         rollbacked backgroud.
+      2. Holding trx_sys mutex, so can't be committed and can't be freed.
+      3. NOTES: Assume that the trx must not in transaction cache. So no one
+         can attach it.
+
+      So trx->xid can be read safely.
+    */
+    ut_a(is_recovered && state == TRX_STATE_ACTIVE && trx->xid->eq(xid));
+
+    /** Attached by background thread. */
+    *info = MY_XA_INFO_ATTACH;
+
+    return true;
+  }
+
+  return false;
+}
+
+/**
+  Find transactions in the finalized state by XID.
+
+  @params[in] xid               XID
+  @param[out] info              Corresponding transaction info
+
+  @retval     true if the corresponding transaction is found, false otherwise.
+*/
+bool trx_search_history_by_xid(const XID *xid, MyXAInfo *info) {
+  trx_rseg_t *rseg;
+  txn_slot_t txn_slot;
+  bool found;
+
+  rseg = get_txn_rseg_by_xid(xid);
+
+  ut_ad(rseg);
+
+  found = txn_rseg_find_trx_info_by_xid(rseg, xid, &txn_slot);
+
+  if (!found) {
+    return false;
+  }
+
+  switch (txn_slot.state) {
+    case TXN_UNDO_LOG_COMMITED:
+    case TXN_UNDO_LOG_PURGED:
+      if (!txn_slot.tags_allocated()) {
+        /** Found old format, not support. */
+        *info = MY_XA_INFO_NOT_SUPPORT;
+        break;
+      }
+
+      info->status =
+          txn_slot.is_rollback() ? XA_status::ROLLBACK : XA_status::COMMIT;
+
+      info->slot = {txn_slot.trx_id, txn_slot.slot_ptr};
+
+      /** if TXN_UNDO_LOG_COMMITED or TXN_UNDO_LOG_PURGED, must be
+      non proposal. */
+      txn_slot.image.copy_to_my_gcn(&info->gcn);
+
+      info->branch = txn_slot.branch;
+      info->maddr = txn_slot.maddr;
+
+      break;
+    case TXN_UNDO_LOG_ACTIVE:
+      /** Skip txn in active state. */
+      found = false;
+      break;
+    default:
+      ut_error;
+  }
+
+  return found;
 }
 
 bool trx_slot_check_validity(const trx_t *trx) {
@@ -357,4 +453,121 @@ bool trx_slot_check_validity(const trx_t *trx) {
 }
 
 }  // namespace xa
+
+void decide_xa_when_prepare(MyGCN *gcn) {
+  gcn_t sys_gcn;
+  gcn_tuple_t proposal;
+
+  if (gcn->decided()) {
+    goto push_up;
+  }
+
+  /** Proposal GCN of Async Commit */
+  ut_a(gcn->is_assigned());
+  ut_a(gcn->is_pmmt_gcn());
+
+  sys_gcn = lizard::gcs_load_gcn();
+  if (sys_gcn > gcn->gcn()) {
+    proposal = {sys_gcn, CSR_AUTOMATIC};
+  } else {
+    proposal = {gcn->gcn(), CSR_ASSIGNED};
+  }
+
+  gcn->decide_if_ac_prepare(proposal);
+
+push_up:
+  gcn->push_up_sys_gcn();
+}
+
+static void decide_xa_master_addr(const trx_t *trx, xa_addr_t *master_addr) {
+  if (master_addr->is_null()) {
+    return;
+  }
+
+  if (!trx) {
+    master_addr->reset();
+    return;
+  }
+
+  ut_a(trx->txn_desc.maddr.is_null());
+
+  ut_ad(master_addr->is_valid());
+  if (trx->id != master_addr->tid) {
+    ut_a(undo_ptr_get_slot(trx->txn_desc.undo_ptr) != master_addr->slot_ptr);
+  } else {
+    master_addr->reset();
+  }
+}
+
+/**
+  Decide (external/internal) XA releated status when commit, including
+  COMMIT_GCN, CSR, XA_MASTER_ADDR and others.
+
+  @params[in]       trx               releated trx
+  @params[in/out]   gcn               MyGCN that will be decided
+  @params[in/out]   master_addr       XA master address for AC
+*/
+void decide_xa_when_commit(const trx_t *trx, MyGCN *gcn,
+                           xa_addr_t *master_addr) {
+  proposal_mark_t pmmt;
+  trx_undo_t *txn_undo = nullptr;
+  csr_t csr;
+  bool external_automatic;
+
+  /** Load from SYS_GCN if no external commit GCN. */
+  if (gcn->is_null()) {
+    gcn->decide_if_null();
+    goto push_up;
+  }
+
+  /** If already decided, then just try to push up. */
+  if (gcn->decided()) {
+    goto push_up;
+  }
+
+  /**
+    Async Commit:
+    1. Decide commit GCN by external GCN and proposal GCN.
+    2. Decide master address.
+  */
+
+  if ((txn_undo = txn_undo_get(trx))) {
+    pmmt = txn_undo->pmmt;
+  }
+  /**
+    If no TXN, can not do Async Commit. Like:
+    xa start '';
+    ...update...
+    xa end '';
+    xa prepare '';
+    call ac_commit(...);
+  */
+  if (pmmt.is_null()) {
+    /** Pretend to normal XA COMMIT rather than AC COMMIT. */
+    gcn->assign_from_var(gcn->gcn());
+    goto push_up;
+  }
+
+  ut_a(gcn->csr() == CSR_ASSIGNED);
+  assert_trx_commit_mark_state(trx, SCN_STATE_INITIAL);
+
+  if (gcn->gcn() < pmmt.gcn) {
+    char err_msg[128];
+    snprintf(err_msg, sizeof(err_msg),
+             "Transaction (%s), external commit gcn (%lu) < proposal gcn (%lu) "
+             "when commit.",
+             trx->xid->key(), gcn->gcn(), pmmt.gcn);
+    lizard_warn(ER_LIZARD) << err_msg;
+  }
+
+  external_automatic = (gcn->gcn() > pmmt.gcn);
+  csr = external_automatic ? CSR_AUTOMATIC : pmmt.csr;
+  gcn->decide_if_ac_commit(csr, external_automatic);
+
+push_up:
+  gcn->push_up_sys_gcn();
+
+  decide_xa_master_addr(trx, master_addr);
+}
+
 }  // namespace lizard

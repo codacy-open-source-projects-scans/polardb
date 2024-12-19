@@ -1,4 +1,4 @@
-/* Copyright (c) 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -116,6 +116,14 @@ class Sql_cmd_xa_commit : public Sql_cmd_xa_second_phase {
       @retval true   Failure
   */
   bool process_detached_xa_commit(THD *thd);
+
+ public:
+  /** Lizard: Delay my_ok because we want to send result set. */
+  void set_delay_ok() { m_delay_ok = true; }
+
+ private:
+  /** Lizard: True if we want to delay OK. */
+  bool m_delay_ok;
 };
 
 #endif  // XA_SQL_CMD_XA_COMMIT

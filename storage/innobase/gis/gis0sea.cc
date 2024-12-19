@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+Copyright (c) 2014, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -1362,7 +1362,7 @@ static void rtr_non_leaf_insert_stack_push(
       ut::malloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, sizeof(*my_cursor)));
 
   my_cursor->init();
-  ut_ad(my_cursor->m_cleanout_pages == nullptr);
+  ut_ad(my_cursor->m_cleanout == nullptr);
 
   page_cur_position(rec, block, my_cursor->get_page_cur());
 

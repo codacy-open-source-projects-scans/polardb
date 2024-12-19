@@ -28,4 +28,4 @@ include/stop_slave_sql.inc [FOR CHANNEL 'ch1']
 include/rpl_reset_slave.inc
 include/rpl_end.inc
 Warnings:
-Note	3084	Replication thread(s) for channel '' are already stopped.
+Note	3084	Replication thread(s) for channel 'test' are already stopped.

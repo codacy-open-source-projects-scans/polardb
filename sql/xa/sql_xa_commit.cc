@@ -1,4 +1,4 @@
-/* Copyright (c) 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -34,6 +34,7 @@
 #include "sql/tc_log.h"         // tc_log
 #include "sql/transaction.h"  // trans_reset_one_shot_chistics, trans_track_end_trx
 #include "sql/transaction_info.h"  // Transaction_ctx
+#include "sql/mysqld.h"  // innodb_hton
 
 namespace {
 /**
@@ -52,7 +53,9 @@ void force_rollback(THD *thd);
 
 Sql_cmd_xa_commit::Sql_cmd_xa_commit(xid_t *xid_arg,
                                      enum xa_option_words xa_option)
-    : Sql_cmd_xa_second_phase{xid_arg}, m_xa_opt{xa_option} {}
+    : Sql_cmd_xa_second_phase{xid_arg},
+      m_xa_opt{xa_option},
+      m_delay_ok(false) {}
 
 enum_sql_command Sql_cmd_xa_commit::sql_command_code() const {
   return SQLCOM_XA_COMMIT;
@@ -71,7 +74,9 @@ bool Sql_cmd_xa_commit::execute(THD *thd) {
     */
     trans_reset_one_shot_chistics(thd);
 
-    my_ok(thd);
+    if (!m_delay_ok) {
+      my_ok(thd);
+    }
   }
   return st;
 }
@@ -95,6 +100,7 @@ bool Sql_cmd_xa_commit::process_attached_xa_commit(THD *thd) const {
   DBUG_TRACE;
   bool res = false;
   bool gtid_error = false, need_clear_owned_gtid = false;
+
   auto xid_state = thd->get_transaction()->xid_state();
 
   if (xid_state->xa_trans_rolled_back()) {
@@ -199,7 +205,6 @@ bool Sql_cmd_xa_commit::process_detached_xa_commit(THD *thd) {
       [this]() -> void { this->release_locks(); }};
   this->setup_thd_context(thd);
   if (this->enter_commit_order(thd)) return true;
-  this->attach_again();
 
   CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("before_commit_xa_trx");
   this->assign_xid_to_thd(thd);

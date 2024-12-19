@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -45,6 +45,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <vector>
 
 #include "lizard0scn0types.h"
+#include "lizard0txn0service.h"
+#include "lizard0trx0service.h"
 
 /** printf(3) format used for printing DB_TRX_ID and other system fields */
 #define TRX_ID_FMT IB_ID_FMT
@@ -135,8 +137,11 @@ struct trx_named_savept_t;
 
 /** Row identifier (DB_ROW_ID, DATA_ROW_ID) */
 typedef ib_id_t row_id_t;
+
 /** Transaction identifier (DB_TRX_ID, DATA_TRX_ID) */
-typedef ib_id_t trx_id_t;
+//Lizard: see lizard0trx0service.h
+//typedef ib_id_t trx_id_t;
+
 /** Rollback pointer (DB_ROLL_PTR, DATA_ROLL_PTR) */
 typedef ib_id_t roll_ptr_t;
 /** Undo number */
@@ -283,13 +288,33 @@ struct trx_rseg_t {
   std::atomic<size_t> trx_ref_count{};
 
   /** SCN number of the last not yet purged log, it still is in history list */
-  scn_t last_scn;
+  commit_order_t last_ommt;
+
+  /** Whether it's txn rollsegment. */
+  bool is_txn;
 
   /** The maximum UTC in the oldest node of the txn free list.
    * This value is used to determine whether there are avaiable txns in the free
    * list can be reused in a quick mode. If the oldest node needs to be
    * retained, then there is no avaiable txn for reuse. */
-  utc_t oldest_utc_in_txn_free;
+  commit_order_t last_free_ommt;
+
+  /*--------------------------------------------------------*/
+  /** Fields for erase sys. */
+
+  /** Page number of the last not yet erased log header in the semi-purge
+  list; FIL_NULL if all list erased */
+  page_no_t last_erase_page_no{};
+
+  /** Byte offset of the last not yet erased log header */
+  size_t last_erase_offset{};
+
+  /** true if the last not yet erased log needs erasing */
+  bool last_erase_del_marks{};
+
+  /** Commit order of the last not yet erased log, it still is in semi-purge
+   * list */
+  commit_order_t last_erase_ommt;
 
   std::ostream &print(std::ostream &out) const {
     out << "[trx_rseg_t: this=" << (void *)this << ", id=" << id

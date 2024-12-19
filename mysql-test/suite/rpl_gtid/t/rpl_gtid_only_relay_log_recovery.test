@@ -34,7 +34,7 @@
 
 --source include/gtid_utils.inc
 
-CHANGE REPLICATION SOURCE TO GTID_ONLY = 1, REQUIRE_ROW_FORMAT=1;
+CHANGE REPLICATION SOURCE TO GTID_ONLY = 1, REQUIRE_ROW_FORMAT=1 for channel "test";
 
 --source include/start_slave.inc
 
@@ -76,7 +76,7 @@ INSERT INTO t1 VALUES(4);
 
 --source include/sync_slave_sql_with_master.inc
 
---let $local_gtid_set= query_get_value(SHOW REPLICA STATUS, Retrieved_Gtid_Set, 1)
+--let $local_gtid_set= query_get_value(SHOW REPLICA STATUS for channel 'test', Retrieved_Gtid_Set, 1)
 
 --let $assert_text= Exactly 1 GTIDs should have been retrieved since last invocation
 --let $assert_cond= GTID_COUNT("$local_gtid_set") = 1
@@ -93,7 +93,7 @@ INSERT INTO t1 VALUES(4);
 
 --source include/stop_slave.inc
 
-CHANGE REPLICATION SOURCE TO GTID_ONLY = 0, REQUIRE_ROW_FORMAT=0;
+CHANGE REPLICATION SOURCE TO GTID_ONLY = 0, REQUIRE_ROW_FORMAT=0 for channel "test";
 
 --source include/start_slave.inc
 

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -237,6 +237,13 @@ struct btr_pcur_t {
     m_old_rec_buf = nullptr;
   }
 
+  void free_cleanout() {
+    if (m_cleanout != nullptr) {
+      ut::delete_(m_cleanout);
+      m_cleanout = nullptr;
+    }
+  }
+
 #ifndef UNIV_HOTBACKUP
 
   /** Gets the rel_pos field for a cursor whose position has been stored.
@@ -388,6 +395,11 @@ struct btr_pcur_t {
   allocated and resetting the other members to their initial values. */
   void reset();
 
+  /** Resets the m_btr_cur to a non-positioned state. Unlike reset() or close()
+   * functions, this method does not free old_rec_buf; it solely reinitializes a
+   * previously positioned m_btr_cur to become non-positioned.*/
+  void reset_btr_cur();
+
   /** Copies the stored position of a pcur to another pcur.
   @param[in,out]        dst                   Which will receive the position
   info.
@@ -503,18 +515,12 @@ struct btr_pcur_t {
   tablespace, otherwise undefined */
   import_ctx_t *import_ctx{nullptr};
 
-  /** Collected pages that need to cleanout */
-  lizard::Cleanout_pages *m_cleanout_pages{nullptr};
-
   /** Collected cursor that need to cleanout */
-  lizard::Cleanout_cursors *m_cleanout_cursors{nullptr};
+  lizard::Scan_cleanout *m_cleanout{nullptr};
 
-  /** Add constructor to init m_cleanout_pages, otherwise we have to init it
+  /** Add constructor to init m_cleanout, otherwise we have to init it
   at many place.*/
-  btr_pcur_t() {
-    m_cleanout_pages = nullptr;
-    m_cleanout_cursors = nullptr;
-  }
+  btr_pcur_t() { m_cleanout = nullptr; }
 };
 
 inline void btr_pcur_t::init(size_t read_level) {
@@ -528,8 +534,7 @@ inline void btr_pcur_t::init(size_t read_level) {
   import_ctx = nullptr;
   m_block_when_stored.clear();
 
-  m_cleanout_pages = nullptr;
-  m_cleanout_cursors = nullptr;
+  m_cleanout = nullptr;
 }
 
 inline void btr_pcur_t::open(dict_index_t *index, ulint level,
@@ -565,8 +570,7 @@ inline void btr_pcur_t::open(dict_index_t *index, ulint level,
 
   m_trx_if_known = nullptr;
 
-  ut_ad(!m_cleanout_pages || m_cleanout_pages->is_empty());
-  ut_ad(!m_cleanout_cursors || m_cleanout_cursors->is_empty());
+  ut_ad(!m_cleanout || m_cleanout->is_empty());
 }
 
 inline void btr_pcur_t::open_at_side(bool from_left, dict_index_t *index,
@@ -926,11 +930,19 @@ inline void btr_pcur_t::reset() {
   m_old_n_fields = 0;
   m_old_stored = false;
 
-  if (m_cleanout_pages) m_cleanout_pages->init();
-  if (m_cleanout_cursors) m_cleanout_cursors->init();
+  if (m_cleanout) m_cleanout->clear();
 
   m_latch_mode = BTR_NO_LATCHES;
   m_pos_state = BTR_PCUR_NOT_POSITIONED;
+}
+
+inline void btr_pcur_t::reset_btr_cur() {
+  m_latch_mode = BTR_NO_LATCHES;
+  m_pos_state = BTR_PCUR_NOT_POSITIONED;
+  m_btr_cur.index = nullptr;
+  m_btr_cur.flag = BTR_CUR_UNSET;
+  m_btr_cur.page_cur.rec = nullptr;
+  m_btr_cur.page_cur.block = nullptr;
 }
 
 #endif /* !UNIV_HOTBACKUP */

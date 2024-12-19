@@ -12,7 +12,7 @@ include/assert.inc [GTID_EXECUTED must contain all 70043 characters]
 
 ################################################################
 # 2. Sync slave.
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/assert.inc [GTID_EXECUTED must contain all 70043 characters]
 
 ################################################################

@@ -83,6 +83,7 @@ void page_zip_write_scn_and_undo_ptr(page_zip_des_t *page_zip,
             DATA_TRX_ID_LEN + DATA_ROLL_PTR_LEN;
 
   /** Get pointer of scn_id in record */
+  ut_ad(rec_offs_n_fields(offsets) >= scn_col + DATA_N_LIZARD_COLS);
   field =
       const_cast<byte *>(rec_get_nth_field(index, rec, offsets, scn_col, &len));
   ut_ad(len == DATA_SCN_ID_LEN);

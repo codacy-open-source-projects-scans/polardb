@@ -1,0 +1,161 @@
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+flush local logs;
+set global innodb_purge_rseg_truncate_frequency = 1;
+set global innodb_undo_retention = 0;
+set global innodb_undo_retention = 9000;
+flush local logs;
+set global innodb_purge_rseg_truncate_frequency = 1;
+set global innodb_undo_retention = 0;
+set global innodb_undo_retention = 9000;
+flush local logs;
+set global innodb_purge_rseg_truncate_frequency = 1;
+set global innodb_undo_retention = 0;
+set global innodb_undo_retention = 9000;
+set global xa_detach_on_prepare = off;
+set session xa_detach_on_prepare = off;
+###############################
+# LOAD DATA
+###############################
+create table t1 (id int primary key, balance int);
+insert into t1 values (1, 1000);
+insert into t1 values (2, 1000);
+###############################
+# Case: Async Commit Assigned GCN
+###############################
+xa start 'ac_t6_b1';
+update t1 set balance = balance - 10 where id = 1;
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t6_b1';
+call dbms_xa.ac_prepare('ac_t6_b1', '', 1, 2, 2, commit_gcn)
+select ROLE from information_schema.ALISQL_CLUSTER_LOCAL;
+ROLE
+Follower
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+select ROLE from information_schema.ALISQL_CLUSTER_LOCAL;
+ROLE
+Follower
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+select ROLE from information_schema.ALISQL_CLUSTER_LOCAL;
+ROLE
+Follower
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+select ROLE from information_schema.ALISQL_CLUSTER_LOCAL;
+ROLE
+Follower
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+###############################
+# Case: Async Commit Automatic GCN
+###############################
+call dbms_xa.advance_gcn_no_flush(sys_gcn)
+xa start 'ac_t6_b2';
+update t1 set balance = balance - 10 where id = 1;
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t6_b2';
+call dbms_xa.ac_prepare('ac_t6_b2', '', 1, 1, 1, commit_gcn)
+select ROLE from information_schema.ALISQL_CLUSTER_LOCAL;
+ROLE
+Follower
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+select ROLE from information_schema.ALISQL_CLUSTER_LOCAL;
+ROLE
+Follower
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+select ROLE from information_schema.ALISQL_CLUSTER_LOCAL;
+ROLE
+Follower
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+select ROLE from information_schema.ALISQL_CLUSTER_LOCAL;
+ROLE
+Follower
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+###############################
+# Case: Async Commit ASSIGNED_GCN
+###############################
+xa start 'ac_t6_b3';
+update t1 set balance = balance - 10 where id = 1;
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t6_b3';
+call dbms_xa.ac_prepare('ac_t6_b3', '', 1, 2, 2, commit_gcn)
+select ROLE from information_schema.ALISQL_CLUSTER_LOCAL;
+ROLE
+Follower
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+select ROLE from information_schema.ALISQL_CLUSTER_LOCAL;
+ROLE
+Follower
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+select ROLE from information_schema.ALISQL_CLUSTER_LOCAL;
+ROLE
+Follower
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+select ROLE from information_schema.ALISQL_CLUSTER_LOCAL;
+ROLE
+Follower
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_csr == actual_csr]
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+###############################
+# cleanup
+###############################
+set global innodb_undo_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;
+set global innodb_undo_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;
+set global innodb_undo_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;
+set global innodb_undo_retention = default;
+set global xa_detach_on_prepare = default;
+set session xa_detach_on_prepare = default;
+drop table t1;

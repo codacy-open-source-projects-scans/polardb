@@ -28,8 +28,8 @@ INSERT INTO t1 values (2);
 --source include/sync_slave_io_with_master.inc
 
 # Step-2: Make that binary log as relay log
---remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin.000001
---copy_file $MYSQLD_MASTER_DATADIR/master-bin.000001 $MYSQLD_SLAVE_DATADIR/slave-relay-bin.000001
+--remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin-test.000001
+--copy_file $MYSQLD_MASTER_DATADIR/master-bin.000001 $MYSQLD_SLAVE_DATADIR/slave-relay-bin-test.000001
 
 # Step-3: Now start worker thread with that relay log(binary log as relay log)
 # and see that worker thread does not have issues in completing it.

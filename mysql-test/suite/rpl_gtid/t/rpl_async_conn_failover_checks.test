@@ -35,13 +35,13 @@
 --source include/master-slave.inc
 
 --source include/rpl_connection_slave.inc
-call mtr.add_suppression("Detected misconfiguration: replication channel '' was configured with SOURCE_CONNECTION_AUTO_FAILOVER = 1.*");
+call mtr.add_suppression("Detected misconfiguration: replication channel 'test' was configured with SOURCE_CONNECTION_AUTO_FAILOVER = 1.*");
 
 --echo #
 --echo # 1. Enable AUTO_POSITION.
 --echo #
 
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=1;
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=1 for channel "test";
 
 
 --echo #
@@ -51,7 +51,7 @@ CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=1;
 --echo #
 
 --error ER_RPL_ASYNC_RECONNECT_AUTO_POSITION_OFF
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0, SOURCE_CONNECTION_AUTO_FAILOVER=1;
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0, SOURCE_CONNECTION_AUTO_FAILOVER=1 for channel "test";
 
 --echo #
 --echo # 3. Verify Asynchronous Replication Connection Failover is disabled and
@@ -59,11 +59,11 @@ CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0, SOURCE_CONNECTION_AUTO_FAIL
 --echo #
 
 --let $assert_text= 'Asynchronous Replication Connection Failover is disabled'
---let $assert_cond= [SELECT SOURCE_CONNECTION_AUTO_FAILOVER FROM performance_schema.replication_connection_configuration, SOURCE_CONNECTION_AUTO_FAILOVER, 1] = 0
+--let $assert_cond= [SELECT SOURCE_CONNECTION_AUTO_FAILOVER FROM performance_schema.replication_connection_configuration where channel_name="test", SOURCE_CONNECTION_AUTO_FAILOVER, 1] = 0
 --source include/assert.inc
 
 --let $assert_text= 'Auto_position is enabled'
---let $assert_cond= [SELECT AUTO_POSITION FROM performance_schema.replication_connection_configuration, AUTO_POSITION, 1] = 1
+--let $assert_cond= [SELECT AUTO_POSITION FROM performance_schema.replication_connection_configuration where channel_name="test", AUTO_POSITION, 1] = 1
 --source include/assert.inc
 
 
@@ -74,7 +74,7 @@ CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0, SOURCE_CONNECTION_AUTO_FAIL
 --echo #    error logged in error log.
 --echo #
 
-CHANGE REPLICATION SOURCE TO SOURCE_CONNECTION_AUTO_FAILOVER=1;
+CHANGE REPLICATION SOURCE TO SOURCE_CONNECTION_AUTO_FAILOVER=1 for channel "test";
 
 --let $rpl_server_number = 2
 --let $rpl_skip_start_slave=
@@ -83,12 +83,12 @@ CHANGE REPLICATION SOURCE TO SOURCE_CONNECTION_AUTO_FAILOVER=1;
 
 --let $assert_file= $MYSQLTEST_VARDIR/log/mysqld.2.err
 --let $assert_count = 1
---let $assert_select = Detected misconfiguration: replication channel '' was configured with SOURCE_CONNECTION_AUTO_FAILOVER = 1, but the server was started with a value other then --gtid-mode = ON. Either reconfigure replication using CHANGE MASTER TO SOURCE_CONNECTION_AUTO_FAILOVER = 0 FOR CHANNEL '', or change GTID_MODE to value ON, before starting the replica receiver thread.
---let $assert_text = Replication channel '' could not be started as GTID_MODE was not ON.
+--let $assert_select = Detected misconfiguration: replication channel 'test' was configured with SOURCE_CONNECTION_AUTO_FAILOVER = 1, but the server was started with a value other then --gtid-mode = ON. Either reconfigure replication using CHANGE MASTER TO SOURCE_CONNECTION_AUTO_FAILOVER = 0 FOR CHANNEL 'test', or change GTID_MODE to value ON, before starting the replica receiver thread.
+--let $assert_text = Replication channel 'test' could not be started as GTID_MODE was not ON.
 --source include/assert_grep.inc
 
 
---let $rpl_channel_name= ''
+--let $rpl_channel_name= 'test'
 --let $slave_param= Slave_IO_Running
 --let $slave_param_value= No
 --source include/check_slave_param.inc
@@ -101,14 +101,14 @@ CHANGE REPLICATION SOURCE TO SOURCE_CONNECTION_AUTO_FAILOVER=1;
 --echo #
 
 --error ER_RPL_ASYNC_RECONNECT_GTID_MODE_OFF
-START SLAVE;
+START SLAVE for channel 'test';
 
 
 --echo #
 --echo # 6. Clean up.
 --echo #
 
-CHANGE REPLICATION SOURCE TO SOURCE_CONNECTION_AUTO_FAILOVER = 0;
+CHANGE REPLICATION SOURCE TO SOURCE_CONNECTION_AUTO_FAILOVER = 0 for channel "test";
 SET @@global.gtid_mode = ON_PERMISSIVE;
 SET @@global.gtid_mode = ON;
 

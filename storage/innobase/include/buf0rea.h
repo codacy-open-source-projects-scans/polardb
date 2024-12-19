@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -64,8 +64,10 @@ an exclusive lock on the buffer frame. The flag is cleared and the x-lock
 released by the i/o-handler thread.
 @param[in]      page_id         page id
 @param[in]      page_size       page size
+@param[in]      type            Request type
 @return true if page has been read in, false in case of failure */
-bool buf_read_page(const page_id_t &page_id, const page_size_t &page_size);
+bool buf_read_page(const page_id_t &page_id, const page_size_t &page_size,
+                   ulint type);
 
 /** High-level function which reads a page asynchronously from a file to the
 buffer buf_pool if it is not already there. Sets the io_fix flag and sets

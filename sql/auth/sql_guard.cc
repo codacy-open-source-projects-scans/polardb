@@ -133,7 +133,7 @@ const String_type User_entity_guard::object_name() {
   return String_type(user_key, key_len);
 }
 
-#ifndef DBUG_OFF
+#ifndef NDEBUG
 void dbug_user_field_rw_mode(TABLE *table) {
   for (uint i = MYSQL_USER_FIELD_HOST; i < MYSQL_USER_FIELD_COUNT; i++) {
     fprintf(stderr, "User table Fields [%d] read: %d, write: %d\n", i,

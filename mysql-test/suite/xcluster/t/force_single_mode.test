@@ -16,9 +16,26 @@ create table t (id int);
 insert into t values (1);
 --source include/wait_apply_catchup.inc
 
+#eval add consensus_learner $learner_cluster_info;
+--replace_result $learner_cluster_info learner_cluster_info
+eval call dbms_consensus.upgrade_learner($learner_cluster_info);
+--sleep 5
+
 --connect (learner,127.0.0.1,root,,test,$learner_port)
 --connection learner
+
+select SERVER_ID, ROLE from information_schema.alisql_cluster_global;
+select SERVER_ID, ROLE, SERVER_READY_FOR_RW from information_schema.alisql_cluster_local;
+
 stop xpaxos_replication;
+
+#force learner node
+call dbms_consensus.force_learner_node();
+--sleep 1
+select SERVER_ID, ROLE from information_schema.alisql_cluster_global;
+select SERVER_ID, ROLE, SERVER_READY_FOR_RW from information_schema.alisql_cluster_local;
+select LEARNER_IP_PORT, SOURCE_IP_PORT from  information_schema.ALISQL_CLUSTER_LEARNER_SOURCE;
+
 
 --connection default
 insert into t values (2);
@@ -41,6 +58,8 @@ drop table t;
 
 --connection default
 #eval drop consensus_learner $learner_cluster_info;
+--replace_result $learner_cluster_info learner_cluster_info
+eval call dbms_consensus.downgrade_follower($learner_cluster_info);
 --replace_result $learner_cluster_info learner_cluster_info
 eval call dbms_consensus.drop_learner($learner_cluster_info);
 drop table t;

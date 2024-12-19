@@ -1322,7 +1322,7 @@ user6@localhost
 # Cleanup
 DROP USER user1@localhost,user2@localhost,user3@localhost,
 user4@localhost,user5@localhost,user6@localhost;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [On Slave]
 include/show_binlog_events.inc
 Log_name	Pos	Event_type	Server_id	End_log_pos	Info

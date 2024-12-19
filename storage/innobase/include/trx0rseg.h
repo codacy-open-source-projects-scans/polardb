@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -127,12 +127,16 @@ single-threaded startup.  If we find existing rseg slots in TRX_SYS page
 that reference undo tablespaces and have active undo logs, then quit.
 They require an upgrade of undo tablespaces and that cannot happen with
 active undo logs.
-@param[in]      purge_queue     queue of rsegs to purge */
-void trx_rsegs_init(lizard::purge_heap_t *purge_queue);
+@param[in]      purge_queue     queue of rsegs to purge
+@param[in]      erase_heap      heap of rsegs to erase */
+void trx_rsegs_init(lizard::purge_heap_t *purge_queue,
+                    lizard::erase_heap_t *erase_heap);
 
 /** Initialize rollback segments in parallel
-@param[in]      purge_queue     queue of rsegs to purge */
-void trx_rsegs_parallel_init(lizard::purge_heap_t *purge_queue);
+@param[in]      purge_queue     queue of rsegs to purge
+@param[in]      erase_heap      heap of rsegs to erase */
+void trx_rsegs_parallel_init(lizard::purge_heap_t *purge_queue,
+                             lizard::erase_heap_t *erase_heap);
 
 /** Create and initialize a rollback segment object.  Some of
 the values for the fields are read from the segment header page.
@@ -143,12 +147,14 @@ The caller must insert it into the correct list.
 @param[in]	page_size	page size
 @param[in]      gtid_trx_scn	Trx scn up to which GTID is persisted
 @param[in,out]	purge_heap	rseg queue
+@param[in,out]  erase_heap  heap of rsegs to erase
 @param[in,out]	mtr		mini-transaction
 @return own: rollback segment object */
 trx_rseg_t *trx_rseg_mem_create(ulint id, space_id_t space_id,
                                 page_no_t page_no, const page_size_t &page_size,
                                 scn_t gtid_trx_scn,
-                                lizard::purge_heap_t *purge_heap, mtr_t *mtr);
+                                lizard::purge_heap_t *purge_heap,
+                                lizard::erase_heap_t *erase_heap, mtr_t *mtr);
 
 /** Create a rollback segment in the given tablespace. This could be either
 the system tablespace, the temporary tablespace, or an undo tablespace.
@@ -217,6 +223,16 @@ constexpr uint32_t TXN_RSEG_FREE_LIST_SIZE =
     (TRX_RSEG_HISTORY + FLST_BASE_NODE_SIZE);
 /** Lizard: Free list base node */
 constexpr uint32_t TXN_RSEG_FREE_LIST = (TXN_RSEG_FREE_LIST_SIZE + 4);
+
+/** Lizard: semi-purge list for update undo log segment */
+constexpr uint32_t TRX_RSEG_SEMI_PURGE_LIST_SIZE =
+    (TRX_RSEG_HISTORY + FLST_BASE_NODE_SIZE);
+/** Lizard: semi-purge list base node */
+constexpr uint32_t TRX_RSEG_SEMI_PURGE_LIST =
+    (TRX_RSEG_SEMI_PURGE_LIST_SIZE + 4);
+
+static_assert(TXN_RSEG_FREE_LIST == TRX_RSEG_SEMI_PURGE_LIST,
+              "txn and trx rseg hdr size must be equal!");
 
 /* Header for the file segment where this page is placed */
 constexpr uint32_t TRX_RSEG_FSEG_HEADER =

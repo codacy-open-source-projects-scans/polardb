@@ -12,8 +12,8 @@ insert into tt values (1);
 xa end '1_normal';
 xa prepare '1_normal';
 xa commit '1_normal';
+include/assert.inc [expect_status == actual_status]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 2: rollback detached XA
 ###############################
@@ -23,8 +23,8 @@ insert into tt values (2);
 xa end '2_normal';
 xa prepare '2_normal';
 xa rollback '2_normal';
+include/assert.inc [expect_status == actual_status]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 3: commit attached XA
 ###############################
@@ -34,8 +34,8 @@ insert into tt values (3);
 xa end '3_normal';
 xa prepare '3_normal';
 xa commit '3_normal';
+include/assert.inc [expect_status == actual_status]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 4: rollback attached XA
 ###############################
@@ -45,8 +45,8 @@ insert into tt values (4);
 xa end '4_normal';
 xa prepare '4_normal';
 xa rollback '4_normal';
+include/assert.inc [expect_status == actual_status]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # cleanup
 ###############################
@@ -67,8 +67,8 @@ insert into tt values (1);
 xa end '1_restarted';
 xa prepare '1_restarted';
 xa commit '1_restarted';
+include/assert.inc [expect_status == actual_status]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 2: rollback detached XA
 ###############################
@@ -78,8 +78,8 @@ insert into tt values (2);
 xa end '2_restarted';
 xa prepare '2_restarted';
 xa rollback '2_restarted';
+include/assert.inc [expect_status == actual_status]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 3: commit attached XA
 ###############################
@@ -89,8 +89,8 @@ insert into tt values (3);
 xa end '3_restarted';
 xa prepare '3_restarted';
 xa commit '3_restarted';
+include/assert.inc [expect_status == actual_status]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # Case 4: rollback attached XA
 ###############################
@@ -100,8 +100,8 @@ insert into tt values (4);
 xa end '4_restarted';
 xa prepare '4_restarted';
 xa rollback '4_restarted';
+include/assert.inc [expect_status == actual_status]
 include/assert.inc [expect_gcn == actual_gcn]
-include/assert.inc [expect_state == actual_state]
 ###############################
 # cleanup
 ###############################

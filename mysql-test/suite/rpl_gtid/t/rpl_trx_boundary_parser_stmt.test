@@ -37,7 +37,7 @@
 --source include/rpl_connection_slave.inc
 --source include/stop_slave.inc
 RESET MASTER;
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 --source include/rpl_connection_master.inc
 RESET MASTER;
 
@@ -45,7 +45,7 @@ RESET MASTER;
 # Disabling slave's auto positioning
 #
 --source include/rpl_connection_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 0;
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 0 for channel "test";
 --source include/start_slave.inc
 
 --echo # Using InnoDB storage engine without auto positioning
@@ -57,7 +57,7 @@ CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 0;
 #
 --source include/rpl_connection_slave.inc
 --source include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 1;
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 1 for channel "test";
 --source include/start_slave.inc
 
 --source include/rpl_end.inc

@@ -71,7 +71,7 @@ FLUSH LOGS;
 
 --echo # Crash slave server when applying row event (the INSERT)
 SET global DEBUG='+d, crash_on_transactional_ddl_insert';
-START SLAVE;
+START SLAVE for channel 'test';
 
 --echo # Wait for server to stop
 --source include/expect_crash.inc
@@ -95,7 +95,7 @@ SELECT @@GLOBAL.GTID_MODE;
 if ( `SELECT @@GLOBAL.GTID_MODE = "OFF"` ) 
 {
   --replace_result $_saved_pos SAVED_POS
-  --eval CHANGE REPLICATION SOURCE TO SOURCE_LOG_FILE='master-bin.000001', SOURCE_LOG_POS=$_saved_pos
+  --eval CHANGE REPLICATION SOURCE TO SOURCE_LOG_FILE='master-bin.000001', SOURCE_LOG_POS=$_saved_pos for channel 'test';
 }
 --source include/start_slave.inc
 

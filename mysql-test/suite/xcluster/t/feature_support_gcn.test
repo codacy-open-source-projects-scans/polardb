@@ -81,6 +81,7 @@ xa commit 'p31';
 connection c2;
 --source include/wait_apply_catchup.inc
 
+connection c1;
 xa begin 'f2';
 set innodb_snapshot_seq = @base_seq +  10010;
 select * from t1;
@@ -103,6 +104,7 @@ select * from t1;
 connection c3;
 --source include/wait_apply_catchup.inc
 
+connection c1;
 xa begin 'f3';
 set innodb_snapshot_seq = @base_seq +  20010;
 select * from t2;

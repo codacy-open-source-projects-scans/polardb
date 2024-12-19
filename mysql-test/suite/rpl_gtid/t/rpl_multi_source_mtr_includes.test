@@ -33,14 +33,14 @@ CALL mtr.add_suppression('The slave coordinator and worker threads are stopped')
 --echo # Start and stop slave
 --echo #
 
---let $rpl_channel_name= ''
+--let $rpl_channel_name= 'test'
 --source include/stop_slave.inc
 --let $rpl_channel_name= 'ch1'
 --source include/start_slave.inc
 --source include/check_slave_is_running.inc
 --source include/check_slave_no_error.inc
 --source include/stop_slave.inc
---let $rpl_channel_name= ''
+--let $rpl_channel_name= 'test'
 --source include/start_slave.inc
 --source include/check_slave_is_running.inc
 --source include/check_slave_no_error.inc
@@ -52,7 +52,7 @@ CALL mtr.add_suppression('The slave coordinator and worker threads are stopped')
 --source include/start_slave_sql.inc
 --source include/stop_slave_io.inc
 --source include/stop_slave_sql.inc
---let $rpl_channel_name= ''
+--let $rpl_channel_name= 'test'
 --source include/start_slave_io.inc
 --source include/start_slave_sql.inc
 
@@ -62,7 +62,7 @@ CALL mtr.add_suppression('The slave coordinator and worker threads are stopped')
 
 --source include/rpl_connection_master.inc
 CREATE TABLE t1 (c1 INT PRIMARY KEY) ENGINE=InnoDB;
---let $rpl_channel_name= ''
+--let $rpl_channel_name= 'test'
 --source include/sync_slave_io_with_master.inc
 --source include/sync_slave_sql_with_io.inc
 
@@ -83,14 +83,14 @@ INSERT INTO t1 VALUES (3);
 --source include/sync_slave_sql_with_master.inc
 --source include/stop_slave.inc
 
---let $rpl_channel_name= ''
+--let $rpl_channel_name= 'test'
 --source include/start_slave.inc
 
 --echo #
 --echo # Show relaylog events
 --echo #
 
---let $rpl_channel_name= ''
+--let $rpl_channel_name= 'test'
 --source include/show_relaylog_events.inc
 --let $rpl_channel_name= 'ch1'
 --let $binlog_limit= 3
@@ -100,7 +100,7 @@ INSERT INTO t1 VALUES (3);
 --echo # Wait for error and skip
 --echo #
 
---let $rpl_channel_name= ''
+--let $rpl_channel_name= 'test'
 INSERT INTO t1 VALUES (4);
 --source include/rpl_connection_master.inc
 INSERT INTO t1 VALUES (4);
@@ -110,7 +110,7 @@ INSERT INTO t1 VALUES (4);
 
 --let $rpl_channel_name= 'ch1'
 --source include/start_slave_io.inc
---let $rpl_channel_name= ''
+--let $rpl_channel_name= 'test'
 # The default channel will be disconnected from master by ch1
 --let $slave_io_errno= convert_error(ER_SERVER_MASTER_FATAL_ERROR_READING_BINLOG)
 --source include/wait_for_slave_io_error.inc
@@ -119,14 +119,14 @@ START SLAVE SQL_THREAD FOR CHANNEL 'ch1';
 --let $slave_sql_errno= convert_error(ER_DUP_ENTRY)
 --source include/wait_for_slave_sql_error.inc
 
---let $rpl_channel_name= ''
+--let $rpl_channel_name= 'test'
 --source include/start_slave_io.inc
 --let $rpl_channel_name= 'ch1'
 # The ch1 channel will be disconnected from master by the default
 --let $slave_io_errno= convert_error(ER_SERVER_MASTER_FATAL_ERROR_READING_BINLOG)
 --source include/wait_for_slave_io_error.inc
 DELETE FROM t1 WHERE c1 = 4;
---let $rpl_channel_name= ''
+--let $rpl_channel_name= 'test'
 --source include/start_slave_sql.inc
 
 --let $rpl_channel_name= 'ch1'
@@ -137,7 +137,7 @@ DELETE FROM t1 WHERE c1 = 4;
 --echo # Cleanup
 --echo #
 
---let $rpl_channel_name=
+--let $rpl_channel_name='test'
 --let $binlog_limit=
 RESET SLAVE ALL FOR CHANNEL 'ch1';
 

@@ -1,18 +1,19 @@
 include/master-slave.inc
 [connection master]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 RESET SLAVE ALL;
 SET @old_replica_parallel_workers= @@global.replica_parallel_workers;
 SET GLOBAL replica_parallel_workers = 4;
-include/start_slave.inc
-include/sync_slave_sql_with_master.inc [FOR CHANNEL 'channel_1']
+include/start_slave.inc [FOR CHANNEL 'test']
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 select CHANNEL_NAME, WORKER_ID, THREAD_ID
 from performance_schema.replication_applier_status_by_worker
 where WORKER_ID = 1
-into @c_name, @w_id, @t_id;
+and channel_name = 'test'
+  into @c_name, @w_id, @t_id;
 select @c_name, @w_id, @t_id is not null;
 @c_name	@w_id	@t_id is not null
-channel_1	1	1
+test	1	1
 
 ====================================================================
 Testing index for columns CHANNEL_NAME, WORKER_ID
@@ -121,10 +122,10 @@ where THREAD_ID = @t_id;
 SERVICE_STATE
 #
 OK: handler_read_key incremented
-include/stop_slave.inc [FOR CHANNEL 'channel_1']
+include/stop_slave.inc [FOR CHANNEL 'test']
 RESET SLAVE ALL;
 Warnings:
 Warning	1287	'RESET SLAVE' is deprecated and will be removed in a future release. Please use RESET REPLICA instead
 SET GLOBAL replica_parallel_workers= @old_replica_parallel_workers;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 include/rpl_end.inc

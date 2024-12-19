@@ -78,7 +78,13 @@ select
 select * from performance_schema.file_summary_by_instance
   where event_name like "%relaylog%" order by file_name;
 
-select * from performance_schema.file_summary_by_event_name
+select
+  EVENT_NAME,
+  if (count_read > 0, "MANY", "NONE") as COUNT_READ,
+  if (count_write > 0,"MANY", "NONE") as COUNT_WRITE,
+  if (sum_number_of_bytes_read > 0, "MANY", "NONE") as SUM_NUMBER_OF_BYTES_READ,
+  if (sum_number_of_bytes_write > 0, "MANY", "NONE") as SUM_NUMBER_OF_BYTES_WRITE
+  from performance_schema.file_summary_by_event_name
   where event_name like "%relaylog%" order by event_name;
 
 select EVENT_NAME,

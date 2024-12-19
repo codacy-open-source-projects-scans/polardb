@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -113,7 +113,7 @@
 
 #include "ppi/ppi_statement.h"
 
-#include "sql/lizard/lizard_rpl_gcn.h"  // my_gcn_t, struct MyGCN...
+#include "sql/lizard/lizard_service.h"  // gcn_t, struct MyGCN...
 #include "sql/trans_proc/returning_parse.h"
 
 #include "sql/ccl/ccl.h"
@@ -2070,6 +2070,10 @@ class THD : public MDL_context_owner,
     bool m_transaction_rollback_request;
 
     PPI_transaction *m_ppi_transaction;
+
+    /** owned_commnit_gcn might be set by loading SYS_GCN for attachable trx.
+    Bakcup and resotre owned_commit_gcn. */
+    MyGCN owned_commit_gcn;
   };
 
  public:
@@ -4862,6 +4866,10 @@ class THD : public MDL_context_owner,
 
   MyVisionGCN owned_vision_gcn;
 
+  xa_branch_t owned_xa_branch;
+
+  xa_addr_t owned_master_addr;
+
   struct im::ST_CONN_ATTR conn_attr;
   /** Returning clause lex */
   std::unique_ptr<im::Lex_returning> lex_returning;
@@ -4869,12 +4877,15 @@ class THD : public MDL_context_owner,
   bool xpaxos_replication_channel;
 
   void reset_gcn_variables() {
-    variables.innodb_snapshot_gcn = MYSQL_GCN_NULL;
-    variables.innodb_commit_gcn = MYSQL_GCN_NULL;
+    variables.innodb_snapshot_gcn = GCN_NULL;
+    variables.innodb_commit_gcn = GCN_NULL;
     variables.innodb_current_snapshot_gcn = false;
+    variables.opt_query_via_flashback_area = false;
 
     owned_commit_gcn.reset();
     owned_vision_gcn.reset();
+    owned_xa_branch.reset();
+    owned_master_addr.reset();
   }
 
   ulonglong get_snapshot_gcn() { return variables.innodb_snapshot_gcn; }
@@ -4915,7 +4926,7 @@ class THD : public MDL_context_owner,
 inline ulonglong thd_get_snapshot_gcn(THD *thd) {
   if (thd) return thd->get_snapshot_gcn();
 
-  return MYSQL_GCN_NULL;
+  return GCN_NULL;
 }
 
 /**

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2005, 2022, Oracle and/or its affiliates.
+Copyright (c) 2005, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -149,6 +149,8 @@ struct Row {
 
   /** Add column data values. */
   dtuple_t *m_add_cols{};
+
+  page_no_t m_page_no{};
 };
 
 /** Create a merge file int the given location.

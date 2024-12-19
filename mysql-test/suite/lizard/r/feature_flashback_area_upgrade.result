@@ -1,0 +1,31 @@
+#########
+# SETUP #
+#########
+# Stop the running the server
+# Copy and unzip the datadir.
+# Restart the server against the unzipped datadir
+# restart: --datadir=DATADIR --innodb_undo_retention=36000
+##############################################
+# Test upgrade
+##############################################
+use test;
+select * from t1;
+c1	c2	c3
+11	18	19
+21	28	29
+31	38	39
+41	48	49
+51	58	59
+61	68	69
+call dbms_undo.purge_status();
+HISTORY_LENGTH	CURRENT_SCN	CURRENT_GCN	PURGED_SCN	PURGED_GCN	ERASED_SCN	ERASED_GCN
+2724	59039	1024	57345	1024	40987	1024
+set global innodb_undo_retention = 0;
+###########
+# CLEANUP #
+###########
+# Shutdown server
+# Remove copied files
+# Restarting server to restore server state
+# restart
+set global innodb_undo_retention = default;

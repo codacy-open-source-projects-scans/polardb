@@ -7,14 +7,14 @@ the terms of the GNU General Public License, version 2.0, as published by the
 Free Software Foundation.
 
 This program is also distributed with certain software (including but not
-lzeusited to OpenSSL) that is licensed under separate terms, as designated in a
+limited to OpenSSL) that is licensed under separate terms, as designated in a
 particular file or component or in included license documentation. The authors
 of MySQL hereby grant you an additional permission to link the program and
 your derivative works with the separately licensed software that they have
 included with MySQL.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the zeusplied warranty of MERCHANTABILITY or FITNESS
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
 for more details.
 
@@ -38,7 +38,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "lizard0scn.h"
 #include "lizard0ut.h"
 
-#include "sql/lizard/lizard_rpl_gcn.h"  // MyGCN...
+#include "sql/lizard/lizard_service.h"  // MyGCN...
 
 namespace lizard {
 
@@ -276,10 +276,10 @@ void GCN::boot() {
   Prepare a gcn number according to source type when
   commit.
 
-  2) GSR_AUTOMATIC
+  1) GSR_AUTOMATIC
     -- Generate from current gcn early, use it directly.
     -- Use current gcn as commit gcn.
-  3) GSR_ASSIGNED
+  2) GSR_ASSIGNED
     -- Come from 3-party component, use it directly,
        increase current gcn if bigger.
 
@@ -289,21 +289,29 @@ void GCN::boot() {
 
   @retval	gcn
 */
-std::pair<gcn_t, csr_t> GCN::new_gcn(const gcn_t gcn, const csr_t csr,
-                                     mtr_t *mtr) {
+gcn_tuple_t GCN::new_gcn(const gcn_t gcn, const csr_t csr, mtr_t *mtr) {
   gcn_t cmmt = GCN_NULL;
   ut_ad(!gcn_order_mutex_own());
 
   switch (csr) {
     case CSR_AUTOMATIC:
-      /** 1. generate when binlog commit.
-       *  2. didn't generate until now. */
-      cmmt = (gcn == GCN_NULL ? m_gcn.load() : gcn);
+      /**
+        1. GCN come from local SYS_GCN. For example signle-shard transaction.
+        2. GCN come from other SYS_GCN of other DN. For example Asycn Commit
+        transaction.
+      */
+      if (gcn == GCN_NULL) {
+        cmmt = m_gcn.load();
+      } else {
+        /** Must already pushed up */
+        ut_ad(gcn <= m_gcn.load());
+        cmmt = gcn;
+      }
       break;
     case CSR_ASSIGNED:
       ut_ad(gcn != GCN_NULL);
+      ut_ad(gcn <= m_gcn.load());
       cmmt = gcn;
-      set_gcn_if_bigger(cmmt);
       break;
   }
 
@@ -312,7 +320,7 @@ std::pair<gcn_t, csr_t> GCN::new_gcn(const gcn_t gcn, const csr_t csr,
   PersistentGcsData meta;
   meta.set_gcn(cmmt);
   m_persister->write_log(&meta, mtr);
-  return std::make_pair(cmmt, csr);
+  return {cmmt, csr};
 }
 
 /**
@@ -356,30 +364,31 @@ enum scn_state_t commit_mark_state(const commit_mark_t &cmmt) {
   return SCN_STATE_INVALID;
 }
 
-}  // namespace lizard
-
-/*****************************************
- *              commit_scn_t             *
- *****************************************/
-void commit_mark_t::copy_from_my_gcn(const MyGCN *my_gcn) {
-  if (!my_gcn->is_empty()) {
-    gcn = my_gcn->get_gcn();
-    csr = my_gcn->is_assigned() ? CSR_ASSIGNED : CSR_AUTOMATIC;
-  } else {
-    /** Automatic GCN. */
-    gcn = lizard::GCN_NULL;
-    csr = CSR_AUTOMATIC;
+enum proposal_state_t proposal_mark_state(const proposal_mark_t &pmmt) {
+  if (pmmt.gcn == GCN_NULL) {
+    return PROPOSAL_STATE_NULL;
   }
+
+  if (pmmt.gcn < GCN_INITIAL) {
+    return PROPOSAL_STATE_INVALID;
+  }
+
+  return PROPOSAL_STATE_ALLOCATED;
 }
 
+}  // namespace lizard
+
+
+/*****************************************
+ *              commit_mark_t            *
+ *****************************************/
 void commit_mark_t::copy_to_my_gcn(MyGCN *my_gcn) {
-  my_csr_t my_csr = my_csr_t::MYSQL_CSR_NONE;
+  my_gcn->copy_cmmt({gcn, csr});
+}
 
-  if (csr == csr_t::CSR_AUTOMATIC) {
-    my_csr = my_csr_t::MYSQL_CSR_AUTOMATIC;
-  } else {
-    my_csr = my_csr_t::MYSQL_CSR_ASSIGNED;
-  }
-
-  my_gcn->set(gcn, my_csr);
+/*****************************************
+ *              proposal_mark_t          *
+ *****************************************/
+void proposal_mark_t::copy_to_my_gcn(MyGCN *my_gcn) {
+  my_gcn->copy_pmmt({gcn, csr});
 }

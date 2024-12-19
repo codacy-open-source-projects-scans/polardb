@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2014, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -57,7 +57,9 @@
 #include "sql/dd/impl/upgrade/dd.h"             // dd::upgrade::upgrade_tables
 #include "sql/dd/impl/upgrade/server.h"  // dd::upgrade::do_server_upgrade_checks
 #include "sql/dd/impl/utils.h"           // dd::execute_query
+#include "sql/dd/lizard_policy_types.h"
 #include "sql/dd/object_id.h"
+#include "sql/dd/properties.h"
 #include "sql/dd/types/abstract_table.h"
 #include "sql/dd/types/object_table.h"             // dd::Object_table
 #include "sql/dd/types/object_table_definition.h"  // dd::Object_table_definition
@@ -1702,6 +1704,20 @@ bool update_properties(THD *thd, const std::set<String_type> *create_set,
         ss << DD_properties::dd_key(DD_properties::DD_property::IDX) << count;
         tbl_props->set(ss.str().c_str(),
                        (*idx)->se_private_data().raw_string());
+
+        /* Deal with IFT option. */
+        std::stringstream option_ss;
+        ss << DD_properties::dd_key(DD_properties::DD_property::IDX) << count
+           << "options";
+        ulonglong IFT_option = 0;
+        if ((*idx)->options().exists(lizard::OPTION_IFT)) {
+          (*idx)->options().get(lizard::OPTION_IFT, &IFT_option);
+        }
+        assert(DBUG_EVALUATE_IF("allow_dd_tables_have_gpp", true,
+                                IFT_option == 0));
+        std::unique_ptr<Properties> options(Properties::parse_properties(""));
+        options->set(lizard::OPTION_IFT, IFT_option);
+        tbl_props->set(option_ss.str().c_str(), options->raw_string());
       }
 
       // Store the se private data for each column.

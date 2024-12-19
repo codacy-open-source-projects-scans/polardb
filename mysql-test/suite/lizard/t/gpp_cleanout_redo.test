@@ -1,0 +1,20 @@
+
+CREATE TABLE t1 ( id int NOT NULL, k int NOT NULL, c int NOT NULL, pad varchar(8192), PRIMARY KEY (id), KEY (k)) engine=innodb;
+INSERT INTO t1 (id, k, c, pad) VALUES (1, 1, 1, LEFT(REPEAT('A', 7000), CHAR_LENGTH(REPEAT('A', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (100, 100, 100, LEFT(REPEAT('B', 7000), CHAR_LENGTH(REPEAT('B', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (10, 10, 10, LEFT(REPEAT('C', 7000), CHAR_LENGTH(REPEAT('C', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (90, 90, 90, LEFT(REPEAT('A', 7000), CHAR_LENGTH(REPEAT('A', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (20, 20, 20, LEFT(REPEAT('A', 7000), CHAR_LENGTH(REPEAT('A', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (80, 80, 80, LEFT(REPEAT('A', 7000), CHAR_LENGTH(REPEAT('A', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (30, 30, 30, LEFT(REPEAT('A', 7000), CHAR_LENGTH(REPEAT('A', 7000))));
+INSERT INTO t1 (id, k, c, pad) VALUES (70, 70, 70, LEFT(REPEAT('A', 7000), CHAR_LENGTH(REPEAT('A', 7000))));
+
+SET GLOBAL innodb_log_checkpoint_now = ON;
+
+select * from information_schema.innodb_gpp_stats;
+
+--let $PRODUCE_REDO_STATEMENTS =  select c from t1 force index(k) where k > 0; select * from information_schema.innodb_gpp_stats;
+
+--let $CLEANUP_STATEMENTS = select c from t1 force index(k) where k > 0; select * from information_schema.innodb_gpp_stats;
+
+--source suite/lizard/include/gpp_cleanout_redo.inc

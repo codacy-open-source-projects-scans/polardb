@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -710,7 +710,9 @@ static inline ulint dict_index_get_n_unique_in_tree(
     return (dict_index_get_n_unique(index));
   }
 
-  return (static_cast<uint16_t>(dict_index_get_n_fields(index)));
+  /* Lizard-4.0 revision: stored gpp field is not unique. */
+  return (static_cast<uint16_t>(dict_index_get_n_fields(index)) -
+          index->n_s_gfields);
 }
 
 /**

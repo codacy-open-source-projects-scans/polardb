@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+Copyright (c) 2017, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -525,7 +525,8 @@ dberr_t DDL_Log_Table::insert(const DDL_Record &record) {
   if (insert) {
 #endif
     error = row_ins_clust_index_entry_low(flags, BTR_MODIFY_LEAF, index,
-                                          index->n_uniq, entry, m_thr, false);
+                                          index->n_uniq, entry, nullptr, m_thr,
+                                          false);
 #ifdef UNIV_DEBUG
   } else {
     error = DB_ERROR;
@@ -534,7 +535,8 @@ dberr_t DDL_Log_Table::insert(const DDL_Record &record) {
 
   if (error == DB_FAIL) {
     error = row_ins_clust_index_entry_low(flags, BTR_MODIFY_TREE, index,
-                                          index->n_uniq, entry, m_thr, false);
+                                          index->n_uniq, entry, nullptr, m_thr,
+                                          false);
     ut_ad(error == DB_SUCCESS);
   }
 

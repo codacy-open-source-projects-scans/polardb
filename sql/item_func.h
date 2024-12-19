@@ -1,7 +1,7 @@
 #ifndef ITEM_FUNC_INCLUDED
 #define ITEM_FUNC_INCLUDED
 
-/* Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -3916,6 +3916,15 @@ class Item_func_version final : public Item_static_string_func {
 
  public:
   explicit Item_func_version(const POS &pos);
+
+  bool itemize(Parse_context *pc, Item **res) override;
+};
+
+class Item_func_polardb_version final : public Item_static_string_func {
+  typedef Item_static_string_func super;
+
+ public:
+  explicit Item_func_polardb_version(const POS &pos);
 
   bool itemize(Parse_context *pc, Item **res) override;
 };

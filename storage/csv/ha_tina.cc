@@ -1,4 +1,4 @@
-/* Copyright (c) 2004, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2004, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -1652,7 +1652,7 @@ int ha_tina::rotate_table(const char *name, const dd::Table *) {
   File create_file;
   DBUG_ENTER("ha_tina::rotate_table");
 
-#ifndef DBUG_OFF
+#ifndef NDEBUG
   mysql_mutex_lock(&tina_mutex);
   assert(tina_open_tables->find(name) == tina_open_tables->end());
   mysql_mutex_unlock(&tina_mutex);

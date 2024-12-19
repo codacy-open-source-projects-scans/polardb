@@ -2192,7 +2192,7 @@ END;
 DELETE FROM non_trans_table2;
 include/show_binlog_events.inc
 DROP TRIGGER trigger1;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection master]
 include/diff_tables.inc [master:trans_table1, slave:trans_table1]
 include/diff_tables.inc [master:trans_table2, slave:trans_table2]

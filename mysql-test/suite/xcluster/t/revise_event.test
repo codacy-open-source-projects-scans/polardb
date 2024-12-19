@@ -8,6 +8,7 @@
 #   4. learner shutdown and restart
 #
 --source include/have_debug.inc
+--source include/skip_flashback_area.inc
 
 --connect (conn1,127.0.0.1,root,,test,$MYPORT_1)
 flush local logs;

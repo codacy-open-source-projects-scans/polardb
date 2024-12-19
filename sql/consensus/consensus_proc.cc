@@ -102,6 +102,30 @@ bool Sql_cmd_consensus_proc_force_single_mode::pc_execute(THD *thd) {
 }
 
 /**
+  dbms_consensus.force_learner_node()
+*/
+Proc *Consensus_proc_force_learner_node::instance() {
+  static Proc *proc = new Consensus_proc_force_learner_node(key_memory_package);
+  return proc;
+}
+
+Sql_cmd *Consensus_proc_force_learner_node::evoke_cmd(
+    THD *thd, mem_root_deque<Item *> *list) const {
+  return new (thd->mem_root) Sql_cmd_type(thd, list, this);
+}
+
+bool Sql_cmd_consensus_proc_force_learner_node::pc_execute(THD *thd) {
+  int res = 0;
+  res = consensus_ptr->forceSingleLearner();
+  LogErr(INFORMATION_LEVEL, ER_CONSENSUS_CMD_LOG,
+         thd->m_main_security_ctx.user().str,
+         thd->m_main_security_ctx.host_or_ip().str, thd->query().str, res);
+  if (res)
+    my_error(ER_CONSENSUS_COMMAND_ERROR, MYF(0), res, alisql::pxserror(res));
+  return (res != 0);
+}
+
+/**
   dbms_consensus.show_cluster_global()
 */
 Proc *Consensus_proc_show_global::instance() {

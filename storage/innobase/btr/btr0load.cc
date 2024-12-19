@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+Copyright (c) 2014, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -39,6 +39,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "log0chkp.h"
 
 #include "lizard0row.h"
+#include "lizard0btr0cur.h"
 
 namespace ddl {
 /** Innodb B-tree index fill factor for bulk load. */
@@ -80,12 +81,14 @@ class Page_load : private ut::Non_copyable {
         m_page_no(page_no),
         m_level(level),
         m_is_comp(dict_table_is_comp(index->table)),
-        m_flush_observer(observer) {
+        m_flush_observer(observer),
+        m_n_blocks_buf_fixed(0) {
     ut_ad(!dict_index_is_spatial(m_index));
   }
 
   /** Destructor */
   ~Page_load() noexcept {
+    ut_ad(m_n_blocks_buf_fixed == 0);
     if (m_heap != nullptr) {
       /* mtr is allocated using heap. */
       if (m_mtr != nullptr) {
@@ -286,6 +289,9 @@ class Page_load : private ut::Non_copyable {
 
   /** Page modified flag. */
   bool m_modified{};
+
+  /** Number of blocks which are buffer fixed but not pushed to mtr memo */
+  int32_t m_n_blocks_buf_fixed{};
 
   friend class Btree_load;
 };
@@ -815,6 +821,7 @@ void Page_load::release() noexcept {
 
   /* We fix the block because we will re-pin it soon. */
   buf_block_buf_fix_inc(m_block, UT_LOCATION_HERE);
+  m_n_blocks_buf_fixed++;
 
   m_modify_clock = m_block->get_modify_clock(IF_DEBUG(true));
 
@@ -856,6 +863,8 @@ void Page_load::latch() noexcept {
   }
 
   buf_block_buf_fix_dec(m_block);
+  m_n_blocks_buf_fixed--;
+  ut_ad(m_n_blocks_buf_fixed >= 0);
 
   /* The caller is going to use the m_block, so it needs to be buffer-fixed
   even after the decrement above. This works like this:
@@ -1242,6 +1251,12 @@ dberr_t Btree_load::load_root_page(page_no_t last_page_no) noexcept {
   if (err == DB_SUCCESS) {
     page_loader.copy_all(last_page);
     page_loader.finish();
+
+    /* Make sure the last page has no siblings. */
+    ut_ad(!page_has_siblings(last_page));
+    /** To indicate the index page is freed from the b-tree, we reset the index
+     * id to 0. */
+    lizard::btr_page_reset_index_id(last_block);
 
     /* Remove last page. */
     btr_page_free_low(m_index, last_block, m_root_level, &mtr);

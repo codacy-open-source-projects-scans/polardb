@@ -44,7 +44,7 @@
 
 --source include/rpl_connection_slave.inc
 
-CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1, GTID_ONLY = 1;
+CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1, GTID_ONLY = 1 for channel "test";
 
 --source include/rpl_connection_master.inc
 
@@ -91,7 +91,7 @@ INSERT INTO t VALUES(4);
 
 --let $replica_local_infile_value = `SELECT @@global.local_infile`
 SET @@GLOBAL.local_infile= true;
---let $relay_log_file= query_get_value(SHOW REPLICA STATUS, Relay_Log_File,1)
+--let $relay_log_file= query_get_value(SHOW REPLICA STATUS for channel 'test', Relay_Log_File,1)
 --source include/get_relay_log_pos.inc
 
 --replace_result $relay_log_file RELAY_LOG_FILE $relay_log_pos RELAY_LOG_POS
@@ -114,7 +114,7 @@ SET @@GLOBAL.local_infile= true;
 --let $explicit_default_wait_counter = 15000
 --source include/rpl_restart_server.inc
 
---let $applier_source_log_file=query_get_value(SHOW REPLICA STATUS FOR CHANNEL '', Relay_Source_Log_File, 1)
+--let $applier_source_log_file=query_get_value(SHOW REPLICA STATUS FOR CHANNEL 'test', Relay_Source_Log_File, 1)
 --let $assert_cond= [ SELECT "$applier_source_log_file" = "INVALID" ]
 --let $assert_text= The source log file name in the applier is invalid
 --source include/assert.inc
@@ -158,7 +158,7 @@ INSERT INTO t VALUES(8);
 
 --let $replica_local_infile_value = `SELECT @@global.local_infile`
 SET @@GLOBAL.local_infile= true;
---let $relay_log_file= query_get_value(SHOW REPLICA STATUS, Relay_Log_File,1)
+--let $relay_log_file= query_get_value(SHOW REPLICA STATUS for channel 'test', Relay_Log_File,1)
 --source include/get_relay_log_pos.inc
 
 --let $rpl_server_number = 2
@@ -166,7 +166,7 @@ SET @@GLOBAL.local_infile= true;
 --let $explicit_default_wait_counter = 15000
 --source include/rpl_restart_server.inc
 
---let $applier_source_log_file=query_get_value(SHOW REPLICA STATUS FOR CHANNEL '', Relay_Source_Log_File, 1)
+--let $applier_source_log_file=query_get_value(SHOW REPLICA STATUS FOR CHANNEL 'test', Relay_Source_Log_File, 1)
 --let $assert_cond= [ SELECT "$applier_source_log_file" = "INVALID" ]
 --let $assert_text= The source log file name in the applier is invalid
 --source include/assert.inc
@@ -189,7 +189,7 @@ SET @@GLOBAL.local_infile= true;
 
 --source include/stop_slave.inc
 
-CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 0, GTID_ONLY = 0;
+CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 0, GTID_ONLY = 0 for channel "test";
 
 --source include/start_slave.inc
 

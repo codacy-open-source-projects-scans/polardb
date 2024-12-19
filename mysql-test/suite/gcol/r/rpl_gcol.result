@@ -52,7 +52,7 @@ doc	gtext
 NULL	NULL
 {"id": 2, "name": "Omar Argentina"}	Omar Argentina
 {"id": 1, "name": "Omar Bras"}	Omar Bras
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 SHOW CREATE TABLE gtable;
 Table	Create Table
 gtable	CREATE TABLE `gtable` (
@@ -68,7 +68,7 @@ NULL	NULL
 {"id": 1, "name": "Omar Bras"}	Omar Bras
 include/diff_tables.inc [master:gtable, slave:gtable]
 DROP TABLE gtable;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 DROP VIEW  IF EXISTS v1,v2;
 DROP TABLE IF EXISTS t1,t2,t3;
 DROP PROCEDURE IF EXISTS p1;

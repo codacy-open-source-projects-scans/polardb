@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -289,11 +289,12 @@ read_ahead:
   return (count);
 }
 
-bool buf_read_page(const page_id_t &page_id, const page_size_t &page_size) {
+bool buf_read_page(const page_id_t &page_id, const page_size_t &page_size,
+                   ulint type) {
   ulint count;
   dberr_t err;
 
-  count = buf_read_page_low(&err, true, 0, BUF_READ_ANY_PAGE, page_id,
+  count = buf_read_page_low(&err, true, type, BUF_READ_ANY_PAGE, page_id,
                             page_size, false);
 
   srv_stats.buf_pool_reads.add(count);

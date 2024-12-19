@@ -82,7 +82,7 @@
 
 --source include/rpl_connection_slave.inc
 --source include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1;
+CHANGE REPLICATION SOURCE TO REQUIRE_ROW_FORMAT = 1 for channel "test";
 CALL mtr.add_suppression(".*The slave coordinator and worker threads are stopped, possibly leaving data in inconsistent state.*");
 CALL mtr.add_suppression("The query does not comply with variable require_row_format restrictions");
 --source include/start_slave.inc
@@ -120,7 +120,7 @@ SET SESSION binlog_format=ROW;
 # out will eventually lead to the applier stop
 
 --source include/rpl_connection_slave.inc
-START REPLICA SQL_THREAD;
+START REPLICA SQL_THREAD for channel 'test';
 
 # this makes sure that the applier started and worked fine
 # at some point
@@ -173,7 +173,7 @@ DROP TABLE t1;
 
 --source include/rpl_connection_slave.inc
 --source include/stop_slave.inc
---eval CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = ($ignored_db);
+--eval CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = ($ignored_db) for channel "test";
 --source include/start_slave_io.inc
 
 --source include/rpl_connection_master.inc
@@ -200,7 +200,7 @@ use test;
 --echo # clean up
 
 --source include/stop_slave.inc
-CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = ();
+CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = () for channel "test";
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
 --eval DROP DATABASE $ignored_db
@@ -218,7 +218,7 @@ CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = ();
 --source include/sync_slave_sql_with_master.inc
 
 --source include/stop_slave.inc
---eval CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = ($ignored_db)
+--eval CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = ($ignored_db) for channel "test";
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
 
@@ -235,7 +235,7 @@ use test;
 
 # clean up
 --source include/stop_slave.inc
---eval CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = ()
+--eval CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = () for channel "test";
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
 --eval DROP DATABASE $ignored_db
@@ -253,7 +253,7 @@ CREATE TABLE tload (c1 TEXT);
 --source include/sync_slave_sql_with_master.inc
 
 --source include/stop_slave.inc
---eval CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE = (test.tload)
+--eval CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE = (test.tload) for channel "test";
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
 
@@ -268,7 +268,7 @@ SET SESSION binlog_format=ROW;
 
 # clean up
 --source include/stop_slave.inc
---eval CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE = ()
+--eval CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE = () for channel "test";
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
 DROP TABLE tload;
@@ -330,7 +330,7 @@ SET SESSION binlog_format=ROW;
 --source include/stop_slave.inc
 
 --source include/rpl_connection_slave.inc
-RESET REPLICA;
+RESET REPLICA for channel 'test';
 DROP TABLE tload;
 RESET MASTER;
 

@@ -5,12 +5,12 @@ Note	####	Storing MySQL user name or password information in the master info rep
 [connection master]
 CREATE TABLE t1 (c1 INT) ENGINE=InnoDB;
 INSERT INTO t1 VALUES (1);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 RESET MASTER;
-include/stop_slave.inc
-include/start_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection master]
 include/diff_tables.inc [master:t1, slave:t1]
 [connection slave]

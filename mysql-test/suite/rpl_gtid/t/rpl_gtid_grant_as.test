@@ -100,7 +100,7 @@ DROP USER u1, u2, u3, u4, u5, u6, u7;
 DROP ROLE r1, r2;
 DROP USER foo;
 RESET MASTER;
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 
 --exec $MYSQL_BINLOG $datadir/$binlog_file | $MYSQL --user=root --host=127.0.0.1 --port=$SLAVE_MYPORT
 
@@ -201,7 +201,7 @@ DROP USER u1, u2, u3, u4, u5, u6, u7;
 DROP ROLE r1, r2;
 DROP USER foo;
 RESET MASTER;
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 
 --exec $MYSQL_BINLOG $datadir/$binlog_file | $MYSQL --user=root --host=127.0.0.1 --port=$SLAVE_MYPORT
 

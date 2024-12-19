@@ -7,14 +7,14 @@ the terms of the GNU General Public License, version 2.0, as published by the
 Free Software Foundation.
 
 This program is also distributed with certain software (including but not
-lzeusited to OpenSSL) that is licensed under separate terms, as designated in a
+limited to OpenSSL) that is licensed under separate terms, as designated in a
 particular file or component or in included license documentation. The authors
 of MySQL hereby grant you an additional permission to link the program and
 your derivative works with the separately licensed software that they have
 included with MySQL.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the zeusplied warranty of MERCHANTABILITY or FITNESS
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
 for more details.
 
@@ -74,17 +74,30 @@ class Gcn_log_event : public binary_log::Gcn_event, public Log_event {
 
   ~Gcn_log_event() override {}
 
-  size_t get_data_size() override { return POST_HEADER_LENGTH; }
-
-  static size_t get_event_length(enum_binlog_checksum_alg alg) {
-    return LOG_EVENT_HEADER_LEN + POST_HEADER_LENGTH +
-           (alg ? BINLOG_CHECKSUM_LEN : 0);
+  size_t get_data_size() override {
+    return POST_HEADER_LENGTH + get_gcn_length() + get_branch_count_length();
   }
+
+  /**
+    Take a glance to determine if it is a complete Gcn_log_event in
+    [buf, buf + buf_size)
+
+    @param[in]  buf       buffer
+    @param[in]  buf_size  buffer size
+    @param[in]  alg       take checksum field into consideration
+
+    @return the start pointer of the next event in the buffer if it is a
+            complete Gcn_log_event; otherwise return **buf**.
+  */
+  static const char *peek(const char *buf, size_t buf_size,
+                          const enum_binlog_checksum_alg alg);
 
 #ifdef MYSQL_SERVER
  public:
   bool write_data_header(Basic_ostream *ostream) override;
   uint32 write_data_header_to_memory(uchar *buffer);
+  bool write_data_body(Basic_ostream *ostream) override;
+  uint32 write_body_to_memory(uchar *buffer);
   bool write(Basic_ostream *ostream) override;
 #endif
 
@@ -98,6 +111,21 @@ class Gcn_log_event : public binary_log::Gcn_event, public Log_event {
   int do_update_pos(Relay_log_info *rli) override;
   enum_skip_reason do_shall_skip(Relay_log_info *rli) override;
 #endif
+
+  /**
+    Get XA info in Gcn_log_event.
+    @params[out]    gcn         GCN, CSR, PMMT_FLAG
+    @params[out]    xa_branch   xa branch info
+  */
+  void copy_xa(MyGCN *gcn, xa_branch_t *xa_branch) const;
+
+ private:
+  size_t get_gcn_length() const { return have_gcn() ? GCN_LENGTH : 0; }
+
+  size_t get_branch_count_length() const {
+    return have_branch_count() ? (BRANCH_NUMBER_LENGTH + BRANCH_NUMBER_LENGTH)
+                               : 0;
+  }
 };
 
 inline bool is_gcn_event(Log_event *evt) {

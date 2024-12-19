@@ -11,8 +11,8 @@ Note	####	Storing MySQL user name or password information in the master info rep
 #    thread on master.
 #
 CREATE TABLE t1 (a INT) ENGINE = InnoDB;
-include/sync_slave_sql_with_master.inc
-include/stop_slave.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
+include/stop_slave.inc [FOR CHANNEL 'test']
 [connection master]
 include/stop_dump_threads.inc
 #
@@ -28,12 +28,12 @@ INSERT INTO t1 VALUES (2);
 #    MASTER TO MASTER_AUTO_POSITION=1.
 #
 [connection slave]
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION = 1;
-START SLAVE;
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION = 1 for channel "test";
+START SLAVE for channel 'test';
 Warnings:
 Warning	1287	'START SLAVE' is deprecated and will be removed in a future release. Please use START REPLICA instead
-include/wait_for_slave_io_error.inc [errno=13114 # ER_MASTER_FATAL_ERROR_READING_BINLOG]
-include/stop_slave_sql.inc
+include/wait_for_slave_io_error.inc [errno=13114 # ER_MASTER_FATAL_ERROR_READING_BINLOG FOR CHANNEL 'test']
+include/stop_slave_sql.inc [FOR CHANNEL 'test']
 #
 # 5) Verify that appropriate messages are logged into master's and slave's
 #    error log.
@@ -44,10 +44,10 @@ include/assert_grep.inc [Found warning containing lost GTIDs in the slave error 
 # 6) Verify that replication succeeds if it tries to connect using CHANGE
 #    MASTER TO MASTER_LOG_POS.
 #
-CHANGE REPLICATION SOURCE TO SOURCE_LOG_FILE = 'MASTER_FILE', SOURCE_LOG_POS = MASTER_POS, SOURCE_AUTO_POSITION = 0;
-include/start_slave.inc
+CHANGE REPLICATION SOURCE TO SOURCE_LOG_FILE = 'MASTER_FILE', SOURCE_LOG_POS = MASTER_POS, SOURCE_AUTO_POSITION = 0 for channel "test";;
+include/start_slave.inc [FOR CHANNEL 'test']
 include/assert.inc [t1 should contain only one row with the value 2]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 [connection master]
 CALL mtr.add_suppression("Cannot replicate to server.*server has purged required binary logs.*");
 CALL mtr.add_suppression("Failed to open log");
@@ -58,12 +58,12 @@ CALL mtr.add_suppression("Got fatal error 1236 from master.*Replicate the missin
 # 7) Cleanup.
 #
 RESET MASTER;
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 [connection master]
 RESET MASTER;
 [connection slave]
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 DROP TABLE t1;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 include/rpl_end.inc

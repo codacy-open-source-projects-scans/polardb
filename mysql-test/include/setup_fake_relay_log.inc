@@ -45,8 +45,8 @@ let $_fake_relay_log_printable= `SELECT REPLACE('$fake_relay_log', '$MYSQL_TEST_
 
 # Sanity check.
 let $running= 0;
-let $_sql_running= query_get_value(SHOW SLAVE STATUS, Slave_SQL_Running, 1);
-let $_io_running= query_get_value(SHOW SLAVE STATUS, Slave_IO_Running, 1);
+let $_sql_running= query_get_value(SHOW SLAVE STATUS for channel 'test', Slave_SQL_Running, 1);
+let $_io_running= query_get_value(SHOW SLAVE STATUS for channel 'test', Slave_IO_Running, 1);
 if ($_sql_running == Yes) {
   let $running= 1;
 }
@@ -73,8 +73,8 @@ let $_fake_relay_index= $_fake_datadir/$_fake_filename.index;
 # CHANGE REPLICATION SOURCE modifies it (see the manual for CHANGE REPLICATION SOURCE).
 let $_fake_relay_log_purge= `SELECT @@global.relay_log_purge`;
 
-RESET REPLICA;
-let $_orphan_relay_file= query_get_value(SHOW SLAVE STATUS, Relay_Log_File, 1);
+RESET REPLICA for channel 'test';
+let $_orphan_relay_file= query_get_value(SHOW SLAVE STATUS for channel 'test', Relay_Log_File, 1);
 
 # Create relay log file.
 --copy_file $fake_relay_log $_fake_relay_log
@@ -98,7 +98,7 @@ let $_orphan_relay_file= query_get_value(SHOW SLAVE STATUS, Relay_Log_File, 1);
 --source include/write_var_to_file.inc
 
 # Remember old settings.
---let $_fake_old_master_host= query_get_value(SHOW REPLICA STATUS, Source_Host, 1)
+--let $_fake_old_master_host= query_get_value(SHOW REPLICA STATUS for channel 'test', Source_Host, 1)
 
 # Setup replication from existing relay log.
 eval CHANGE REPLICATION SOURCE TO SOURCE_HOST='dummy.localdomain', RELAY_LOG_FILE='$_fake_filename-fake.000001', RELAY_LOG_POS=4;

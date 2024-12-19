@@ -79,7 +79,7 @@ Lru_list<Element_type, Key_type, Value_type, Prealloc>::~Lru_list() {
 template <typename Element_type, typename Key_type, typename Value_type,
           size_t Prealloc>
 bool Lru_list<Element_type, Key_type, Value_type, Prealloc>::insert(
-    Value_type value) {
+    const Value_type &value) {
   Element_type *elem = nullptr;
   bool result = false;
 
@@ -110,7 +110,7 @@ bool Lru_list<Element_type, Key_type, Value_type, Prealloc>::insert(
 template <typename Element_type, typename Key_type, typename Value_type,
           size_t Prealloc>
 Value_type Lru_list<Element_type, Key_type, Value_type, Prealloc>::search(
-    Key_type key) {
+    const Key_type &key) {
   Element_type *elem;
   Value_type value;
   elem = iv_hash_search(&hash, key);
@@ -122,16 +122,16 @@ Value_type Lru_list<Element_type, Key_type, Value_type, Prealloc>::search(
 
 /** Template */
 template tcn_t Lru_list<tcn_node_t, trx_id_t, tcn_t, SESSION_TCN_SIZE>::search(
-    trx_id_t id);
+    const trx_id_t &id);
 template bool Lru_list<tcn_node_t, trx_id_t, tcn_t, SESSION_TCN_SIZE>::insert(
-    tcn_t tcn);
+    const tcn_t &tcn);
 template Lru_list<tcn_node_t, trx_id_t, tcn_t, SESSION_TCN_SIZE>::Lru_list();
 template Lru_list<tcn_node_t, trx_id_t, tcn_t, SESSION_TCN_SIZE>::~Lru_list();
 
 template tcn_t Lru_list<tcn_node_t, trx_id_t, tcn_t, LRU_TCN_SIZE>::search(
-    trx_id_t id);
+    const trx_id_t &id);
 template bool Lru_list<tcn_node_t, trx_id_t, tcn_t, LRU_TCN_SIZE>::insert(
-    tcn_t tcn);
+    const tcn_t &tcn);
 template Lru_list<tcn_node_t, trx_id_t, tcn_t, LRU_TCN_SIZE>::Lru_list();
 template Lru_list<tcn_node_t, trx_id_t, tcn_t, LRU_TCN_SIZE>::~Lru_list();
 

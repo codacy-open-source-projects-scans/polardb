@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -205,9 +205,12 @@ freed, but emptied, if all the records there are below the limit.
 @param[in]      hdr_page_no     header page number
 @param[in]      hdr_offset      header offset on the page
 @param[in]      limit           first undo number to preserve
+@param[in]      in_history      true if it's in the history list,
+                                false if it's in the sp list
 (everything below the limit will be truncated) */
 void trx_undo_truncate_start(trx_rseg_t *rseg, page_no_t hdr_page_no,
-                             ulint hdr_offset, undo_no_t limit);
+                             ulint hdr_offset, undo_no_t limit,
+                             bool in_history);
 /** Initializes the undo log lists for a rollback segment memory copy.
  This function is only called when the database is started or a new
  rollback segment created.
@@ -390,6 +393,8 @@ struct trx_undo_t {
   @return true is the undo log segment is in prepared state, false otherwise.*/
   inline bool is_prepared() const;
 
+  inline bool is_2pp() const;
+
   /*-----------------------------*/
   ulint id;        /*!< undo log slot number within the
                    rollback segment */
@@ -463,19 +468,38 @@ struct trx_undo_t {
     TXN ext_storage, only useful on TXN.
 
     Format:
-    bit_0, TXN_EXT_FLAG_HAVE_TAGS_1
-    bit_1~bit_7, unused for now.
+    bit_0, XES_ALLOCATED_TAGS
+    bit_1, XES_ALLOCATED_AC_PREPARE
+    bit_2, XES_ALLOCATED_AC_COMMIT
+    bit_3~bit_7, unused for now.
   */
-  uint8_t txn_ext_storage;
-
+  uint8_t xes_storage;
+  bool tags_allocated() const;
+  bool ac_prepare_allocated() const;
+  bool ac_commit_allocated() const;
+  void allocate_tags();
+  void allocate_ac_prepare();
+  void allocate_ac_commit();
   /**
-    TXN_UNDO_LOG_TAGS_1 in TXN. Only valid if TXN_EXT_FLAG_HAVE_TAGS_1 is set.
+    Only valid if TXN_EXT_FLAG_HAVE_TAGS_1 is set.
 
     Format:
-    bit_0, TXN_NEW_TAGS_1_ROLLBACK.
-    bit_1~bit_15, unused for now.
+    bit_0, XES_TAGS_ROLLBACK
+    bit_1, XES_TAGS_AC_ASSIGNED
+    bit_2~bit_15, unused for now.
   */
-  uint16_t txn_tags_1;
+  uint16_t tags;
+  void set_rollback_on_tags();
+  void set_ac_csr_assigned_on_tags();
+  bool ac_csr_assigned_on_tags() const;
+
+  proposal_mark_t pmmt;
+
+  /** XA branch count info  */
+  xa_branch_t branch;
+
+  /** Master branch info */
+  xa_addr_t maddr;
 };
 
 UT_LIST_NODE_GETTER_DEFINITION(trx_undo_t, undo_list)
@@ -600,6 +624,9 @@ constexpr uint32_t TRX_UNDO_FLAG_XA_PREPARE_GTID = 0x04;
 /** Lizard: define txn undo log.
     true if undo log header is txn undo log header */
 constexpr uint32_t TRX_UNDO_FLAG_TXN = 0x80;
+/** Lizard: define txn/update undo log.
+ *  true if undo log need to be two phase purge. */
+constexpr uint32_t TRX_UNDO_FLAG_2PP = 0x40;
 /** true if the transaction is a table create, index create, or drop
  transaction: in recovery the transaction cannot be rolled back in the usual
  way: a 'rollback' rather means dropping the created or dropped table, if it
@@ -679,6 +706,42 @@ constexpr uint32_t TRX_UNDO_LOG_GTID_XA = TRX_UNDO_LOG_GTID_HDR_SIZE;
 to store both prepare and commit GTID. */
 constexpr uint32_t TRX_UNDO_LOG_GTID_XA_HDR_SIZE =
     TRX_UNDO_LOG_GTID_HDR_SIZE + TRX_UNDO_LOG_GTID_LEN;
+
+
+/**************************************************************************/
+// Lizard: Allocate Segment Tailer special for txn/update undo log segment.
+/**************************************************************************/
+/**
+ *   Page Format(txn/update undo page)
+ *      ---------------
+ *      Fil Header
+ *      ---------------
+ *      Segment Header
+ *      ---------------
+ *      .
+ *      .
+ *      .
+ *      ---------------
+ *              |
+ *              |
+ *      1B      | Flag
+ *      Segment Tailer
+ *      ---------------
+ *      Fil Tailer
+ *      ---------------
+ */
+constexpr uint32_t TRX_USEG_END = FIL_PAGE_DATA_END;
+/** flag of tailer*/
+constexpr uint32_t TRX_USEG_END_FLAG = 1;
+
+/** Flag 1: Whether exist two phase purge log hdr in undo log segment. */
+constexpr uint32_t TRX_USEG_FLAG_EXIST_2PP = 0x01;
+
+/** Mask TRX_USEG_END_FLAG */
+constexpr uint8_t TRX_USEG_END_FLAG_MASK = TRX_USEG_FLAG_EXIST_2PP;
+
+/** Only bit_0 ~ bit_6 can be used. */
+static_assert(!(TRX_USEG_END_FLAG_MASK & 0x70));
 
 #include "trx0undo.ic"
 #endif

@@ -118,9 +118,9 @@ xa commit 'xx_1';
 
 connection default;
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
+--let $expect_status= COMMIT
 --let $my_xid= 'xx_1','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 # 4. xa prepare (update)
 #
@@ -149,9 +149,9 @@ xa commit 'xx_2';
 
 connection default;
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
+--let $expect_status= COMMIT
 --let $my_xid= 'xx_2','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 
 # 5. xa commit one phase (insert)
@@ -178,9 +178,9 @@ xa commit 'xx_3' one phase;
 
 connection default;
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
+--let $expect_status= COMMIT
 --let $my_xid= 'xx_3','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 
 # 6. xa commit one phase (update)
@@ -207,9 +207,9 @@ xa commit 'xx_4' one phase;
 
 connection default;
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
+--let $expect_status= COMMIT
 --let $my_xid= 'xx_4','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 
 # 7. xa commit (insert)
@@ -238,9 +238,9 @@ xa commit 'xx_5';
 
 connection default;
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
+--let $expect_status= COMMIT
 --let $my_xid= 'xx_5','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 # 8. xa commit (update)
 #
@@ -268,9 +268,9 @@ xa commit 'xx_6';
 
 connection default;
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
+--let $expect_status= COMMIT
 --let $my_xid= 'xx_6','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 # 9. xa rollback (insert)
 #
@@ -298,9 +298,9 @@ xa rollback 'xx_7';
 
 connection default;
 --let $expect_gcn= $commit_gcn
---let $expect_state= ROLLBACK
+--let $expect_status= ROLLBACK
 --let $my_xid= 'xx_7','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 # 10. xa rollback (update)
 #
@@ -329,9 +329,9 @@ xa rollback 'xx_8';
 
 connection default;
 --let $expect_gcn= $commit_gcn
---let $expect_state= ROLLBACK
+--let $expect_status= ROLLBACK
 --let $my_xid= 'xx_8','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 
 connection default;

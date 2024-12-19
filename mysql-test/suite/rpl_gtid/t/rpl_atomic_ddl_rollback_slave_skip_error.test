@@ -21,8 +21,8 @@
 --let $MYSQLD_SLAVE_DATADIR= `select @@datadir`
 
 # clear slave datadir
-RESET SLAVE;
---remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin.000001
+RESET SLAVE for channel 'test';
+--remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin-test.000001
 --remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin.index
 
 # copy the binlog with the following events:
@@ -44,9 +44,9 @@ if (`SELECT CONVERT(@@VERSION_COMPILE_OS USING latin1) NOT IN ('Win32', 'Win64',
     --copy_file std_data/slave-relay-bin_linux.index $MYSQLD_SLAVE_DATADIR/slave-relay-bin.index
 }
 
---copy_file std_data/rpl_atomic_ddl_rollback_full.000001 $MYSQLD_SLAVE_DATADIR/slave-relay-bin.000001
+--copy_file std_data/rpl_atomic_ddl_rollback_full.000001 $MYSQLD_SLAVE_DATADIR/slave-relay-bin-test.000001
 
-START SLAVE;
+START SLAVE for channel 'test';
 
 # wait until slave reads and applies all events from relay log
 --let $slave_param= Slave_SQL_Running_State
@@ -60,6 +60,6 @@ DROP VIEW v1;
 
 # clean up
 --source include/stop_slave.inc
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 --let $rpl_only_running_threads= 1
 --source include/rpl_end.inc

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -40,7 +40,10 @@ this program; if not, write to the Free Software Foundation, Inc.,
 // Forward declaration
 struct dict_index_t;
 
-#define INDEX_LOG_VERSION 0x01
+/* Index logging version */
+constexpr uint8_t INDEX_LOG_VERSION_0 = 0;
+constexpr uint8_t INDEX_LOG_VERSION_CURRENT = 1;
+constexpr uint8_t INDEX_LOG_VERSION_MAX = INDEX_LOG_VERSION_CURRENT;
 
 #define COMPACT_FLAG 0x01
 #define VERSION_FLAG 0x02
@@ -53,6 +56,13 @@ struct dict_index_t;
 #define SET_INSTANT(flags) (flag |= INSTANT_FLAG)
 #define SET_VERSIONED(flags) (flag |= VERSION_FLAG)
 #define SET_COMPACT(flags) (flag |= COMPACT_FLAG)
+
+/* Lizard-4.0: Secondary index Lizard Fields Flag */
+#define SEC_LFIELDS_FLAG 0x80
+
+#define IS_SEC_LFIELDS(flags) (flags & SEC_LFIELDS_FLAG)
+
+#define SET_SEC_LFILEDS(flags) (flag |= SEC_LFIELDS_FLAG)
 
 /* Size of initial info on REDO log
   1   byte  for LOG TYPE

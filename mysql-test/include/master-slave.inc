@@ -39,6 +39,7 @@
 #     servers (servers 3, 4, etc are neither masters nor slaves) by
 #     setting this variable. See also include/rpl_init.inc
 
+--let $rpl_channel_name='test'
 
 --let $include_filename= master-slave.inc
 if ($rpl_server_count)

@@ -20,9 +20,9 @@ insert into tt values (1);
 --eval xa commit '1$postfix'
 
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
+--let $expect_status= COMMIT
 --let $my_xid= '1$postfix','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # Case 2: rollback detached XA
@@ -42,9 +42,9 @@ insert into tt values (2);
 --eval xa rollback '2$postfix'
 
 --let $expect_gcn= $commit_gcn
---let $expect_state= ROLLBACK
+--let $expect_status= ROLLBACK
 --let $my_xid= '2$postfix','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # Case 3: commit attached XA
@@ -64,9 +64,9 @@ insert into tt values (3);
 --eval xa commit '3$postfix'
 
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
+--let $expect_status= COMMIT
 --let $my_xid= '3$postfix','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # Case 4: rollback attached XA
@@ -86,9 +86,9 @@ insert into tt values (4);
 --eval xa rollback '4$postfix'
 
 --let $expect_gcn= $commit_gcn
---let $expect_state= ROLLBACK
+--let $expect_status= ROLLBACK
 --let $my_xid= '4$postfix','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # cleanup

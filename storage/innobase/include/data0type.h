@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -107,13 +107,16 @@ constexpr uint32_t DATA_POINT = 15;
 /** geometry datatype of variable length POINT, used when we want to store POINT
  as BLOB internally */
 constexpr uint32_t DATA_VAR_POINT = 16;
+
+constexpr uint32_t DATA_SYS_GPP = 24;
+
 /** dtype_store_for_order_and_null_size()  requires the values are <= 63 */
 constexpr uint32_t DATA_MTYPE_MAX = 63;
 
 /** minimum value of mtype */
 constexpr uint32_t DATA_MTYPE_CURRENT_MIN = DATA_VARCHAR;
 /** maximum value of mtype */
-constexpr uint32_t DATA_MTYPE_CURRENT_MAX = DATA_VAR_POINT;
+constexpr uint32_t DATA_MTYPE_CURRENT_MAX = DATA_SYS_GPP;
 /*-------------------------------------------*/
 /* The 'PRECISE TYPE' of a column */
 /*

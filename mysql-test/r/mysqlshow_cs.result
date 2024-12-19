@@ -123,7 +123,9 @@ Database: information_schema
 | INNODB_FT_DELETED                          |
 | INNODB_FT_INDEX_CACHE                      |
 | INNODB_FT_INDEX_TABLE                      |
+| INNODB_GPP_STATS                           |
 | INNODB_INDEXES                             |
+| INNODB_INDEX_STATUS                        |
 | INNODB_METRICS                             |
 | INNODB_PURGE_FILES                         |
 | INNODB_SESSION_TEMP_TABLESPACES            |
@@ -132,6 +134,7 @@ Database: information_schema
 | INNODB_TABLESPACES_BRIEF                   |
 | INNODB_TABLESPACE_MASTER_KEY               |
 | INNODB_TABLESTATS                          |
+| INNODB_TABLE_STATUS                        |
 | INNODB_TEMP_TABLE_INFO                     |
 | INNODB_TRX                                 |
 | INNODB_VIRTUAL                             |
@@ -220,7 +223,9 @@ Database: INFORMATION_SCHEMA
 | INNODB_FT_DELETED                          |
 | INNODB_FT_INDEX_CACHE                      |
 | INNODB_FT_INDEX_TABLE                      |
+| INNODB_GPP_STATS                           |
 | INNODB_INDEXES                             |
+| INNODB_INDEX_STATUS                        |
 | INNODB_METRICS                             |
 | INNODB_PURGE_FILES                         |
 | INNODB_SESSION_TEMP_TABLESPACES            |
@@ -229,6 +234,7 @@ Database: INFORMATION_SCHEMA
 | INNODB_TABLESPACES_BRIEF                   |
 | INNODB_TABLESPACE_MASTER_KEY               |
 | INNODB_TABLESTATS                          |
+| INNODB_TABLE_STATUS                        |
 | INNODB_TEMP_TABLE_INFO                     |
 | INNODB_TRX                                 |
 | INNODB_VIRTUAL                             |

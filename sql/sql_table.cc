@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2000, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -193,6 +193,9 @@
 
 #include "sql/recycle_bin/recycle_table.h"
 #include "sql/sql_implicit_common.h"
+
+#include "sql/dd/lizard_policy_types.h"
+#include "sql/raii/sentry.h"
 
 namespace dd {
 class View;
@@ -13292,6 +13295,14 @@ static bool mysql_inplace_alter_table(
   MDL_request_list mdl_requests;
 
   DBUG_TRACE;
+
+  lizard::Ha_ddl_policy ddl_policy(thd,
+                                   ha_alter_info->is_inplace_alter_partition());
+
+  raii::Sentry alter_ddl_policy_guard(
+      [&ha_alter_info] { ha_alter_info->ddl_policy = nullptr; });
+  assert(ha_alter_info->ddl_policy == nullptr);
+  ha_alter_info->ddl_policy = &ddl_policy;
 
   /*
     Upgrade to EXCLUSIVE lock if:

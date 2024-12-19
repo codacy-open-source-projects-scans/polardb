@@ -7,14 +7,14 @@ the terms of the GNU General Public License, version 2.0, as published by the
 Free Software Foundation.
 
 This program is also distributed with certain software (including but not
-lzeusited to OpenSSL) that is licensed under separate terms, as designated in a
+limited to OpenSSL) that is licensed under separate terms, as designated in a
 particular file or component or in included license documentation. The authors
 of MySQL hereby grant you an additional permission to link the program and
 your derivative works with the separately licensed software that they have
 included with MySQL.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the zeusplied warranty of MERCHANTABILITY or FITNESS
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
 for more details.
 
@@ -183,7 +183,9 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #ifdef MYSQL_SERVER
 Gcn_log_event::Gcn_log_event(THD *thd_arg)
-    : binary_log::Gcn_event(),
+    : binary_log::Gcn_event(
+          &thd_arg->owned_commit_gcn, thd_arg->variables.innodb_commit_gcn,
+          thd_arg->variables.innodb_snapshot_gcn, &thd_arg->owned_xa_branch),
       Log_event(thd_arg, LOG_EVENT_IGNORABLE_F,
                 Log_event::EVENT_TRANSACTIONAL_CACHE,
                 Log_event::EVENT_NORMAL_LOGGING, header(), footer()) {
@@ -200,7 +202,7 @@ int Gcn_log_event::pack_info(Protocol *protocol) {
   str_buf.append("SET @@SESSION.INNODB_COMMIT_SEQ=");
 
   char gcn_buf[64];
-  longlong10_to_str(commit_gcn, gcn_buf, 10);
+  longlong10_to_str(gcn, gcn_buf, 10);
   str_buf.append(gcn_buf);
 
   protocol->store_string(str_buf.ptr(), str_buf.length(), &my_charset_bin);
@@ -213,32 +215,8 @@ uint32 Gcn_log_event::write_data_header_to_memory(uchar *buffer) {
   DBUG_TRACE;
   uchar *ptr_buffer = buffer;
 
-  if (!thd->owned_commit_gcn.is_empty()) {
-    flags |= FLAG_HAVE_COMMITTED_GCN;
-    commit_gcn = thd->owned_commit_gcn.get_gcn();
-
-    if (thd->owned_commit_gcn.is_assigned()) {
-      flags |= FLAG_GCN_ASSIGNED;
-    }
-  }
-
-  if (thd->variables.innodb_commit_gcn != MYSQL_GCN_NULL) {
-    flags |= FLAG_HAVE_COMMITTED_SEQ;
-  }
-
-  if (thd->variables.innodb_snapshot_gcn != MYSQL_GCN_NULL) {
-    flags |= FLAG_HAVE_SNAPSHOT_SEQ;
-  }
-
-  // DBUG_ASSERT(flags != 0);
-
   *ptr_buffer = flags;
-  ptr_buffer += FLAGS_LENGTH;
-
-  if (flags & FLAG_HAVE_COMMITTED_GCN) {
-    int8store(ptr_buffer, commit_gcn);
-    ptr_buffer += COMMITTED_GCN_LENGTH;
-  }
+  ptr_buffer += ENCODED_FLAG_LENGTH;
 
   return ptr_buffer - buffer;
 }
@@ -250,9 +228,36 @@ bool Gcn_log_event::write_data_header(Basic_ostream *ostream) {
   return wrapper_my_b_safe_write(ostream, (uchar *)buffer, POST_HEADER_LENGTH);
 }
 
+uint32 Gcn_log_event::write_body_to_memory(uchar *buffer) {
+  DBUG_TRACE;
+  uchar *ptr_buffer = buffer;
+
+  if (flags & FLAG_HAVE_GCN) {
+    int8store(ptr_buffer, gcn);
+    ptr_buffer += GCN_LENGTH;
+  }
+
+  if (flags & FLAG_HAVE_BRANCH_COUNT) {
+    int2store(ptr_buffer, branch.n_global);
+    ptr_buffer += BRANCH_NUMBER_LENGTH;
+    int2store(ptr_buffer, branch.n_local);
+    ptr_buffer += BRANCH_NUMBER_LENGTH;
+  }
+
+  return ptr_buffer - buffer;
+}
+
+bool Gcn_log_event::write_data_body(Basic_ostream *ostream) {
+  DBUG_TRACE;
+  uchar buffer[MAX_DATA_BODY_LENGTH];
+  uint32 len = write_body_to_memory(buffer);
+  return wrapper_my_b_safe_write(ostream, (uchar *)buffer, len);
+}
+
 bool Gcn_log_event::write(Basic_ostream *ostream) {
   return (write_header(ostream, get_data_size()) ||
-          write_data_header(ostream) || write_footer(ostream));
+          write_data_header(ostream) || write_data_body(ostream) ||
+          write_footer(ostream));
 }
 
 #endif
@@ -265,15 +270,18 @@ void Gcn_log_event::print(FILE *, PRINT_EVENT_INFO *print_event_info) const {
     print_header(head, print_event_info, false);
     my_b_printf(
         head,
-        "\tGcn\thave_snapshot_seq=%s\thave_commit_seq=%s\tGCN_ASSIGNED=%s\n",
+        "\tGcn\thave_snapshot_seq=%s\thave_commit_seq=%s\tGCN_ASSIGNED=%s\t"
+        "AC_PROPOSAL=%s\tN_GLOBAL=%u\tN_LOCAL=%u\n",
         (flags & FLAG_HAVE_SNAPSHOT_SEQ) ? "true" : "false",
         (flags & FLAG_HAVE_COMMITTED_SEQ) ? "true" : "false",
-        (flags & FLAG_GCN_ASSIGNED) ? "ture" : "false");
+        (flags & FLAG_GCN_ASSIGNED) ? "true" : "false",
+        (flags & FLAG_GCN_PROPOSAL ? "true" : "false"), branch.n_global,
+        branch.n_local);
   }
 
-  if (flags & FLAG_HAVE_COMMITTED_GCN) {
+  if (flags & FLAG_HAVE_GCN) {
     my_b_printf(head, "SET @@session.innodb_commit_seq=%llu%s\n",
-                (ulonglong)commit_gcn, print_event_info->delimiter);
+                (ulonglong)gcn, print_event_info->delimiter);
   }
 }
 #endif
@@ -284,15 +292,10 @@ int Gcn_log_event::do_apply_event(Relay_log_info const *rli) {
   MY_UNUSED(rli);
   assert(rli->info_thd == thd);
 
-  if (flags & FLAG_HAVE_COMMITTED_GCN) {
-    assert(commit_gcn != MYSQL_GCN_NULL);
+  copy_xa(&thd->owned_commit_gcn, &thd->owned_xa_branch);
 
-    thd->variables.innodb_commit_gcn = commit_gcn;
-
-    /** Set owned_commit_gcn in THD. */
-    thd->owned_commit_gcn.set(commit_gcn, (flags & FLAG_GCN_ASSIGNED)
-                                              ? MYSQL_CSR_ASSIGNED
-                                              : MYSQL_CSR_AUTOMATIC);
+  if (have_gcn()) {
+    // thd->variables.innodb_commit_gcn = gcn;
   }
 
   return 0;
@@ -308,7 +311,67 @@ int Gcn_log_event::do_update_pos(Relay_log_info *rli) {
   return 0;
 }
 
+/**
+  Take a glance to determine if it is a complete Gcn_log_event in
+  [buf, buf + buf_size)
+
+  @param[in]  buf       buffer
+  @param[in]  buf_size  buffer size
+  @param[in]  alg       take checksum field into consideration
+
+  @return the start pointer of the next event in the buffer if it is a
+          complete Gcn_log_event; otherwise return **buf**.
+*/
+const char *Gcn_log_event::peek(const char *buf, size_t buf_size,
+                                const enum_binlog_checksum_alg alg) {
+  size_t event_len = 0;
+  uint8_t flags;
+
+  Log_event_type event_type = (Log_event_type)buf[EVENT_TYPE_OFFSET];
+
+  if (event_type == binary_log::GCN_LOG_EVENT &&
+      buf_size > LOG_EVENT_HEADER_LEN) {
+
+    event_len = LOG_EVENT_HEADER_LEN + POST_HEADER_LENGTH;
+
+    flags = buf[LOG_EVENT_HEADER_LEN];
+
+    if (flags & FLAG_HAVE_GCN) {
+      event_len += GCN_LENGTH;
+    }
+
+    if (flags & FLAG_HAVE_BRANCH_COUNT) {
+      event_len += (BRANCH_NUMBER_LENGTH /* n_branch */ +
+                    BRANCH_NUMBER_LENGTH /* n_local_branch */);
+    }
+
+    if (alg) {
+      event_len += BINLOG_CHECKSUM_LEN;
+    }
+
+    if (event_len < buf_size) {
+      return buf + event_len;
+    }
+  }
+
+  return buf;
+}
+
 Log_event::enum_skip_reason Gcn_log_event::do_shall_skip(Relay_log_info *rli) {
   return Log_event::continue_group(rli);
 }
+
+void Gcn_log_event::copy_xa(MyGCN *my_gcn, xa_branch_t *xa_branch) const {
+  if (have_gcn()) {
+    assert(gcn != GCN_NULL);
+
+    my_gcn->assign_from_binlog({gcn, csr()}, is_pmmt_gcn());
+  }
+
+  if (have_branch_count()) {
+    assert(!branch.is_null());
+    *xa_branch = branch;
+  }
+}
+
 #endif  // MYSQL_SERVER

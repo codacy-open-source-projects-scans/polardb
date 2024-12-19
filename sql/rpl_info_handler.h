@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2010, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -305,6 +305,7 @@ class Rpl_info_handler {
     @return Number of fields handled by the handler.
   */
   int get_number_info() { return ninfo; }
+  void set_read_cursor(const int value) { cursor = value; }
 
   /**
     Configures the number of events after which the info (e.g.

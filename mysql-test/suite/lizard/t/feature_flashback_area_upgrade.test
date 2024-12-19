@@ -1,0 +1,105 @@
+##########################################################################
+# Test script to test ERASE from older version(8.0.18) unpurged undo logs.
+##########################################################################
+
+--source include/not_valgrind.inc
+--source include/have_lowercase0.inc
+
+# ------------------------------------------------------------
+# Unpurged undo logs generated on earlier version with following
+# ------------------------------------------------------------
+#  set global innodb_undo_retention = 36000;
+#  set global innodb_fast_shutdown=1;
+#  use test;
+#  create table t1 (c1 int, c2 int, c3 int, primary key(c1), key(c2));
+#  insert into t1 values (11, 12, 13);
+#  insert into t1 values (21, 22, 23);
+#  insert into t1 values (31, 32, 33);
+#  insert into t1 values (41, 42, 43);
+#  insert into t1 values (51, 52, 53);
+#  insert into t1 values (61, 62, 63);
+#  begin;
+#  update t1 set c2 = c2+1;
+#  update t1 set c3 = c3+1;
+#  insert into t1 values (71, 72, 73);
+#  commit;
+#  begin;
+#  update t1 set c2 = c2+1;
+#  update t1 set c3 = c3+1;
+#  delete from t1 where c1=71;
+#  insert into t1 values (81, 82, 83);
+#  commit;
+#  begin;
+#  update t1 set c2 = c2+1;
+#  update t1 set c3 = c3+1;
+#  delete from t1 where c1=81;
+#  insert into t1 values (91, 92, 93);
+#  commit;
+#  begin;
+#  update t1 set c2 = c2+1;
+#  update t1 set c3 = c3+1;
+#  delete from t1 where c1=91;
+#  insert into t1 values (01, 02, 03);
+#  commit;
+#  begin;
+#  update t1 set c2 = c2+1;
+#  update t1 set c3 = c3+1;
+#  delete from t1 where c1=01;
+#  commit;
+#  begin;
+#  update t1 set c2 = c2+1;
+#  update t1 set c3 = c3+1;
+#  commit;
+#  shutdown;
+# ------------------------------------------------------------
+# Attention: 
+# clean shutdown(innodb_fast_shutdown=0 or 1) needed 
+# when upgrading to version 8.0.30 or later
+
+--echo #########
+--echo # SETUP #
+--echo #########
+
+--echo # Stop the running the server
+--source include/shutdown_mysqld.inc
+
+--echo # Copy and unzip the datadir.
+--copy_file $MYSQLTEST_VARDIR/std_data/upgrade/data_8018_unpurged_undo.zip $MYSQL_TMP_DIR/data_8018_unpurged_undo.zip
+--file_exists $MYSQL_TMP_DIR/data_8018_unpurged_undo.zip
+--exec unzip -qo $MYSQL_TMP_DIR/data_8018_unpurged_undo.zip -d $MYSQL_TMP_DIR
+let $DATADIR = $MYSQL_TMP_DIR/data;
+
+--echo # Restart the server against the unzipped datadir
+--replace_result $DATADIR DATADIR
+--let $restart_parameters = restart: --datadir=$DATADIR --innodb_undo_retention=36000
+--let $wait_counter=100000
+--source include/start_mysqld.inc
+
+--echo ##############################################
+--echo # Test upgrade
+--echo ##############################################
+use test;
+select * from t1;
+
+call dbms_undo.purge_status();
+
+set global innodb_undo_retention = 0;
+--source include/wait_innodb_all_purged.inc
+
+--echo ###########
+--echo # CLEANUP #
+--echo ###########
+
+--echo # Shutdown server
+--source include/shutdown_mysqld.inc
+
+--echo # Remove copied files
+--file_exists $MYSQL_TMP_DIR/data_8018_unpurged_undo.zip
+--force-rmdir $MYSQL_TMP_DIR/data
+--remove_file $MYSQL_TMP_DIR/data_8018_unpurged_undo.zip
+
+--echo # Restarting server to restore server state
+let $restart_parameters =;
+--source include/start_mysqld.inc
+
+set global innodb_undo_retention = default;

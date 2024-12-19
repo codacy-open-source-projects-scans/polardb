@@ -1,0 +1,16 @@
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+CREATE TABLE t1 (c1 INT PRIMARY KEY);
+XA START 'ac_recv_branch_info','' ,1;
+INSERT INTO t1 VALUES (1);
+XA END 'ac_recv_branch_info','' ,1;
+include/execute_to_conditional_timestamp_sync_point.inc [before_set_prepared_in_tc]
+# Kill the server
+ERROR HY000: Lost connection to MySQL server during query
+# restart
+include/assert.inc [expect_n_branch == actual_n_branch]
+include/assert.inc [expect_n_local_branch == actual_n_local_branch]
+XA RECOVER;
+formatID	gtrid_length	bqual_length	data
+1	19	0	ac_recv_branch_info
+XA ROLLBACK 'ac_recv_branch_info','' ,1;
+DROP TABLE t1;

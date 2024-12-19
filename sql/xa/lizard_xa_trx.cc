@@ -27,9 +27,12 @@
 #include "sql/lizard0handler.h"
 #include "sql/lizard_binlog.h"
 #include "sql/mysqld.h"
+#include "sql/raii/sentry.h"
 #include "sql/sql_class.h"
 #include "sql/sql_lex.h"
 #include "sql/sql_parse.h"
+#include "sql/xa/sql_xa_commit.h"
+#include "sql/xa/transaction_cache.h"
 
 #include "mysql/components/services/log_builtins.h"
 
@@ -67,8 +70,10 @@ class Xa_active_pretender {
   @param[in]	Thread handler
   @param[in]	XID
   @param[out]	transaction slot address
+  @param[out]	transaction identifier
 */
-bool apply_trx_for_xa(THD *thd, const XID *xid, my_slot_ptr_t *slot_ptr) {
+bool apply_trx_for_xa(THD *thd, const XID *xid, slot_ptr_t *slot_ptr,
+                      trx_id_t *trx_id) {
   /** Take innodb as transaction slot storage engine. */
   handlerton *ttse = innodb_hton;
 
@@ -97,7 +102,7 @@ bool apply_trx_for_xa(THD *thd, const XID *xid, my_slot_ptr_t *slot_ptr) {
   }
 
   /** 2. alloc transaction slot in ttse, will also write xid into TXN. */
-  if (ttse->ext.assign_slot_for_xa(thd, slot_ptr)) {
+  if (ttse->ext.assign_slot_for_xa(thd, slot_ptr, trx_id)) {
     my_error(ER_XA_PROC_BLANK_XA_TRX, MYF(0));
     return true;
   }
@@ -113,77 +118,103 @@ bool apply_trx_for_xa(THD *thd, const XID *xid, my_slot_ptr_t *slot_ptr) {
   return false;
 }
 
-/*************************************************
- *                Heartbeat Freezer              *
- *************************************************/
-bool opt_no_heartbeat_freeze;
-bool no_heartbeat_freeze;
+/**
+  Find Transaction_ctx in Transaction_cache by XID
+*/
+static std::shared_ptr<Transaction_ctx> find_trn_for_search_and_get_its_state(
+    xid_t *xid_for_trn, bool *is_detached) {
+  *is_detached = false;
 
-uint64_t opt_no_heartbeat_freeze_timeout;
-
-bool Lazy_printer::print(const char *msg) {
-  if (unlikely(m_first)) {
-    LogErr(INFORMATION_LEVEL, ER_LIZARD, msg);
-    m_timer.update();
-    m_first = false;
-    return true;
-  } else if (m_timer.since_last_update() > m_internal_secs) {
-    LogErr(INFORMATION_LEVEL, ER_LIZARD, msg);
-    m_timer.update();
-    return true;
-  }
-
-  return false;
-}
-
-void Lazy_printer::reset() { m_first = true; }
-
-Heartbeat_freezer hb_freezer;
-
-void hb_freezer_heartbeat() { hb_freezer.heartbeat(); }
-
-bool hb_freezer_determine_freeze() { return hb_freezer.determine_freeze(); }
-
-bool hb_freezer_is_freeze() {
-  return opt_no_heartbeat_freeze && hb_freezer.is_freeze();
-}
-
-bool cn_heartbeat_timeout_freeze_updating(LEX *const lex) {
-  DBUG_EXECUTE_IF("hb_timeout_do_not_freeze_operation", { return false; });
-  switch (lex->sql_command) {
-    case SQLCOM_ADMIN_PROC:
-      break;
-
-    default:
-      if ((sql_command_flags[lex->sql_command] & CF_CHANGES_DATA) &&
-          lizard::xa::hb_freezer_is_freeze() && likely(mysqld_server_started)) {
-        my_error(ER_XA_PROC_HEARTBEAT_FREEZE, MYF(0));
+  auto foundit = ::xa::Transaction_cache::find(
+      xid_for_trn, [&](std::shared_ptr<Transaction_ctx> const &item) -> bool {
+        *is_detached = item->xid_state()->is_detached();
         return true;
-      }
+      });
+
+  return foundit;
+}
+
+static bool search_detach_prepare_trx(std::shared_ptr<Transaction_ctx> &trx_ctx,
+                                      xid_t *xid, MyXAInfo *info) {
+  bool is_detached;
+  bool found;
+  auto detached_xs = trx_ctx->xid_state();
+  handlerton_ext &ibh_ext = innodb_hton->ext;
+
+  /** If can not acquire lock, must someone do xa commit, xa rollback,
+  or another find_by_xid */
+  if (!detached_xs->get_xa_lock().try_lock()) {
+    *info = MY_XA_INFO_ATTACH;
+    return true;
   }
 
+  raii::Sentry<> mutex_guard_on_error{
+      [detached_xs]() -> void { detached_xs->get_xa_lock().unlock(); }};
+
+  /** 2. Detached prepared XA transaction. */
+  if (find_trn_for_search_and_get_its_state(xid, &is_detached) != nullptr) {
+    assert(is_detached);
+
+    found = ibh_ext.search_detach_prepare_trx_by_xid(xid, info);
+    assert(!found || info->status == XA_status::DETACHED_PREPARE);
+    if (!found) {
+      /**
+        Found empty XA transaction, like:
+
+        xa start 'fbx_empty_b2';
+        xa end 'fbx_empty_b2';
+
+        xa prepare 'fbx_empty_b2';
+        call dbms_xa.find_by_xid('fbx_empty_b2', '', 1);
+      */
+      *info = MY_XA_INFO_FORGET;
+    }
+
+    return true;
+  }
+
+  /** Must commit / rollback already. */
   return false;
 }
 
-bool cn_heartbeat_timeout_freeze_applying_event(THD *thd) {
-  static Lazy_printer printer(60);
+/**
+  Search XA transaction info by XID.
+  @param[in]    xid     XID
+  @param[out]   info    XA info
+*/
+void search_trx_info(xid_t *xid, MyXAInfo *info) {
+  bool is_detached;
+  handlerton_ext &ibh_ext = innodb_hton->ext;
 
-  if (lizard::xa::hb_freezer_is_freeze()) {
-    THD_STAGE_INFO(thd, stage_wait_for_cn_heartbeat);
+  std::shared_ptr<Transaction_ctx> trx_ctx =
+      find_trn_for_search_and_get_its_state(xid, &is_detached);
 
-    printer.print(
-        "Applying event is blocked because no heartbeat has been received "
-        "for a long time. If you want to advance it, please call "
-        "dbms_xa.send_heartbeat() (or set global innodb_cn_no_heartbeat_freeze "
-        "= 0).");
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-
-    return true;
-  } else {
-    printer.reset();
-    return false;
+  if (trx_ctx != nullptr) {
+    if (!is_detached) {
+      /** Attached XA transaction. */
+      *info = MY_XA_INFO_ATTACH;
+      return;
+    } else {
+      /** Detached XA transaction. */
+      if (search_detach_prepare_trx(trx_ctx, xid, info)) {
+        return;
+      }
+    }
   }
+
+  /** Attached by backgroud xa transaction. */
+  /** TODO: Hold mutex always, might search history first. <08-08-24, zanye.zjy> */
+  if (ibh_ext.search_rollback_background_trx_by_xid(xid, info)) {
+    return;
+  }
+
+  /** XA transaction in history, must committed or rollbacked. */
+  if (ibh_ext.search_history_trx_by_xid(xid, info)) {
+    return;
+  }
+
+  /** Not found anywhere, not start or forget. */
+  *info = MY_XA_INFO_FORGET;
 }
 
 }  // namespace xa

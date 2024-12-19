@@ -8,7 +8,7 @@ Note	####	Storing MySQL user name or password information in the master info rep
 [connection master]
 CREATE TABLE t (a INT PRIMARY KEY);
 INSERT INTO t VALUES (1);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 #
 # 2. Check that the options values are instantiated.
 #
@@ -16,10 +16,10 @@ include/assert.inc [The performance_schema.replication_applier_configuration hol
 #
 # 3. Stop and reset the slave.
 #
-STOP SLAVE;
+STOP SLAVE for channel 'test';
 Warnings:
 Warning	1287	'STOP SLAVE' is deprecated and will be removed in a future release. Please use STOP REPLICA instead
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 Warnings:
 Warning	1287	'RESET SLAVE' is deprecated and will be removed in a future release. Please use RESET REPLICA instead
 #
@@ -38,7 +38,7 @@ include/assert.inc [The performance_schema.replication_applier_configuration hol
 # 7. Start the slave.
 #
 [connection slave]
-START SLAVE;
+START SLAVE for channel 'test';
 Warnings:
 Warning	1287	'START SLAVE' is deprecated and will be removed in a future release. Please use START REPLICA instead
 #

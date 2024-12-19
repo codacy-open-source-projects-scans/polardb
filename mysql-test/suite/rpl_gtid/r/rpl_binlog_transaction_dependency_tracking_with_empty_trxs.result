@@ -5,17 +5,17 @@ Note	####	Storing MySQL user name or password information in the master info rep
 [connection master]
 [connection slave]
 RESET MASTER;
-CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE= (test.t1);
+CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE= (test.t1) for channel "test";
 SET @save_binlog_transaction_dependency_tracking= @@GLOBAL.binlog_transaction_dependency_tracking;
 SET GLOBAL binlog_transaction_dependency_tracking= COMMIT_ORDER;
 SET GLOBAL binlog_transaction_dependency_tracking= WRITESET;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 CREATE TABLE t1 (c1 INT);
 INSERT INTO t1 VALUES (1);
 INSERT INTO t1 VALUES (2);
 INSERT INTO t1 VALUES (3);
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 #
 # Verify that the value of last_committed is not increased,
 # since writeset history is not cleared when applying
@@ -25,10 +25,10 @@ Processing binlog slave-bin.000001
 include/include/assert_logical_timestamps.inc [0 1;0 2;0 3;0 4]
 [connection master]
 DROP TABLE t1;
-include/sync_slave_sql_with_master.inc
-include/stop_slave_sql.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
+include/stop_slave_sql.inc [FOR CHANNEL 'test']
 SET GLOBAL binlog_transaction_dependency_tracking= COMMIT_ORDER;
 SET @@GLOBAL.binlog_transaction_dependency_tracking= @save_binlog_transaction_dependency_tracking;
-CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE= ();
-include/start_slave_sql.inc
+CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE= () for channel "test";
+include/start_slave_sql.inc [FOR CHANNEL 'test']
 include/rpl_end.inc

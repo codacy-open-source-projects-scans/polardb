@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2012, 2022, Oracle and/or its affiliates.
+Copyright (c) 2012, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -57,7 +57,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "ut0new.h"
 
-#include "lizard0cleanout.h"
+#include "lizard0cleanout0safe.h"
 #include "lizard0gcs.h"
 #include "lizard0gp.h"
 #include "lizard0read0read.h"
@@ -1317,6 +1317,8 @@ static void sync_latch_meta_init() UNIV_NOTHROW {
 
   LATCH_ADD_MUTEX(PURGE_SYS_PQ, SYNC_PURGE_QUEUE, purge_sys_pq_mutex_key);
 
+  LATCH_ADD_MUTEX(ERASE_SYS_PQ, SYNC_PURGE_QUEUE, erase_sys_pq_mutex_key);
+
   LATCH_ADD_MUTEX(RECALC_POOL, SYNC_STATS_AUTO_RECALC, recalc_pool_mutex_key);
 
   LATCH_ADD_MUTEX(RECV_SYS, SYNC_RECV, recv_sys_mutex_key);
@@ -1522,9 +1524,6 @@ static void sync_latch_meta_init() UNIV_NOTHROW {
 
   LATCH_ADD_MUTEX(UNDO_RETENTION, SYNC_NO_ORDER_CHECK,
                   undo_retention_mutex_key);
-
-  LATCH_ADD_MUTEX(PURGE_BLOCKED_STAT, SYNC_NO_ORDER_CHECK,
-                  purge_blocked_stat_mutex_key);
 
   LATCH_ADD_RWLOCK(COMMIT_SNAPSHOT_RW_LOCK, SYNC_NO_ORDER_CHECK,
                    commit_snapshot_rw_lock_key);

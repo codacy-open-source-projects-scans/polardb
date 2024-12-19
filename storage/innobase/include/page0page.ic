@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -263,6 +263,14 @@ static inline bool page_is_root(const page_t *page) {
   return (fil_page_index_page_check(page) &&
           *reinterpret_cast<const uint64_t *>(page + FIL_PAGE_PREV) ==
               std::numeric_limits<uint64_t>::max());
+}
+
+/** Determine whether a page has any siblings.
+@param[in]      page    page frame
+@return true if the page has any siblings */
+static inline bool page_has_siblings(const page_t *page) {
+  return mach_read_from_4(page + FIL_PAGE_PREV) != FIL_NULL ||
+         mach_read_from_4(page + FIL_PAGE_NEXT) != FIL_NULL;
 }
 
 /** Determine whether the page contains garbage.

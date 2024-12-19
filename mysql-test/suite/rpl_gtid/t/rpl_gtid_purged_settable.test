@@ -80,7 +80,7 @@ SET @@GTID_NEXT=AUTOMATIC;
 # Step 3, replication part.
 
 --source include/rpl_connection_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 1;
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 1 for channel "test";
 --source include/start_slave.inc
 
 --source include/rpl_connection_master.inc

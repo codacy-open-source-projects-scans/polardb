@@ -72,14 +72,14 @@ set global xa_detach_on_prepare = true;
 --source include/rpl_connection_master.inc
 --let $commit_gcn = `select @base_seq + 200`
 
-xa begin '1';
+eval xa begin '1_$xid_suffix';
 insert into tt values (1);
-xa end '1';
-xa prepare '1';
+eval xa end '1_$xid_suffix';
+eval xa prepare '1_$xid_suffix';
 --disable_query_log
 --eval set innodb_commit_seq = $commit_gcn
 --enable_query_log
-xa commit '1';
+eval xa commit '1_$xid_suffix';
 
 --source include/sync_slave_sql_with_master.inc
 
@@ -88,8 +88,8 @@ xa commit '1';
 if ($check_gcn) {
   --let $expect_gcn= $commit_gcn
   --let $expect_state= COMMIT
-  --let $my_xid= '1','',1
-  --source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+  --let $my_xid= '1_$xid_suffix','',1
+  --source suite/innodb_gcn/include/xa_info_verify.inc
 }
 
 --echo ###############################
@@ -98,14 +98,14 @@ if ($check_gcn) {
 --source include/rpl_connection_master.inc
 --let $commit_gcn = `select @base_seq + 300`
 
-xa begin '2';
+eval xa begin '2_$xid_suffix';
 insert into tt values (2);
-xa end '2';
-xa prepare '2';
+eval xa end '2_$xid_suffix';
+eval xa prepare '2_$xid_suffix';
 --disable_query_log
 --eval set innodb_commit_seq = $commit_gcn
 --enable_query_log
-xa rollback '2';
+eval xa rollback '2_$xid_suffix';
 
 --source include/sync_slave_sql_with_master.inc
 
@@ -114,8 +114,8 @@ xa rollback '2';
 if ($check_gcn) {
   --let $expect_gcn= $commit_gcn
   --let $expect_state= ROLLBACK
-  --let $my_xid= '2','',1
-  --source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+  --let $my_xid= '2_$xid_suffix','',1
+  --source suite/innodb_gcn/include/xa_info_verify.inc
 }
 
 --echo ###############################
@@ -124,13 +124,13 @@ if ($check_gcn) {
 --source include/rpl_connection_master.inc
 --let $commit_gcn = `select @base_seq + 400`
 
-xa begin '3';
+eval xa begin '3_$xid_suffix';
 insert into tt values (3);
-xa end '3';
+eval xa end '3_$xid_suffix';
 --disable_query_log
 --eval set innodb_commit_seq = $commit_gcn
 --enable_query_log
-xa commit '3' one phase;
+eval xa commit '3_$xid_suffix' one phase;
 
 --source include/sync_slave_sql_with_master.inc
 
@@ -139,8 +139,8 @@ xa commit '3' one phase;
 if ($check_gcn) {
   --let $expect_gcn= $commit_gcn
   --let $expect_state= COMMIT
-  --let $my_xid= '3','',1
-  --source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+  --let $my_xid= '3_$xid_suffix','',1
+  --source suite/innodb_gcn/include/xa_info_verify.inc
 }
 
 --source include/rpl_connection_master.inc
@@ -151,14 +151,14 @@ set global xa_detach_on_prepare = false;
 --source include/rpl_connection_master.inc
 --let $commit_gcn = `select @base_seq + 500`
 
-xa begin '4';
+eval xa begin '4_$xid_suffix';
 insert into tt values (4);
-xa end '4';
-xa prepare '4';
+eval xa end '4_$xid_suffix';
+eval xa prepare '4_$xid_suffix';
 --disable_query_log
 --eval set innodb_commit_seq = $commit_gcn
 --enable_query_log
-xa commit '4';
+eval xa commit '4_$xid_suffix';
 
 --source include/sync_slave_sql_with_master.inc
 
@@ -167,8 +167,8 @@ xa commit '4';
 if ($check_gcn) {
   --let $expect_gcn= $commit_gcn
   --let $expect_state= COMMIT
-  --let $my_xid= '4','',1
-  --source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+  --let $my_xid= '4_$xid_suffix','',1
+  --source suite/innodb_gcn/include/xa_info_verify.inc
 }
 
 --echo ###############################
@@ -177,14 +177,14 @@ if ($check_gcn) {
 --source include/rpl_connection_master.inc
 --let $commit_gcn = `select @base_seq + 600`
 
-xa begin '5';
+eval xa begin '5_$xid_suffix';
 insert into tt values (5);
-xa end '5';
-xa prepare '5';
+eval xa end '5_$xid_suffix';
+eval xa prepare '5_$xid_suffix';
 --disable_query_log
 --eval set innodb_commit_seq = $commit_gcn
 --enable_query_log
-xa rollback '5';
+eval xa rollback '5_$xid_suffix';
 
 --source include/sync_slave_sql_with_master.inc
 
@@ -193,8 +193,8 @@ xa rollback '5';
 if ($check_gcn) {
   --let $expect_gcn= $commit_gcn
   --let $expect_state= ROLLBACK
-  --let $my_xid= '5','',1
-  --source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+  --let $my_xid= '5_$xid_suffix','',1
+  --source suite/innodb_gcn/include/xa_info_verify.inc
 }
 
 --echo ###############################

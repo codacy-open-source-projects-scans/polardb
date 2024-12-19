@@ -1,0 +1,205 @@
+connection default;
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+
+--connect (conn1,127.0.0.1,root,,test,$MYPORT_1)
+--connection conn1
+flush local logs;
+set global innodb_purge_rseg_truncate_frequency = 1;
+set global innodb_undo_retention = 0;
+--source include/wait_innodb_all_purged.inc
+set global innodb_undo_retention = 9000;
+
+--connect (conn2,127.0.0.1,root,,test,$MYPORT_2)
+--connection conn2
+flush local logs;
+set global innodb_purge_rseg_truncate_frequency = 1;
+set global innodb_undo_retention = 0;
+--source include/wait_innodb_all_purged.inc
+set global innodb_undo_retention = 9000;
+
+--connect (conn3,127.0.0.1,root,,test,$MYPORT_3)
+--connection conn3
+flush local logs;
+set global innodb_purge_rseg_truncate_frequency = 1;
+set global innodb_undo_retention = 0;
+--source include/wait_innodb_all_purged.inc
+set global innodb_undo_retention = 9000;
+
+connection default;
+set global xa_detach_on_prepare = off;
+set session xa_detach_on_prepare = off;
+--let $see_leader=
+
+--echo ###############################
+--echo # LOAD DATA
+--echo ###############################
+create table t1 (id int primary key, balance int);
+
+insert into t1 values (1, 1000);
+insert into t1 values (2, 1000);
+
+connect(leader_con1, localhost, root,,test,$MYPORT_1);
+
+--echo ###############################
+--echo # Case: Async Commit Assigned GCN
+--echo ###############################
+connection default;
+--let $commit_gcn = `select @base_seq + 100`
+
+connection leader_con1;
+xa start 'ac_t6_b1';
+update t1 set balance = balance - 10 where id = 1;
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t6_b1';
+
+--echo call dbms_xa.ac_prepare('ac_t6_b1', '', 1, 2, 2, commit_gcn)
+--disable_query_log
+--disable_result_log
+--eval call dbms_xa.ac_prepare('ac_t6_b1', '', 1, 2, 2, $commit_gcn)
+--enable_result_log
+--enable_query_log
+
+--let $my_xid='ac_t6_b1', '', 1
+--let $expect_gcn= $commit_gcn
+--let $expect_status= DETACHED_PREPARE
+--let $expect_csr= ASSIGNED_GCN
+--let $expect_n_branch= 2
+--let $expect_n_local_branch= 2
+--source suite/xcluster/t/xa_info_verify_for_xcluster.inc
+
+connection leader_con1;
+echo call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+  #master_trx_id, #master_uba, #gcn);
+--disable_query_log
+--eval call dbms_xa.ac_commit('ac_t6_b1', '', 1, $commit_gcn, "", 0, 0)
+--enable_query_log
+
+--let $my_xid='ac_t6_b1', '', 1
+--let $expect_gcn= $commit_gcn
+--let $expect_status= COMMIT
+--let $expect_csr= ASSIGNED_GCN
+--let $expect_n_branch= 2
+--let $expect_n_local_branch= 2
+--source suite/xcluster/t/xa_info_verify_for_xcluster.inc
+
+--echo ###############################
+--echo # Case: Async Commit Automatic GCN
+--echo ###############################
+connection default;
+--let $sys_gcn= `select @base_seq + 200`
+--echo call dbms_xa.advance_gcn_no_flush(sys_gcn)
+--disable_query_log
+--eval call dbms_xa.advance_gcn_no_flush($sys_gcn)
+--enable_query_log
+
+--let $sys_gcn = `SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn'`
+--let $commit_gcn = `select @base_seq + 190`
+
+connection leader_con1;
+xa start 'ac_t6_b2';
+update t1 set balance = balance - 10 where id = 1;
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t6_b2';
+
+--echo call dbms_xa.ac_prepare('ac_t6_b2', '', 1, 1, 1, commit_gcn)
+--disable_query_log
+--disable_result_log
+--eval call dbms_xa.ac_prepare('ac_t6_b2', '', 1, 1, 1, $commit_gcn)
+--enable_result_log
+--enable_query_log
+
+--let $my_xid='ac_t6_b2', '', 1
+--let $expect_gcn= $sys_gcn
+--let $expect_status= DETACHED_PREPARE
+--let $expect_csr= AUTOMATIC_GCN
+--let $expect_n_branch= 1
+--let $expect_n_local_branch= 1
+--source suite/xcluster/t/xa_info_verify_for_xcluster.inc
+
+connection leader_con1;
+echo call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+  #master_trx_id, #master_uba, #gcn);
+--disable_query_log
+--eval call dbms_xa.ac_commit('ac_t6_b2', '', 1, $sys_gcn, "", 0, 0)
+--enable_query_log
+
+--let $my_xid='ac_t6_b2', '', 1
+--let $expect_gcn= $sys_gcn
+--let $expect_status= COMMIT
+--let $expect_csr= AUTOMATIC_GCN
+--let $expect_n_branch= 1
+--let $expect_n_local_branch= 1
+--source suite/xcluster/t/xa_info_verify_for_xcluster.inc
+
+--echo ###############################
+--echo # Case: Async Commit ASSIGNED_GCN
+--echo ###############################
+connection default;
+--let $commit_gcn= `select @base_seq + 300`
+
+connection leader_con1;
+xa start 'ac_t6_b3';
+update t1 set balance = balance - 10 where id = 1;
+update t1 set balance = balance + 10 where id = 2;
+xa end 'ac_t6_b3';
+
+--echo call dbms_xa.ac_prepare('ac_t6_b3', '', 1, 2, 2, commit_gcn)
+--disable_query_log
+--disable_result_log
+--eval call dbms_xa.ac_prepare('ac_t6_b3', '', 1, 2, 2, $commit_gcn)
+--enable_result_log
+--enable_query_log
+
+--let $my_xid='ac_t6_b3', '', 1
+--let $expect_gcn= $commit_gcn
+--let $expect_status= DETACHED_PREPARE
+--let $expect_csr= ASSIGNED_GCN
+--let $expect_n_branch= 2
+--let $expect_n_local_branch= 2
+--source suite/xcluster/t/xa_info_verify_for_xcluster.inc
+
+connection default;
+--let $commit_gcn= `select @base_seq + 400`
+
+connection leader_con1;
+echo call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+  #master_trx_id, #master_uba, #gcn);
+--disable_query_log
+--eval call dbms_xa.ac_commit('ac_t6_b3', '', 1, $commit_gcn, "", 0, 0)
+--enable_query_log
+
+--let $my_xid='ac_t6_b3', '', 1
+--let $expect_gcn= $commit_gcn
+--let $expect_status= COMMIT
+--let $expect_csr= AUTOMATIC_GCN
+--let $expect_n_branch= 2
+--let $expect_n_local_branch= 2
+--source suite/xcluster/t/xa_info_verify_for_xcluster.inc
+
+--echo ###############################
+--echo # cleanup
+--echo ###############################
+connection conn1;
+set global innodb_undo_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;
+
+connection conn2;
+set global innodb_undo_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;
+
+connection conn3;
+set global innodb_undo_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;
+
+connection default;
+
+set global innodb_undo_retention = default;
+set global xa_detach_on_prepare = default;
+set session xa_detach_on_prepare = default;
+
+drop table t1;
+
+--disconnect conn1
+--disconnect conn2
+--disconnect conn3
+--disconnect leader_con1

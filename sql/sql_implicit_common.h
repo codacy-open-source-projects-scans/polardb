@@ -122,7 +122,7 @@ extern bool drop_implicit_ipk(Alter_info *alter_info,
 */
 bool fill_implicit_field_with_null(THD *thd, Field *field);
 
-#ifndef DBUG_OFF
+#ifndef NDEBUG
 bool debug_field_is_implicit_and_hide(THD *, TABLE *table, Field *field);
 bool debug_key_is_implicit_and_hide(THD *, TABLE *table, KEY *key);
 #endif

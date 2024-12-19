@@ -43,6 +43,9 @@ class Item;
 
 extern struct st_mysql_plugin i_s_innodb_data_file_purge;
 extern struct st_mysql_plugin i_s_innodb_tablespace_master_key;
+extern struct st_mysql_plugin i_s_innodb_table_status;
+extern struct st_mysql_plugin i_s_innodb_gpp_stats;
+extern struct st_mysql_plugin i_s_innodb_index_status;
 
 /* Defined with in 'handler/i_s.cc' */
 extern int field_store_string(Field *field, const char *str);

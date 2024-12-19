@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2014, 2022, Oracle and/or its affiliates.
+Copyright (c) 2014, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -54,6 +54,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "lizard0row.h"
 #include "lizard0undo.h"
+#include "lizard0mtr0log.h"
 
 /** Initial split nodes info for R-tree split.
  @return initialized split nodes array */
@@ -204,11 +205,10 @@ static void rtr_update_mbr_field_in_place(
   /* Write redo log. */
   /* For now, we use LOG_REC_UPDATE_IN_PLACE to log this enlarge.
   In the future, we may need to add a new log type for this. */
-  const bool opened =
-      mlog_open_and_write_index(mtr, rec, index, MLOG_REC_UPDATE_IN_PLACE,
-                                1 + DATA_ROLL_PTR_LEN + 14 + 2 +
-                                    MLOG_BUF_MARGIN + 2 + DATA_LIZARD_TOTAL_LEN,
-                                log_ptr);
+  const bool opened = mlog_open_and_write_index(
+      mtr, rec, index, MLOG_REC_UPDATE_IN_PLACE,
+      1 + REDO_SYS_FIELDS_LEN + REDO_LIZARD_FIELDS_LEN + 2 + MLOG_BUF_MARGIN,
+      log_ptr);
 
   if (!opened) {
     /* Logging in mtr is switched off during

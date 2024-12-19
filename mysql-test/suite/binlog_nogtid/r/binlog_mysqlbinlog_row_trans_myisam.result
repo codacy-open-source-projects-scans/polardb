@@ -143,7 +143,7 @@ ROLLBACK/*!*/;
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -167,6 +167,8 @@ SET @@session.lc_time_names=0/*!*/;
 SET @@session.collation_database=DEFAULT/*!*/;
 /*!80011 SET @@session.default_collation_for_utf8mb4=255*//*!*/;
 /*!80013 SET @@session.sql_require_primary_key=0*//*!*/;
+/*!80032 SET @@session.opt_flashback_area=0*//*!*/;
+/*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
 CREATE TABLE t1 (
 c1 INT,
 c2 VARCHAR(20)
@@ -176,7 +178,7 @@ c2 VARCHAR(20)
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -190,6 +192,8 @@ SET @@SESSION.GTID_NEXT= '#'/*!*/;
 # # server id #  end_log_pos # CRC32 # 	Query	thread_id=#	exec_time=#	error_code=0
 SET TIMESTAMP=#/*!*/;
 /*!80013 SET @@session.sql_require_primary_key=0*//*!*/;
+/*!80032 SET @@session.opt_flashback_area=0*//*!*/;
+/*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
 CREATE TABLE t2 (
 c1 INT,
 c2 VARCHAR(20)
@@ -199,7 +203,7 @@ c2 VARCHAR(20)
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=yes	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -274,7 +278,7 @@ COMMIT/*!*/;
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -287,13 +291,15 @@ SET @@SESSION.GTID_NEXT= '#'/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Query	thread_id=#	exec_time=#	error_code=0	Xid = #
 SET TIMESTAMP=#/*!*/;
+/*!80032 SET @@session.opt_flashback_area=0*//*!*/;
+/*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
 TRUNCATE TABLE t1
 /*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -306,13 +312,15 @@ SET @@SESSION.GTID_NEXT= '#'/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Query	thread_id=#	exec_time=#	error_code=0	Xid = #
 SET TIMESTAMP=#/*!*/;
+/*!80032 SET @@session.opt_flashback_area=0*//*!*/;
+/*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
 TRUNCATE TABLE t1
 /*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=yes	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -354,7 +362,7 @@ COMMIT
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=yes	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -405,7 +413,7 @@ COMMIT
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=yes	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -439,7 +447,7 @@ COMMIT
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=yes	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -514,7 +522,7 @@ COMMIT/*!*/;
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -527,13 +535,15 @@ SET @@SESSION.GTID_NEXT= '#'/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Query	thread_id=#	exec_time=#	error_code=0	Xid = #
 SET TIMESTAMP=#/*!*/;
+/*!80032 SET @@session.opt_flashback_area=0*//*!*/;
+/*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
 TRUNCATE TABLE t1
 /*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -546,13 +556,15 @@ SET @@SESSION.GTID_NEXT= '#'/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Query	thread_id=#	exec_time=#	error_code=0
 SET TIMESTAMP=#/*!*/;
+/*!80032 SET @@session.opt_flashback_area=0*//*!*/;
+/*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
 TRUNCATE TABLE t2
 /*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=yes	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -594,7 +606,7 @@ COMMIT
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=yes	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -645,7 +657,7 @@ COMMIT
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=yes	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -679,7 +691,7 @@ COMMIT
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -692,13 +704,15 @@ SET @@SESSION.GTID_NEXT= '#'/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Query	thread_id=#	exec_time=#	error_code=0	Xid = #
 SET TIMESTAMP=#/*!*/;
+/*!80032 SET @@session.opt_flashback_area=0*//*!*/;
+/*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
 TRUNCATE TABLE t1
 /*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -711,6 +725,8 @@ SET @@SESSION.GTID_NEXT= '#'/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Query	thread_id=#	exec_time=#	error_code=0
 SET TIMESTAMP=#/*!*/;
+/*!80032 SET @@session.opt_flashback_area=0*//*!*/;
+/*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
 TRUNCATE TABLE t2
 /*!*/;
 # at #

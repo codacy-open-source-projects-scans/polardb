@@ -1,4 +1,4 @@
-# Copyright (c) 2017, 2022, Oracle and/or its affiliates.
+# Copyright (c) 2017, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -10127,9 +10127,11 @@ ER_ROTATE_REQUIRE_LOG_TABLE
 ER_GTID_UNSAFE_STMT_ON_NON_TRANS_TABLE_FOR_XA
   eng "It is not allowed to operate non-transaction tables in XA transactions when GTID enable."
 
-#
-#  End of RDS error message.
-#
+ER_XA_PROC_AC_TOO_MANY_PARTICIPANTS
+  eng "Too many participants. At most 65536 participants, but %lu participants, %lu local participants."
+
+ER_XA_PROC_AC_INVALID_GCN
+  eng "Invalid GCN (%lu) for async commit."
 
 ER_CONSENSUS_CONFIG_BAD
   eng "Bad Consensus configuration, name:%s, value:%llu, reason:%s"
@@ -10168,6 +10170,21 @@ ER_CONSENSUS_IP_PORT_FORMAT
 ER_CONSENSUS_LOG_TYPE_NODE
   eng "The consensus node is logger, which is not allowed to to do current operation."
 
+ER_TABLE_CFG_MISSING
+  eng "Config file is missing for importing table %s"
+
+ER_XA_PROC_MISMATCH_SERVER_UUID
+  eng "The parameter server_uuid (%-.256s) of ac_commit does not match the server_uuid (%-.256s) of this instance."
+
+ER_XA_PROC_INVALID_MASTER_INFO
+  eng "Invalid master parms when calling ac_commit. server_uuid: %-.256s, tid: %lu, slot_ptr: %lu."
+
+ER_XA_PROC_INVALID_XA_BRANCH_PARAM
+  eng "Invalid xa branch parms. global branch: %d, local branch: %d."
+
+#
+#  End of RDS error message.
+#
 
 ################################################################################
 # Start of PolarDB-X special error messages intended to be returned to CN.

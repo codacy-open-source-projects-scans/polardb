@@ -1,0 +1,85 @@
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+set global innodb_purge_rseg_truncate_frequency = 1;
+create table t1 (id int);
+set global innodb_undo_retention = 9000;
+###############################
+# case 1
+###############################
+xa start 'ac_fbx1_b1';
+insert into t1 values (1);
+xa end 'ac_fbx1_b1';
+xa prepare 'ac_fbx1_b1';
+xa commit 'ac_fbx1_b1';
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+###############################
+# case 2
+###############################
+xa start 'ac_fbx1_b2';
+insert into t1 values (1);
+xa end 'ac_fbx1_b2';
+xa prepare 'ac_fbx1_b2';
+xa rollback 'ac_fbx1_b2';
+include/assert.inc [expect_status == actual_status]
+###############################
+# case 3
+###############################
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+xa start 'ac_fbx1_b3';
+insert into t1 values (1);
+xa end 'ac_fbx1_b3';
+xa prepare 'ac_fbx1_b3';
+include/assert.inc [expect_status == actual_status]
+xa commit 'ac_fbx1_b3';
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+###############################
+# case 4
+###############################
+xa start 'ac_fbx1_b4';
+xa end 'ac_fbx1_b4';
+xa prepare 'ac_fbx1_b4';
+xa commit 'ac_fbx1_b4';
+include/assert.inc [expect_status == actual_status]
+###############################
+# case 5
+###############################
+xa start 'ac_fbx1_b5';
+call dbms_xa.find_by_xid('ac_fbx1_b5', '', 1);
+ERROR XAE07: XAER_RMFAIL: The command cannot be executed when global transaction is in the  ACTIVE state
+insert into t1 values (1);
+call dbms_xa.find_by_xid('ac_fbx1_b5', '', 1);
+ERROR XAE07: XAER_RMFAIL: The command cannot be executed when global transaction is in the  ACTIVE state
+xa end 'ac_fbx1_b5';
+call dbms_xa.find_by_xid('ac_fbx1_b5', '', 1);
+ERROR XAE07: XAER_RMFAIL: The command cannot be executed when global transaction is in the  IDLE state
+xa prepare 'ac_fbx1_b5';
+call dbms_xa.find_by_xid('ac_fbx1_b5', '', 1);
+xa commit 'ac_fbx1_b5';
+###############################
+# case 6
+###############################
+call dbms_xa.find_by_xid('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '', 1);
+ERROR HY000: Wrong XID for dbms_xa. Please check the format of the XID. For example, gtrid cannot exceed 64 bytes, and bqual cannot exceed 64 bytes.
+###############################
+# case 7
+###############################
+xa start 'drds-13ef7e97bbc00000@e394da2fea20da21', 'DRDS_POLARX1_QATEST_APP_000003_GROUP@0004';
+insert into t1 values (1);
+xa end 'drds-13ef7e97bbc00000@e394da2fea20da21', 'DRDS_POLARX1_QATEST_APP_000003_GROUP@0004';
+xa prepare 'drds-13ef7e97bbc00000@e394da2fea20da21', 'DRDS_POLARX1_QATEST_APP_000003_GROUP@0004';
+xa commit 'drds-13ef7e97bbc00000@e394da2fea20da21', 'DRDS_POLARX1_QATEST_APP_000003_GROUP@0004';
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+###############################
+# case 8
+###############################
+xa start 'ac_fbx1_b8';
+insert into t1 values (1);
+xa end 'ac_fbx1_b8';
+xa commit 'ac_fbx1_b8' one phase;
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+drop table t1;
+set global innodb_undo_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;

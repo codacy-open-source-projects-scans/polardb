@@ -6,8 +6,8 @@ Note	####	Storing MySQL user name or password information in the master info rep
 SET GLOBAL binlog_stmt_cache_size = 4096;
 SET GLOBAL max_binlog_stmt_cache_size = 4096;
 CREATE TABLE t1(c1 INT PRIMARY KEY, data TEXT(30000)) ENGINE=MyIsam;
-include/sync_slave_sql_with_master.inc
-include/stop_slave_io.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
+include/stop_slave_io.inc [FOR CHANNEL 'test']
 # Testing the failure of cache creation while writing incident events.
 #
 # Since generation of GTIDs is tightly coupled with IO caches, if there is any
@@ -38,7 +38,7 @@ include/rpl_reconnect.inc
 [connection master]
 include/assert_grep.inc [Found the message about the failure of cache creation in the error log.]
 [connection slave]
-include/start_slave_io.inc
+include/start_slave_io.inc [FOR CHANNEL 'test']
 [connection master]
 CALL mtr.add_suppression("Attempting backtrace. You can use the following information to find out*");
 CALL mtr.add_suppression("ERROR.*Could not create IO cache while writing an incident event to the binary log.*");

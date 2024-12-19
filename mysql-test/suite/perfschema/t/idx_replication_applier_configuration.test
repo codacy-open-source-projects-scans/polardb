@@ -13,7 +13,7 @@ let $table = performance_schema.replication_applier_configuration;
 source include/stop_slave.inc;
 RESET SLAVE ALL;
 --disable_query_log
-eval CHANGE REPLICATION SOURCE TO SOURCE_HOST='localhost', SOURCE_USER='root', SOURCE_PORT=$MASTER_MYPORT, SOURCE_DELAY=2 FOR CHANNEL 'channel_1';
+eval CHANGE REPLICATION SOURCE TO SOURCE_HOST='localhost', SOURCE_USER='root', SOURCE_PORT=$MASTER_MYPORT, SOURCE_DELAY=2 FOR CHANNEL 'test';
 --enable_query_log
 source include/start_slave.inc;
 --enable_warnings
@@ -24,7 +24,7 @@ source include/start_slave.inc;
 
 let $column_count = 1;
 let $col1 = CHANNEL_NAME;
-let $col1_act = "channel_1";
+let $col1_act = "test";
 
 --source ../include/idx_explain_test.inc
 
@@ -33,7 +33,7 @@ source include/stop_slave.inc;
 RESET SLAVE ALL;
 --disable_warnings
 --disable_query_log
-eval CHANGE REPLICATION SOURCE to SOURCE_HOST='127.0.0.1', SOURCE_PORT=$MASTER_MYPORT, SOURCE_USER='root';
+eval CHANGE REPLICATION SOURCE to SOURCE_HOST='127.0.0.1', SOURCE_PORT=$MASTER_MYPORT, SOURCE_USER='root' for channel 'test';
 --enable_query_log
 --enable_warnings
 source include/start_slave.inc;

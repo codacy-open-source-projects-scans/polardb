@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2013, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2013, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -42,7 +42,7 @@
 #include "sql/sql_plugin_ref.h"    // plugin_ref
 #include "sql/xa_aux.h"            // serialize_xid
 
-#include "lizard_iface.h"
+#include "sql/lizard/lizard_service.h"
 
 class Protocol;
 class THD;
@@ -339,18 +339,8 @@ class XID_STATE {
     Checked and reset at XA-commit/rollback.
   */
   bool m_is_binlogged;
-
-  /** Only for call dbms_xa.find_by_xid(...). The XA transaction might have been
-  attached by a user seesion but still be recognized as detached (in_recovery
-  = true). m_is_real_attched reflects the real state of the transaction. */
-  std::atomic<bool> m_is_real_attched;
-
  public:
-  XID_STATE()
-      : xa_state(XA_NOTR),
-        rm_error(0),
-        m_is_binlogged(false),
-        m_is_real_attched(false) {
+  XID_STATE() : xa_state(XA_NOTR), rm_error(0), m_is_binlogged(false) {
     m_xid.null();
   }
 
@@ -393,7 +383,6 @@ class XID_STATE {
     m_xid.null();
     m_is_detached = false;
     m_is_binlogged = false;
-    m_is_real_attched = false;
   }
 
   void start_normal_xa(const XID *xid) {
@@ -402,7 +391,6 @@ class XID_STATE {
     m_xid.set(xid);
     m_is_detached = false;
     rm_error = 0;
-    m_is_real_attched = true;
   }
 
   void start_detached_xa(const XID *xid, bool binlogged_arg = false) {
@@ -411,19 +399,11 @@ class XID_STATE {
     m_is_detached = true;
     rm_error = 0;
     m_is_binlogged = binlogged_arg;
-    m_is_real_attched = false;
   }
 
   bool is_detached() const { return m_is_detached; }
 
   bool is_binlogged() const { return m_is_binlogged; }
-
-  bool is_real_attached() const { return m_is_real_attched.load(); }
-
-  void attach_again() {
-    assert(m_is_real_attched == false);
-    m_is_real_attched = true;
-  }
 
   void set_binlogged() { m_is_binlogged = true; }
 

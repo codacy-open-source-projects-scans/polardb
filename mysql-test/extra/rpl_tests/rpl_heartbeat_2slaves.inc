@@ -24,12 +24,12 @@
 #
 --connection slave_1
 --source include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD = 0.1;
+CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD = 0.1 for channel 'test';
 --source include/start_slave.inc
 --connection slave_2
 --source include/stop_slave.inc
 --replace_column 2 ####
-CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD = 1;
+CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD = 1 for channel 'test';
 --source include/start_slave.inc
 
 #
@@ -44,7 +44,7 @@ CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD = 1;
 
 let $status_col= count_received_heartbeats;
 let $table=replication_connection_status;
-let $status_col_value= query_get_value(select $status_col from performance_schema.$table, $status_col, 1);
+let $status_col_value= query_get_value(select $status_col from performance_schema.$table where channel_name = 'test', $status_col, 1);
 let $status_col_comparsion= >;
 --source include/wait_for_rpl_pfs_status.inc
 --echo Slave has received heartbeat event
@@ -62,7 +62,7 @@ let $status_col_comparsion= >;
 
 let $table=replication_connection_status;
 
---let $assert_cond= [slave_1:select count_received_heartbeats from performance_schema.replication_connection_status, count_received_heartbeats, 1]> [slave_2:select count_received_heartbeats from performance_schema.replication_connection_status, count_received_heartbeats, 1]
+--let $assert_cond= [slave_1:select count_received_heartbeats from performance_schema.replication_connection_status where channel_name = "test", count_received_heartbeats, 1]> [slave_2:select count_received_heartbeats from performance_schema.replication_connection_status, count_received_heartbeats, 1]
 
 --let $assert_text= slave_1 should have received more heartbeats than slave_2
 --source include/assert.inc
@@ -81,7 +81,7 @@ let $table=replication_connection_status;
 --connection slave_1
 --source include/stop_slave.inc
 --replace_column 2 ####
-CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD=0.1;
+CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD=0.1 for channel 'test';
 --source include/start_slave.inc
 
 # Check heartbeat for new replication channel slave_2->slave
@@ -90,7 +90,7 @@ CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD=0.1;
 # Replacing slave_received_heartbeats with count_received_heartbeats.
 
 let $status_col= count_received_heartbeats;
-let $status_col_value= query_get_value(select count_received_heartbeats from performance_schema.replication_connection_status, count_received_heartbeats, 1);
+let $status_col_value= query_get_value(select count_received_heartbeats from performance_schema.replication_connection_status where channel_name = 'test', count_received_heartbeats, 1);
 
 let $status_col_comparsion= >;
 --source include/wait_for_rpl_pfs_status.inc
@@ -104,7 +104,7 @@ SHOW TABLES;
 --let $sync_slave_connection= slave_2
 --source include/sync_slave_sql_with_master.inc
 SHOW TABLES;
-let $slave_2_pos_before= query_get_value(SHOW SLAVE STATUS, Read_Master_Log_Pos, 1);
+let $slave_2_pos_before= query_get_value(SHOW SLAVE STATUS for channel 'test', Read_Master_Log_Pos, 1);
 --echo [on slave_1]
 --let $sync_slave_connection= slave_1
 --source include/sync_slave_sql_with_master.inc
@@ -121,10 +121,10 @@ while ($i) {
   eval SET @c_text=REPEAT('1234567890', $j);
   eval UPDATE t1 SET a=$j, c=@c_text;
   --connection slave_2
-  let $slave_2_pos= query_get_value(SHOW SLAVE STATUS, Read_Master_Log_Pos, 1);  
+  let $slave_2_pos= query_get_value(SHOW SLAVE STATUS for channel 'test', Read_Master_Log_Pos, 1);  
   if (`SELECT ($k*($slave_2_pos - $slave_2_pos_before)) > 0`) {
     --connection slave_1
-    let $slave_1_rcvd_heartbeats_before= query_get_value(SELECT count_received_heartbeats from performance_schema.replication_connection_status,count_received_heartbeats, 1);
+    let $slave_1_rcvd_heartbeats_before= query_get_value(SELECT count_received_heartbeats from performance_schema.replication_connection_status where channel_name = 'test',count_received_heartbeats, 1);
 
     let $k= 0;
     let $time_before = `SELECT NOW()`;
@@ -140,7 +140,7 @@ while ($i) {
 --connection slave_1
 --echo [on slave_1]
 
---let $assert_cond= [select count_received_heartbeats from performance_schema.replication_connection_status, count_received_heartbeats, 1]> $slave_1_rcvd_heartbeats_before
+--let $assert_cond= [select count_received_heartbeats from performance_schema.replication_connection_status where channel_name = "test", count_received_heartbeats, 1]> $slave_1_rcvd_heartbeats_before
 
 --let $assert_text= slave_1 should have received heartbeats
 --source include/assert.inc

@@ -11,7 +11,7 @@
 --source include/master-slave.inc
 
 --connection slave
---let $master_uuid= query_get_value(select SOURCE_UUID from performance_schema.replication_connection_status WHERE service_state = 'ON', SOURCE_UUID, 1)
+--let $master_uuid= query_get_value(select SOURCE_UUID from performance_schema.replication_connection_status WHERE CHANNEL_NAME = 'test' and service_state = 'ON', SOURCE_UUID, 1)
 --connection master
 
 --let $gtid_wait_set= $master_uuid:4

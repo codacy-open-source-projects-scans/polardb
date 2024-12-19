@@ -28,8 +28,8 @@ CALL mtr.add_suppression("Slave worker thread has failed to apply an event. As a
 --let $MYSQLD_SLAVE_DATADIR= `select @@datadir`
 
 # clear slave datadir
-RESET SLAVE;
---remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin.000001
+RESET SLAVE for channel 'test';
+--remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin-test.000001
 --remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin.index
 
 # copy the binlog with the following statements:
@@ -48,9 +48,9 @@ if (`SELECT CONVERT(@@VERSION_COMPILE_OS USING latin1) NOT IN ('Win32', 'Win64',
     --copy_file std_data/slave-relay-bin_linux.index $MYSQLD_SLAVE_DATADIR/slave-relay-bin.index
 }
 
---copy_file std_data/rpl_atomic_ddl_rollback_table.000001 $MYSQLD_SLAVE_DATADIR/slave-relay-bin.000001
+--copy_file std_data/rpl_atomic_ddl_rollback_table.000001 $MYSQLD_SLAVE_DATADIR/slave-relay-bin-test.000001
 
-START SLAVE;
+START SLAVE for channel 'test';
 
 --let $slave_sql_errno= convert_error(ER_INCONSISTENT_ERROR)
 --source include/wait_for_slave_sql_error.inc
@@ -62,7 +62,7 @@ START SLAVE;
 --source include/assert.inc
 
 # clean up slave
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 SET GTID_NEXT= 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:1';
 BEGIN;
 COMMIT;
@@ -72,8 +72,8 @@ DROP TABLE t1;
 
 
 --source include/stop_slave.inc
-RESET SLAVE;
---remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin.000001
+RESET SLAVE for channel 'test';
+--remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin-test.000001
 --remove_file $MYSQLD_SLAVE_DATADIR/slave-relay-bin.index
 
 # copy the binlog with the following statements:
@@ -92,9 +92,9 @@ if (`SELECT CONVERT(@@VERSION_COMPILE_OS USING latin1) NOT IN ('Win32', 'Win64',
     --copy_file std_data/slave-relay-bin_linux.index $MYSQLD_SLAVE_DATADIR/slave-relay-bin.index
 }
 
---copy_file std_data/rpl_atomic_ddl_rollback_view.000001 $MYSQLD_SLAVE_DATADIR/slave-relay-bin.000001
+--copy_file std_data/rpl_atomic_ddl_rollback_view.000001 $MYSQLD_SLAVE_DATADIR/slave-relay-bin-test.000001
 
-START SLAVE;
+START SLAVE for channel 'test';
 
 --let $slave_sql_errno= convert_error(ER_INCONSISTENT_ERROR)
 --source include/wait_for_slave_sql_error.inc
@@ -106,7 +106,7 @@ START SLAVE;
 
 # clean up slave
 --source include/stop_slave.inc
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 SET GTID_NEXT= 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:2';
 BEGIN;
 COMMIT;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -50,6 +50,7 @@
 #include "sql/dd/impl/system_registry.h"       // dd::System_tables
 #include "sql/dd/impl/tables/dd_properties.h"  // dd::tables:.DD_properties
 #include "sql/dd/impl/utils.h"                 // dd::escape
+#include "sql/dd/lizard_policy_types.h"
 #include "sql/dd/performance_schema/init.h"    // performance_schema::
                                                //   set_PS_version_for_table
 #include "sql/create_field.h"
@@ -2298,6 +2299,27 @@ static bool get_se_private_data(THD *thd, dd::Table *tab_obj) {
       return true;
     }
     idx->set_se_private_data(se_data);
+
+    /* Deal with IFT option. */
+    ulonglong IFT_option;
+    String_type options_raw;
+    std::stringstream options_ss;
+    ss << DD_properties::dd_key(DD_properties::DD_property::IDX) << count
+       << "options";
+
+    /* For compatibility, no idx${count}options is ok. */
+    if (tbl_props->exists(options_ss.str().c_str())) {
+      tbl_props->get(options_ss.str().c_str(), &options_raw);
+      std::unique_ptr<dd::Properties> options(
+          Properties::parse_properties(options_raw));
+      if (options->exists(lizard::OPTION_IFT)) {
+        options->get(lizard::OPTION_IFT, &IFT_option);
+      }
+      assert(
+          DBUG_EVALUATE_IF("allow_dd_tables_have_gpp", true, IFT_option == 0));
+      idx->options().set(lizard::OPTION_IFT, IFT_option);
+    }
+
     // Assign the same tablespace id for the indexes as for the table.
     idx->set_tablespace_id(space_id);
   }

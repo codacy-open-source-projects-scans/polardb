@@ -30,7 +30,7 @@ FLUSH PRIVILEGES;
 CHANGE REPLICATION SOURCE TO 
   SOURCE_USER=     'plug_user',
   SOURCE_PASSWORD= 'plug_user',
-  SOURCE_RETRY_COUNT= 0;
+  SOURCE_RETRY_COUNT= 0 for channel 'test';
 
 #
 # Start slave with new replication account - this should trigger connection
@@ -57,7 +57,7 @@ SELECT user, plugin, authentication_string FROM mysql.user WHERE user LIKE 'plug
 --echo # Cleanup (on slave).
 --source include/stop_slave.inc
 --replace_column 2 ####
-eval CHANGE REPLICATION SOURCE TO SOURCE_USER='$master_user';
+eval CHANGE REPLICATION SOURCE TO SOURCE_USER='$master_user' for channel 'test';
 DROP USER 'plug_user';
 
 --echo # Cleanup (on master).

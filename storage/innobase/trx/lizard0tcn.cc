@@ -38,38 +38,34 @@ Copyright (c) 2018, 2021, Alibaba and/or its affiliates. All rights reserved.
 
 namespace lizard {
 
-ulong innodb_tcn_cache_level = GLOBAL_LEVEL;
-ulong innodb_tcn_block_cache_type = BLOCK_LRU;
-bool innodb_tcn_cache_replace_after_commit = true;
-longlong innodb_tcn_cache_size = 0;
-const longlong innodb_tcn_cache_def_size = 0;
-const longlong innodb_tcn_cache_max_size = LLONG_MAX;
+ulong srv_tcn_cache_level = GLOBAL_LEVEL;
+ulong srv_tcn_block_cache_type = BLOCK_LRU;
+bool srv_tcn_cache_replace_after_commit = true;
+longlong srv_tcn_cache_size = 0;
+const longlong srv_tcn_cache_def_size = 0;
+const longlong srv_tcn_cache_max_size = LLONG_MAX;
 
 Cache_tcn *global_tcn_cache = nullptr;
 
 /** Search from tcn cache and overwrite the txn rec include
  * [UBA flag, scn, gcn]
  *
- * @param[in/out]	txn rec
- * @param[in]		pcur
- * @param[in/out]	txn lookup
+ * @param[in/out]   txn rec
+ * @param[in/out]   txn state
  *
- * @retval		cache hit or not
+ * @retval          cache hit or not
  * */
-bool trx_search_tcn(txn_rec_t *txn_rec, btr_pcur_t *pcur,
-                    txn_lookup_t *txn_lookup) {
+bool trx_search_tcn(txn_rec_t *txn_rec, txn_status_t *txn_status) {
   tcn_t tcn;
   Cache_tcn *cont = nullptr;
-  switch (innodb_tcn_cache_level) {
+  ut_ad(txn_rec && txn_status);
+
+  switch (srv_tcn_cache_level) {
     case NONE_LEVEL:
       return false;
     case GLOBAL_LEVEL:
-      cont = global_tcn_cache;
-      break;
     case BLOCK_LEVEL:
-      if (pcur) {
-        cont = pcur->get_block()->cache_tcn;
-      }
+      cont = global_tcn_cache;
       break;
     default:
       ut_ad(0);
@@ -80,101 +76,103 @@ bool trx_search_tcn(txn_rec_t *txn_rec, btr_pcur_t *pcur,
     tcn = cont->search(txn_rec->trx_id);
 
     if (tcn.trx_id == txn_rec->trx_id) {
-      undo_ptr_set_commit(&txn_rec->undo_ptr, tcn.csr);
+      undo_ptr_set_commit(&txn_rec->undo_ptr, tcn.csr, tcn.is_slave);
       txn_rec->scn = tcn.scn;
       txn_rec->gcn = tcn.gcn;
+      *txn_status = tcn.status;
 
-      ut_a(txn_rec->scn != SCN_NULL);
-      ut_a(txn_rec->gcn != GCN_NULL);
-      if (txn_lookup) {
-        txn_lookup->real_image = {tcn.scn, US_UNDO_LOST, tcn.gcn, tcn.csr};
-        txn_lookup->real_state = TXN_STATE_COMMITTED;
-      }
+      ut_ad(txn_rec->is_committed());
 
-      TCN_CACHE_AGGR(innodb_tcn_cache_level, HIT);
+      TCN_CACHE_AGGR(srv_tcn_cache_level, HIT);
       return true;
     }
   }
-  TCN_CACHE_AGGR(innodb_tcn_cache_level, MISS);
+  TCN_CACHE_AGGR(srv_tcn_cache_level, MISS);
   return false;
 }
 
-/** Cache */
-void trx_cache_tcn(trx_id_t trx_id, txn_rec_t &txn_rec, const rec_t *rec,
-                   const dict_index_t *index, const ulint *offsets,
-                   btr_pcur_t *pcur) {
+/** Cache Commit Number after txn_rec was looked up, that maybe isn't
+ * real original SCN/GCN of the txn_rec->trx_id transaction, but we still
+ * and only use it.
+ *
+ * @param[in]	txn rec info that looked up */
+void trx_cache_tcn(const txn_rec_t &txn_rec, const txn_status_t &status) {
   Cache_tcn *cont = nullptr;
   ut_a(txn_rec.scn != SCN_NULL);
   ut_a(txn_rec.gcn != GCN_NULL);
+  ut_a(txn_rec.trx_id != 0);
+  ut_ad(!undo_ptr_is_active(txn_rec.undo_ptr));
 
-  switch (innodb_tcn_cache_level) {
+  switch (srv_tcn_cache_level) {
     case NONE_LEVEL:
       return;
+    case BLOCK_LEVEL:
     case GLOBAL_LEVEL:
       cont = global_tcn_cache;
-      break;
-    case BLOCK_LEVEL:
-      tcn_collect(trx_id, txn_rec, rec, index, offsets, pcur);
-      cont = nullptr;
       break;
     default:
       ut_ad(0);
       cont = nullptr;
   }
   if (cont) {
-    tcn_t value(txn_rec);
+    tcn_t value(txn_rec, status);
     cont->insert(value);
-    TCN_CACHE_AGGR(innodb_tcn_cache_level, EVICT);
+    TCN_CACHE_AGGR(srv_tcn_cache_level, EVICT);
   }
 }
 
-/** Cache the commit info into global tcn cache after commit. */
-void trx_cache_tcn(trx_t *trx) {
-  if (innodb_tcn_cache_replace_after_commit &&
-      innodb_tcn_cache_level == GLOBAL_LEVEL && global_tcn_cache != nullptr) {
-    commit_mark_t cmmt = trx->txn_desc.cmmt;
-    trx_id_t trx_id = trx->id;
+/** Cache Commit Number after trx commit, the SCN/GCN is real commit number
+ * of that transaction.
+ *
+ * @param[in]	Committed trx
+ * @param[in]	Allocated commit number
+ * */
+void trx_cache_tcn(const trx_t *trx, bool serialised) {
+  Cache_tcn *cont = nullptr;
+  if (!srv_tcn_cache_replace_after_commit) return;
 
-    if (trx_id != 0 && cmmt.scn != SCN_NULL && cmmt.gcn != GCN_NULL) {
-      tcn_t value(trx_id, cmmt);
+  switch (srv_tcn_cache_level) {
+    case NONE_LEVEL:
+      return;
+    case BLOCK_LEVEL:
+    case GLOBAL_LEVEL:
+      cont = global_tcn_cache;
+      break;
+    default:
+      ut_ad(0);
+      cont = nullptr;
+  }
+
+  if (cont) {
+    if (trx->id > 0 && serialised) {
+      assert_trx_commit_mark_allocated(trx);
+      ut_ad(!undo_ptr_is_active(trx->txn_desc.undo_ptr));
+
+      tcn_t value(trx->id, trx->txn_desc.cmmt, trx->txn_desc.undo_ptr,
+                  txn_status_t::COMMITTED);
       global_tcn_cache->insert(value);
-      TCN_CACHE_AGGR(innodb_tcn_cache_level, EVICT);
+      TCN_CACHE_AGGR(srv_tcn_cache_level, EVICT);
     }
   }
 }
 
-void allocate_block_tcn(buf_block_t *block) {
-  if (block->cache_tcn == nullptr) {
-    if (innodb_tcn_block_cache_type == BLOCK_LRU)
-      block->cache_tcn =
-          ut::new_withkey<Lru_tcn>(ut::make_psi_memory_key(mem_key_tcn));
-    else
-      block->cache_tcn = ut::new_withkey<Array_tcn>(
-          ut::make_psi_memory_key(mem_key_tcn), ARRAY_TCN_SIZE, mem_key_tcn);
-  }
-}
-void deallocate_block_tcn(buf_block_t *block) {
-  if (block->cache_tcn != nullptr) {
-    ut::delete_(block->cache_tcn);
-    block->cache_tcn = nullptr;
-  }
-}
-
-/** Get the number of tcn entries according to the innodb_tcn_cache_size. */
+/** Get the number of tcn entries according to the srv_tcn_cache_size. */
 ulong tcn_cache_size_align() {
   /** Mapping rules between buffer pool size and the number of entries in global tcn cache*/
   static std::map<longlong, ulong> buf_2_tcn = {
-    {4LL * 1024 * 1024 * 1024, 1 * 1024 * 1024}, {8LL * 1024 * 1024 * 1024, 2 * 1024 * 1024}, 
-    {16LL * 1024 * 1024 * 1024, 4 * 1024 * 1024}, {32LL * 1024 * 1024 * 1024, 8 * 1024 * 1024}, 
-    {64LL * 1024 * 1024 * 1024, 16 * 1024 * 1024}, {LLONG_MAX, 32 * 1024 * 1024}
-  };
-  
+      {4LL * 1024 * 1024 * 1024, 1 * 1024 * 1024},
+      {8LL * 1024 * 1024 * 1024, 2 * 1024 * 1024},
+      {16LL * 1024 * 1024 * 1024, 4 * 1024 * 1024},
+      {32LL * 1024 * 1024 * 1024, 8 * 1024 * 1024},
+      {64LL * 1024 * 1024 * 1024, 16 * 1024 * 1024},
+      {LLONG_MAX, 32 * 1024 * 1024}};
+
   ulong tcn_entry_num;
-  if (innodb_tcn_cache_size == 0) {
+  if (srv_tcn_cache_size == 0) {
     tcn_entry_num = buf_2_tcn.upper_bound(srv_buf_pool_curr_size)->second;
-    innodb_tcn_cache_size = tcn_entry_num * sizeof(tcn_t);
+    srv_tcn_cache_size = tcn_entry_num * sizeof(tcn_t);
   } else {
-    tcn_entry_num = innodb_tcn_cache_size / sizeof(tcn_t);
+    tcn_entry_num = srv_tcn_cache_size / sizeof(tcn_t);
   }
   return tcn_entry_num;
 }

@@ -38,7 +38,7 @@ CREATE TABLE t1 (word CHAR(20) NOT NULL);
 CREATE USER u1;
 GRANT replication_applier ON *.* TO u1;
 GRANT session_variables_admin ON *.* TO u1;
-CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='u1';
+CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='u1' for channel "test";
 --source include/start_slave.inc
 
 # empty transaction, so the applier skips the load data transaction later on
@@ -66,7 +66,7 @@ SET @@SESSION.GTID_NEXT='AUTOMATIC';
 # clean up
 --source include/rpl_connection_slave.inc
 --source include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL;
+CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL for channel "test";
 DROP USER 'u1';
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc

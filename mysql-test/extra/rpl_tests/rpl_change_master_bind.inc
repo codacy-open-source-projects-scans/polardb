@@ -34,11 +34,11 @@ if (!$source_bind_error_expected)
 }
 
 --replace_result $source_bind <source_bind>
-eval CHANGE REPLICATION SOURCE to $_master_host SOURCE_BIND=$source_bind;
-start slave;
+eval CHANGE REPLICATION SOURCE to $_master_host SOURCE_BIND=$source_bind for channel 'test';
+start slave for channel 'test';
 
 # Check that SHOW SLAVE STATUS has Master_bind column set to $source_bind
-let $source_bind_value= query_get_value(SHOW SLAVE STATUS, Master_Bind, 1);
+let $source_bind_value= query_get_value(SHOW SLAVE STATUS for channel 'test', Master_Bind, 1);
 if (`select '$source_bind_value' != $source_bind`)
 {
   source include/show_rpl_debug_info.inc;
@@ -57,8 +57,8 @@ if ($source_bind_error_expected)
   source include/stop_slave.inc;
 
   # Reset the source_bind so that cleanup can run
-  eval CHANGE REPLICATION SOURCE to SOURCE_BIND='';
-  start slave;
+  eval CHANGE REPLICATION SOURCE to SOURCE_BIND='' for channel 'test';
+  start slave for channel 'test';
 
 }
 

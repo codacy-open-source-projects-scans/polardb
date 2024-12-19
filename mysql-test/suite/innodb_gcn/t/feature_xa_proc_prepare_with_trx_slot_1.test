@@ -25,9 +25,9 @@ xa recover;
 xa commit '1';
 
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
+--let $expect_status= COMMIT
 --let $my_xid= '1','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # Case 2

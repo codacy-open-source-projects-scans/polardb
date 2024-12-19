@@ -76,7 +76,7 @@ if (!$rpl_after_received_events_action)
 --let $_for_channel=
 if ($rpl_channel_name != '')
 {
-  --let $_for_channel= FOR CHANNEL '$rpl_channel_name'
+  --let $_for_channel= FOR CHANNEL $rpl_channel_name
 }
 
 --let $is_slave_io_running= query_get_value(SHOW SLAVE STATUS $_for_channel, Slave_IO_Running, 1)
@@ -186,7 +186,7 @@ while ($_rrec_counted_events < $rpl_event_count)
       # In non-first iteration, read the position of the next event.
       while ($result == No such row)
       {
-        --let $result= query_get_value("SHOW RELAYLOG EVENTS IN '$_rrec_file' FROM $_rrec_pos LIMIT 1, 1", Pos, 1)
+        --let $result= query_get_value("SHOW RELAYLOG EVENTS IN '$_rrec_file' FROM $_rrec_pos LIMIT 1, 1 FOR CHANNEL 'test'", Pos, 1)
         if ($result == No such row)
         {
           # Unpause the receiver thread
@@ -202,15 +202,15 @@ while ($_rrec_counted_events < $rpl_event_count)
       --source include/rpl_get_end_of_relay_log.inc
       --let $_rrec_file= $relay_log_file
       # Find number of events in last relay log.
-      --let $statement= SHOW RELAYLOG EVENTS IN '$_rrec_file'
+      --let $statement= SHOW RELAYLOG EVENTS IN '$_rrec_file'  FOR CHANNEL 'test'
       --let $column= Log_name
       --source include/get_row_count.inc
       # Get position for last event in relay log.
       --dec $row_count
-      --let $_rrec_pos= query_get_value("SHOW RELAYLOG EVENTS IN '$_rrec_file' LIMIT $row_count, 1", Pos, 1)
+      --let $_rrec_pos= query_get_value("SHOW RELAYLOG EVENTS IN '$_rrec_file' LIMIT $row_count, 1 FOR CHANNEL 'test'", Pos, 1)
     }
     # Get the event type.
-    --let $_rrec_event_type= query_get_value(SHOW RELAYLOG EVENTS IN '$_rrec_file' FROM $_rrec_pos, Event_type, 1)
+    --let $_rrec_event_type= query_get_value(SHOW RELAYLOG EVENTS IN '$_rrec_file' FROM $_rrec_pos FOR CHANNEL 'test', Event_type, 1)
     if ($rpl_debug)
     {
       --echo Received event of type $_rrec_event_type at file $_rrec_file, position $_rrec_pos

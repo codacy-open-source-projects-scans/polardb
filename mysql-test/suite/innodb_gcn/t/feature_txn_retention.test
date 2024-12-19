@@ -13,19 +13,19 @@ set global innodb_txn_undo_page_reuse_max_percent = 10;
 --echo # case 1 innodb_txn_retention = 0
 --echo ###############################
 --let $commit_gcn = `select @base_seq + 100`
-xa start '1';
+xa start 'ftr_b1';
 insert into t1 values (1);
-xa end '1';
-xa prepare '1';
+xa end 'ftr_b1';
+xa prepare 'ftr_b1';
 --disable_query_log
 --eval set innodb_commit_seq = $commit_gcn
 --enable_query_log
-xa commit '1';
+xa commit 'ftr_b1';
 
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
---let $my_xid= '1','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--let $expect_status= COMMIT
+--let $my_xid= 'ftr_b1','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --let $i=1
 while ($i <= 1000)
@@ -42,10 +42,9 @@ while ($i <= 1000)
   --inc $i
 }
 
---let $expect_gcn= 18446744073709551615
---let $expect_state= NOTSTART_OR_FORGET
---let $my_xid= '1','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--let $expect_status= NOTSTART_OR_FORGET
+--let $my_xid= 'ftr_b1','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 #show global status like 'Lizard_txn_undo_log%';
 
@@ -56,19 +55,19 @@ set global innodb_txn_retention = 1800;
 SET GLOBAL innodb_purge_run_now=ON;
 
 --let $commit_gcn = `select @base_seq + 200`
-xa start '2';
+xa start 'ftr_b2';
 insert into t1 values (1);
-xa end '2';
-xa prepare '2';
+xa end 'ftr_b2';
+xa prepare 'ftr_b2';
 --disable_query_log
 --eval set innodb_commit_seq = $commit_gcn
 --enable_query_log
-xa commit '2';
+xa commit 'ftr_b2';
 
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
---let $my_xid= '2','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--let $expect_status= COMMIT
+--let $my_xid= 'ftr_b2','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --let $i=1
 while ($i <= 1000)
@@ -86,9 +85,9 @@ while ($i <= 1000)
 }
 
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
---let $my_xid= '2','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--let $expect_status= COMMIT
+--let $my_xid= 'ftr_b2','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 #show global status like 'Lizard_txn_undo_log%';
 
@@ -99,19 +98,19 @@ set global innodb_txn_undo_page_reuse_max_percent = 30;
 SET GLOBAL innodb_purge_run_now=ON;
 
 --let $commit_gcn = `select @base_seq + 300`
-xa start '3';
+xa start 'ftr_b3';
 insert into t1 values (1);
-xa end '3';
-xa prepare '3';
+xa end 'ftr_b3';
+xa prepare 'ftr_b3';
 --disable_query_log
 --eval set innodb_commit_seq = $commit_gcn
 --enable_query_log
-xa commit '3';
+xa commit 'ftr_b3';
 
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
---let $my_xid= '3','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--let $expect_status= COMMIT
+--let $my_xid= 'ftr_b3','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --let $i=1
 while ($i <= 1000)
@@ -129,15 +128,15 @@ while ($i <= 1000)
 }
 
 --let $expect_gcn= $commit_gcn
---let $expect_state= COMMIT
---let $my_xid= '3','',1
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--let $expect_status= COMMIT
+--let $my_xid= 'ftr_b3','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 #show global status like 'Lizard_txn_undo_log%';
 
 drop table t1;
 
-set global innodb_undo_retention = default;
+set global innodb_undo_retention = 0;
 set global innodb_txn_retention = default;
 set global innodb_txn_undo_page_reuse_max_percent = default;
 set global innodb_purge_rseg_truncate_frequency = default;

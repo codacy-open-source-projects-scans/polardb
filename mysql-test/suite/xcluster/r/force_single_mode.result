@@ -2,7 +2,24 @@
 call dbms_consensus.add_learner(learner_cluster_info);
 create table t (id int);
 insert into t values (1);
+call dbms_consensus.upgrade_learner(learner_cluster_info);
+select SERVER_ID, ROLE from information_schema.alisql_cluster_global;
+SERVER_ID	ROLE
+0	
+select SERVER_ID, ROLE, SERVER_READY_FOR_RW from information_schema.alisql_cluster_local;
+SERVER_ID	ROLE	SERVER_READY_FOR_RW
+4	Follower	No
 stop xpaxos_replication;
+call dbms_consensus.force_learner_node();
+select SERVER_ID, ROLE from information_schema.alisql_cluster_global;
+SERVER_ID	ROLE
+0	
+select SERVER_ID, ROLE, SERVER_READY_FOR_RW from information_schema.alisql_cluster_local;
+SERVER_ID	ROLE	SERVER_READY_FOR_RW
+4	Learner	No
+select LEARNER_IP_PORT, SOURCE_IP_PORT from  information_schema.ALISQL_CLUSTER_LEARNER_SOURCE;
+LEARNER_IP_PORT	SOURCE_IP_PORT
+	
 insert into t values (2);
 call dbms_consensus.force_single_mode();
 select SERVER_ID, ROLE from information_schema.alisql_cluster_global;
@@ -19,5 +36,6 @@ id
 2
 3
 drop table t;
+call dbms_consensus.downgrade_follower(learner_cluster_info);
 call dbms_consensus.drop_learner(learner_cluster_info);
 drop table t;

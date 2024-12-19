@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2022, Oracle and/or its affiliates.
+/* Copyright (c) 2015, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -410,6 +410,10 @@ struct System_variables {
 
   bool opt_enable_show_ipk_info;
 
+  bool opt_query_via_flashback_area;
+
+  bool opt_flashback_area;
+
   /**
     @sa Sys_sql_generate_invisible_primary_key
   */
@@ -532,6 +536,8 @@ struct System_variables {
 
   /* Used to switch ON/OFF auto savepoint */
   bool auto_savepoint;
+
+  bool opt_index_format_gpp_enabled;
 };
 
 /**

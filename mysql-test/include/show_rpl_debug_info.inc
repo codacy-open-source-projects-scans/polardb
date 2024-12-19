@@ -225,9 +225,9 @@ while ($_rpl_server <= $rpl_server_count) {
 
   --echo
   --echo **** SHOW RELAYLOG EVENTS on $CURRENT_CONNECTION ****
-  let $relaylog_name = query_get_value(SHOW REPLICA STATUS, Relay_Log_File, 1);
+  let $relaylog_name = query_get_value(SHOW REPLICA STATUS for channel 'test', Relay_Log_File, 1);
   --echo applier relay_log_name = '$relaylog_name'
-  eval SHOW RELAYLOG EVENTS IN '$relaylog_name';
+  eval SHOW RELAYLOG EVENTS IN '$relaylog_name' FOR CHANNEL 'test';
 
   --echo
   --echo **** slave_relay_info on $CURRENT_CONNECTION ****

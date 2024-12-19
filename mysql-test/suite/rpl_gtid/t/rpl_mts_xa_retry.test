@@ -80,7 +80,7 @@ while ($j > 0) {
 
     # assert that we have transactions were compressed
     --let $include_trx_payload_events=1
-    --let $event_sequence = !GCN # Gtid # Query # !GCN # Gtid # Transaction_payload # Query # Table_map # Write_rows # Xid # !GCN # Gtid # Transaction_payload # Query/XA START.* # Table_map # Write_rows # Query/XA END.* # XA_prepare
+    --let $event_sequence = Previous_consensus_index # # Consensus_log # !GCN # Gtid # Query # Consensus_log # !GCN # Gtid # Transaction_payload # Query # Table_map # Write_rows # Xid # Consensus_log # !GCN # Gtid # Transaction_payload # Query/XA START.* # Table_map # Write_rows # Query/XA END.* # XA_prepare
     --source include/assert_binlog_events.inc
     --let $include_trx_payload_events=0
 
@@ -94,7 +94,7 @@ while ($j > 0) {
     --let $worker_thread_id=`SELECT thread_id FROM performance_schema.threads WHERE name IN ("thread/sql/replica_sql", "thread/sql/replica_worker") AND processlist_info LIKE 'XA START%'`
 
     # wait for the applier thread to start retrying
-    --let $wait_condition=SELECT APPLYING_TRANSACTION_RETRIES_COUNT > 0 FROM performance_schema.replication_applier_status_by_worker WHERE thread_id = $worker_thread_id
+    --let $wait_condition=SELECT APPLYING_TRANSACTION_RETRIES_COUNT > 0 FROM performance_schema.replication_applier_status_by_worker WHERE CHANNEL_NAME = 'test' and thread_id = $worker_thread_id
     --source include/wait_condition.inc
 
     --source include/rpl_connection_slave1.inc
@@ -108,7 +108,7 @@ while ($j > 0) {
     # assert that we have the expected event sequence in the
     # slave's binary log
     --let $include_trx_payload_events=1
-    --let $event_sequence = !GCN # Gtid # Query # !GCN # Gtid # Transaction_payload # Query # Table_map # Write_rows # Xid # !GCN # Gtid # Transaction_payload # Query/XA START.* # Table_map # Write_rows # Query/XA END.* # XA_prepare # !GCN # Gtid # Query/XA COMMIT.*
+    --let $event_sequence = Previous_consensus_index # # Consensus_log # !GCN # Gtid # Query # Consensus_log # !GCN # Gtid # Transaction_payload # Query # Table_map # Write_rows # Xid # Consensus_log # !GCN # Gtid # Transaction_payload # Query/XA START.* # Table_map # Write_rows # Query/XA END.* # XA_prepare # Consensus_log # !GCN # Gtid # Query/XA COMMIT.*
     --source include/assert_binlog_events.inc
 
     # assert that the tables have the same content

@@ -33,17 +33,17 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #ifndef lizard0trx_h
 #define lizard0trx_h
 
-#include <map>
-
 #include "trx0types.h"
+
+#include "lizard0undo0types.h"
 
 namespace lizard {
 
 /** Alloc & release cleanout cursors. */
-extern void alloc_cleanout_cursors(trx_t *trx);
-extern void release_cleanout_cursors(trx_t *trx);
+extern void alloc_commit_cleanout(trx_t *trx);
+extern void release_commit_cleanout(trx_t *trx);
 
-extern void cleanout_rows_at_commit(trx_t *trx);
+extern void cleanout_after_commit(trx_t *trx);
 
 }  // namespace lizard
 

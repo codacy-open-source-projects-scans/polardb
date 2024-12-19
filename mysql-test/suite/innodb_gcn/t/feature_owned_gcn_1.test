@@ -15,27 +15,27 @@ set global innodb_undo_retention = 9000;
 --echo # case 1
 --echo ###############################
 --let $my_gcn = `select @base_seq + 100`
-xa start '1';
+xa start 'fwg_b1';
 insert into tt values (1);
-xa end '1';
-xa prepare '1';
+xa end 'fwg_b1';
+xa prepare 'fwg_b1';
 
 --disable_query_log
 --eval set innodb_commit_seq = $my_gcn
 --enable_query_log
-xa commit '1';
+xa commit 'fwg_b1';
 
 --let $expect_gcn= $my_gcn
---let $expect_state= COMMIT
---let $my_xid= '1','',1
+--let $expect_status= COMMIT
+--let $my_xid= 'fwg_b1','',1
 --let $expect_csr= ASSIGNED_GCN
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # case 2
 --echo ###############################
 --let $my_gcn = `select @base_seq + 200`
-xa start '2';
+xa start 'fwg_b2';
 
 --echo # push up gcn by innodb_snapshot_seq
 --disable_query_log
@@ -44,47 +44,47 @@ xa start '2';
 select * from tt;
 
 insert into tt values (2);
-xa end '2';
+xa end 'fwg_b2';
 
-xa prepare '2';
-xa commit '2';
+xa prepare 'fwg_b2';
+xa commit 'fwg_b2';
 
 --let $expect_gcn= $my_gcn
---let $expect_state= COMMIT
---let $my_xid= '2','',1
+--let $expect_status= COMMIT
+--let $my_xid= 'fwg_b2','',1
 --let $expect_csr= AUTOMATIC_GCN
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # case 3
 --echo ###############################
 --let $my_gcn = `select @base_seq + 200`
-xa start '3';
+xa start 'fwg_b3';
 insert into tt values (3);
-xa end '3';
-xa prepare '3';
-xa commit '3';
+xa end 'fwg_b3';
+xa prepare 'fwg_b3';
+xa commit 'fwg_b3';
 
 --let $expect_gcn= $my_gcn
---let $expect_state= COMMIT
---let $my_xid= '3','',1
+--let $expect_status= COMMIT
+--let $my_xid= 'fwg_b3','',1
 --let $expect_csr= AUTOMATIC_GCN
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # case 4
 --echo ###############################
 --let $my_gcn = `select @base_seq + 200`
-xa start '4';
+xa start 'fwg_b4';
 insert into tt values (4);
-xa end '4';
-xa commit '4' one phase;
+xa end 'fwg_b4';
+xa commit 'fwg_b4' one phase;
 
 --let $expect_gcn= $my_gcn
---let $expect_state= COMMIT
---let $my_xid= '4','',1
+--let $expect_status= COMMIT
+--let $my_xid= 'fwg_b4','',1
 --let $expect_csr= AUTOMATIC_GCN
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # case 5
@@ -98,11 +98,11 @@ xa commit '4' one phase;
 --enable_query_log
 
 set xa_detach_on_prepare = 0;
-xa start '5';
+xa start 'fwg_b5';
 insert into tt values (5);
-xa end '5';
+xa end 'fwg_b5';
 
-xa prepare '5';
+xa prepare 'fwg_b5';
 
 --disable_query_log
 --eval set innodb_commit_seq = $my_gcn
@@ -111,7 +111,7 @@ xa prepare '5';
 --exec echo "wait" > $MYSQLTEST_VARDIR/tmp/mysqld.1.expect
 SET @@SESSION.DEBUG= '+d, simulate_crash_on_commit_xa_trx';
 --error 2013
-xa commit '5';
+xa commit 'fwg_b5';
 
 # restart and reconnect.
 --source include/wait_until_disconnected.inc
@@ -130,23 +130,23 @@ xa commit '5';
 --eval set innodb_commit_seq = $my_gcn
 --enable_query_log
 
-XA COMMIT '5';
+XA COMMIT 'fwg_b5';
 
 --let $expect_gcn= $my_gcn
---let $expect_state= COMMIT
---let $my_xid= '5','',1
+--let $expect_status= COMMIT
+--let $my_xid= 'fwg_b5','',1
 --let $expect_csr= ASSIGNED_GCN
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # case 6
 --echo ###############################
 --let $my_gcn = `select @base_seq + 600`
-xa start '6';
+xa start 'fwg_b6';
 insert into tt values (6);
-xa end '6';
+xa end 'fwg_b6';
 
-xa prepare '6';
+xa prepare 'fwg_b6';
 
 --disable_query_log
 --eval set innodb_commit_seq = $my_gcn
@@ -155,7 +155,7 @@ xa prepare '6';
 --exec echo "wait" > $MYSQLTEST_VARDIR/tmp/mysqld.1.expect
 SET @@SESSION.DEBUG= '+d, simulate_crash_after_consensus_append_log';
 --error 2013
-xa commit '6';
+xa commit 'fwg_b6';
 
 # restart and reconnect.
 --source include/wait_until_disconnected.inc
@@ -173,10 +173,10 @@ xa commit '6';
 xa recover;
 
 --let $expect_gcn= $my_gcn
---let $expect_state= COMMIT
---let $my_xid= '6','',1
+--let $expect_status= COMMIT
+--let $my_xid= 'fwg_b6','',1
 --let $expect_csr= ASSIGNED_GCN
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # case 7
@@ -184,10 +184,10 @@ xa recover;
 --let $my_gcn = `select @base_seq + 700`
 connect(con1,localhost,root,,);
 connection con1;
-xa start '7';
+xa start 'fwg_b7';
 insert into tt values (7);
-xa end '7';
-xa prepare '7';
+xa end 'fwg_b7';
+xa prepare 'fwg_b7';
 disconnect con1;
 
 connect(con2,localhost,root,,);
@@ -196,22 +196,22 @@ xa recover;
 --disable_query_log
 --eval set innodb_commit_seq = $my_gcn
 --enable_query_log
-xa commit '7';
+xa commit 'fwg_b7';
 disconnect con2;
 
 connection default;
 
 --let $expect_gcn= $my_gcn
---let $expect_state= COMMIT
---let $my_xid= '7','',1
+--let $expect_status= COMMIT
+--let $my_xid= 'fwg_b7','',1
 --let $expect_csr= ASSIGNED_GCN
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # case 8
 --echo ###############################
 --let $my_gcn = `select @base_seq + 810`
-xa start '8';
+xa start 'fwg_b8';
 
 --echo # push up gcn by innodb_snapshot_seq
 --disable_query_log
@@ -220,20 +220,20 @@ xa start '8';
 select * from tt;
 
 insert into tt values (8);
-xa end '8';
-xa prepare '8';
+xa end 'fwg_b8';
+xa prepare 'fwg_b8';
 
 --disable_query_log
 --let $my_gcn = `select @base_seq + 800`
 --eval set innodb_commit_seq = $my_gcn
 --enable_query_log
-xa commit '8';
+xa commit 'fwg_b8';
 
 --let $expect_gcn= $my_gcn
---let $expect_state= COMMIT
---let $my_xid= '8','',1
+--let $expect_status= COMMIT
+--let $my_xid= 'fwg_b8','',1
 --let $expect_csr= ASSIGNED_GCN
---source suite/innodb_gcn/include/xa_proc_find_by_xid_verify.inc
+--source suite/innodb_gcn/include/xa_info_verify.inc
 
 --echo ###############################
 --echo # cleanup

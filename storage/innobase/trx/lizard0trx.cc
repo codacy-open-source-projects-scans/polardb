@@ -33,42 +33,28 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "lizard0trx.h"
 #include "lizard0cleanout.h"
 #include "lizard0row.h"
+#include "lizard0undo.h"
 #include "trx0trx.h"
+
+#ifndef UNIV_HOTBACKUP
+#include <sql_class.h>
+#endif
 
 namespace lizard {
 
-void alloc_cleanout_cursors(trx_t *trx) {
-  trx->cleanout_cursors = ut::new_withkey<Cleanout_cursors>(
+void alloc_commit_cleanout(trx_t *trx) {
+  ut_ad(trx->cleanout == nullptr);
+
+  trx->cleanout = ut::new_withkey<Commit_cleanout>(
       ut::make_psi_memory_key(mem_key_row_cleanout));
-  ut_ad(trx->cleanout_cursors != nullptr);
+  ut_ad(trx->cleanout != nullptr);
 }
 
-void release_cleanout_cursors(trx_t *trx) {
-  ut::delete_(trx->cleanout_cursors);
-  trx->cleanout_cursors = nullptr;
-}
-
-void cleanout_rows_at_commit(trx_t *trx) {
-  ut_ad(trx != nullptr);
-  ut_ad(trx->cleanout_cursors != nullptr);
-
-  if (trx->cleanout_cursors->cursor_count() == 0) {
-    return;
+void release_commit_cleanout(trx_t *trx) {
+  if (trx->cleanout) {
+    ut::delete_(trx->cleanout);
+    trx->cleanout = nullptr;
   }
-
-  /** Skip cleanout as the transaction is a full rollback. */
-  if (trx->is_rollback) {
-    trx->cleanout_cursors->init();
-    return;
-  }
-
-  auto undo_ptr = trx->txn_desc.undo_ptr;
-  ut_ad(!undo_ptr_is_active(trx->txn_desc.undo_ptr));
-
-  txn_rec_t txn_rec{trx->id, trx->txn_desc.cmmt.scn, undo_ptr,
-                    trx->txn_desc.cmmt.gcn};
-
-  commit_cleanout_do(trx, txn_rec);
 }
 
 }  // namespace lizard

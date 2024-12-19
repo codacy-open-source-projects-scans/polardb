@@ -46,7 +46,7 @@ while ($rpl_connection_number <= $rpl_connection_count)
   --let $rpl_master= `SELECT SUBSTRING('$rpl_connection_list', $_rfec_offset + 1, $rpl_server_count_length)`
   --let $rpl_slave= `SELECT SUBSTRING('$rpl_connection_list', $_rfec_offset + 1 + $rpl_server_count_length + 2, $rpl_server_count_length)`
 
-  --let $rpl_channel_name=
+  --let $rpl_channel_name= 'test'
   if ($rpl_multi_source)
   {
     --let $rpl_channel_name= 'channel_$rpl_master'
@@ -67,7 +67,7 @@ while ($rpl_connection_number <= $rpl_connection_count)
 --let $rpl_master=
 --let $rpl_slave=
 --let $rpl_connection_number=
---let $rpl_channel_name=
+--let $rpl_channel_name='test'
 
 --let $include_filename= rpl_for_each_connection.inc [$rpl_source_file]
 --source include/end_include_file.inc

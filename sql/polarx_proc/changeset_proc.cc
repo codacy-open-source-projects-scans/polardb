@@ -1,3 +1,30 @@
+/*****************************************************************************
+
+Copyright (c) 2023, 2024, Alibaba and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License, version 2.0, as published by the
+Free Software Foundation.
+
+This program is also distributed with certain software (including but not
+limited to OpenSSL) that is licensed under separate terms, as designated in a
+particular file or component or in included license documentation. The authors
+of MySQL hereby grant you an additional permission to link the program and
+your derivative works with the separately licensed software that they have
+included with MySQL.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
+for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
+
+*****************************************************************************/
+
+
 //
 // Created by wumu on 2022/10/19.
 //
@@ -102,8 +129,6 @@ bool Changeset_proc_fetch::my_send_result_metadata(
   }
   for (const auto &field : fields) {
     switch (field->type()) {
-      case MYSQL_TYPE_BIT:
-      case MYSQL_TYPE_GEOMETRY:
       case MYSQL_TYPE_YEAR:
       case MYSQL_TYPE_TINY:
       case MYSQL_TYPE_LONG:
@@ -129,13 +154,22 @@ bool Changeset_proc_fetch::my_send_result_metadata(
           item->decimals = field->field_length;
         break;
       }
-      case MYSQL_TYPE_FLOAT:
+      case MYSQL_TYPE_FLOAT: {
+        const Name_string field_name(field->field_name,
+                                     strlen(field->field_name));
+        if ((item = new Item_float(field_name, 0.0, DECIMAL_NOT_SPECIFIED,
+                                   field->field_length)) == nullptr)
+          DBUG_RETURN(NULL);
+        item->set_data_type_float();
+        break;
+      }
       case MYSQL_TYPE_DOUBLE: {
         const Name_string field_name(field->field_name,
                                      strlen(field->field_name));
         if ((item = new Item_float(field_name, 0.0, DECIMAL_NOT_SPECIFIED,
                                    field->field_length)) == nullptr)
           DBUG_RETURN(NULL);
+        item->set_data_type_double();
         break;
       }
       case MYSQL_TYPE_DECIMAL:
@@ -158,6 +192,8 @@ bool Changeset_proc_fetch::my_send_result_metadata(
           DBUG_RETURN(0);
         }
         break;
+      case MYSQL_TYPE_BIT:
+      case MYSQL_TYPE_GEOMETRY:
       case MYSQL_TYPE_VARCHAR:
         if (!(item = new Item_empty_string(
                   field->field_name, field->char_length(), field->charset()))) {
@@ -220,8 +256,7 @@ void Sql_cmd_changeset_proc_fetch::send_result(THD *thd, bool error) {
   gChangesetManager.open_table(table_name, &table, TL_READ);
 
   std::vector<ChangesetResult *> changes;
-  if (gChangesetManager.fetch_change(table_name, delete_last_cs, changes,
-                                     table->s)) {
+  if (gChangesetManager.fetch_change(table_name, delete_last_cs, changes, table)) {
     my_printf_error(ER_CHANGESET_COMMAND_ERROR, "changeset fetch failed", 0);
     return;
   }
@@ -240,11 +275,13 @@ void Sql_cmd_changeset_proc_fetch::send_result(THD *thd, bool error) {
     if (m_proc->send_result_metadata(thd)) return;
   }
 
+  std::sort(changes.begin(), changes.end(), [](const ChangesetResult* a, const ChangesetResult* b) {
+        return *a < *b;
+    });
   for (auto row : changes) {
     proto->start_row();
     proto->store(row->get_op_string().data(), &my_charset_utf8mb3_bin);
     for (auto pk : row->pk_field_list) {
-      pk->table = table;
       pk->send_to_protocol(proto);
     }
     proto->end_row();

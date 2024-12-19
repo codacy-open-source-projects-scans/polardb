@@ -32,7 +32,7 @@ RESET MASTER;
 
 --source include/rpl_connection_slave.inc
 RESET MASTER;
-RESET SLAVE;
+RESET SLAVE for channel 'test';
 --source include/start_slave.inc
 
 --source include/kill_and_restart_mysqld.inc

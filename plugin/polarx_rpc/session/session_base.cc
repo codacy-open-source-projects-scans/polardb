@@ -1,3 +1,30 @@
+/*****************************************************************************
+
+Copyright (c) 2023, 2024, Alibaba and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License, version 2.0, as published by the
+Free Software Foundation.
+
+This program is also distributed with certain software (including but not
+limited to OpenSSL) that is licensed under separate terms, as designated in a
+particular file or component or in included license documentation. The authors
+of MySQL hereby grant you an additional permission to link the program and
+your derivative works with the separately licensed software that they have
+included with MySQL.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
+for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
+
+*****************************************************************************/
+
+
 //
 // Created by zzy on 2022/8/31.
 //
@@ -21,6 +48,9 @@
 #include "sql/sql_db.h"
 #include "sql/sql_lex.h"
 #include "sql/srv_session.h"
+#ifdef MYSQL8
+#include "sql/sql_audit.h"
+#endif
 
 #include "../coders/callback_command_delegate.h"
 #include "../polarx_rpc.h"
@@ -522,9 +552,14 @@ void CsessionBase::deinit_thread_for_session() {
 }
 
 void CsessionBase::begin_query(THD *thd, const char *query, uint len) {
+  /// start lex and reset thd
+  lex_start(thd);
+  thd->reset_for_next_command();
+
   /// mark start query
   THD_STAGE_INFO(thd, stage_starting);
   thd->set_time();
+  thd->set_command(COM_QUERY);
   thd->lex->sql_command = SQLCOM_SELECT;
 
   /// clear rewrite query and set current query
@@ -568,6 +603,9 @@ void CsessionBase::cleanup_and_mark_sleep(THD *thd) {
   /** Freeing the memroot will leave the THD::work_part_info invalid. */
   thd->work_part_info = nullptr;
 
+  /// end stmt
+  thd->end_statement();
+                                                                                     
   /// free mem_root
 #ifdef MYSQL8
   /**
@@ -599,7 +637,13 @@ void CsessionBase::end_query(THD *thd) {
   /// end select
   thd->set_row_count_func(-1);
 
-#ifndef MYSQL8
+#ifdef MYSQL8
+  /// write audit log before exit
+  // todo: temporarily disable audit log(bad performance)
+//  thd->update_slow_query_status();
+//  mysql_audit_notify(thd, AUDIT_EVENT(MYSQL_AUDIT_RDS_QUERY_RESULT));
+//  log_slow_statement(thd);
+#else
   /// write audit log before exit
   thd->update_server_status();
   mysql_rds_audit_log.write_log(thd, thd->query().str, thd->query().length,

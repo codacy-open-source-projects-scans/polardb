@@ -15,7 +15,7 @@
         "created": NNN,
         "last_altered": NNN,
         "hidden": 1,
-        "options": "avg_row_length=0;encrypt_type=N;key_block_size=0;keys_disabled=0;pack_record=0;stats_auto_recalc=0;stats_sample_pages=0;",
+        "options": "avg_row_length=0;encrypt_type=N;flashback_area=0;key_block_size=0;keys_disabled=0;pack_record=0;stats_auto_recalc=0;stats_sample_pages=0;",
         "columns": [
             {
                 "name": "k1",
@@ -346,7 +346,7 @@
                 "is_generated": false,
                 "ordinal_position": 1,
                 "comment": "",
-                "options": "flags=0;",
+                "options": "IFT=0;flags=0;",
                 "se_private_data": "gcn=F;id=A;root=B;space_id=C;table_id=D;trx_id=E",
                 "type": 1,
                 "algorithm": 2,

@@ -1,3 +1,30 @@
+/*****************************************************************************
+
+Copyright (c) 2023, 2024, Alibaba and/or its affiliates. All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License, version 2.0, as published by the
+Free Software Foundation.
+
+This program is also distributed with certain software (including but not
+limited to OpenSSL) that is licensed under separate terms, as designated in a
+particular file or component or in included license documentation. The authors
+of MySQL hereby grant you an additional permission to link the program and
+your derivative works with the separately licensed software that they have
+included with MySQL.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License, version 2.0,
+for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
+
+*****************************************************************************/
+
+
 //
 // Created by wumu on 2022/10/19.
 //
@@ -134,7 +161,7 @@ int ChangesetManager::fence_change(const std::string &table_name) {
 int ChangesetManager::fetch_change(
     const std::string &table_name, bool delete_last_cs,
     std::vector<ChangesetResult *> &changes,
-    TABLE_SHARE *table_share) {
+    TABLE *table) {
   if (current_thd->db().str == nullptr) {
     my_error(ER_CHANGESET_COMMAND_ERROR, MYF(0), "please use database first");
     return 1;
@@ -145,7 +172,7 @@ int ChangesetManager::fetch_change(
     return 1;
   }
 
-  fetch_changeset(full_table_name, delete_last_cs, changes, table_share);
+  fetch_changeset(full_table_name, delete_last_cs, changes, table);
   return 0;
 }
 
@@ -175,7 +202,7 @@ void ChangesetManager::get_primary_keys(uchar const *record, KEY *key_info,
   uint length, offset;
   for (uint i = 0; i < key_info->actual_key_parts; ++i) {
     offset = key_info->key_part[i].offset;
-    length = key_info->key_part[i].length;
+    length = key_info->key_part[i].store_length;
     pk.append((const char *)record + offset, length);
   }
 }
@@ -423,14 +450,14 @@ inline void ChangesetManager::commit(const DBTableName &full_table_name,
 
 void ChangesetManager::fetch_changeset(
     const DBTableName &full_table_name, bool delete_last_cs,
-    std::vector<ChangesetResult *> &res, TABLE_SHARE *table_share) {
+    std::vector<ChangesetResult *> &res, TABLE *table) {
   polarx_rpc::CautoSpinRWLock lock(rw_lock, false, 2000);
   auto cs = get_changeset_ptr(full_table_name);
   if (cs == nullptr) {
     return;
   }
 
-  cs->fetch_pk(delete_last_cs, res, table_share);
+  cs->fetch_pk(delete_last_cs, res, table);
 }
 
 Changeset::Stats ChangesetManager::fetch_changeset_stats(

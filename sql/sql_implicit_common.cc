@@ -234,7 +234,7 @@ bool fill_implicit_field_with_null(THD *thd, Field *field) {
           thd->is_error());
 }
 
-#ifndef DBUG_OFF
+#ifndef NDEBUG
 bool debug_field_is_implicit_and_hide(THD *, TABLE *table, Field *field) {
   bool is_implicit_name = NAME_IS_IMPLICIT(field->field_name);
   if (is_implicit_name) {

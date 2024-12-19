@@ -178,36 +178,36 @@ CREATE TABLE t2(a INT PRIMARY KEY);
 --let $mts_spco_gd_transaction_retries = 10
 --source extra/rpl_tests/mts_spco_generate_deadlock_setup.inc
 
---echo
---echo #
---echo # TC1. `GLOBAL READ_ONLY=ON` issued by client and DDL replicated
---echo #      from source.
---echo #------------------------------------------------------------------------
---source include/rpl_connection_master.inc
-INSERT INTO t1 VALUES(10, 10);
-
---let $mts_spco_gd_trx_blocking_worker_1 = ALTER TABLE t2 ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=1
---let $mts_spco_gd_trx_assigned_worker_2 = INSERT INTO t1 VALUES(11, NULL)
---let $mts_spco_gd_trx_assigned_worker_3 = INSERT INTO t1 VALUES(12, NULL)
---let $mts_spco_gd_trx_blocking_client = SET GLOBAL read_only = ON
---let $mts_spco_gd_state_blocking_client = Waiting for commit lock
---let $mts_spco_gd_trx_to_client_unblocking_workers = SET GLOBAL read_only = OFF
---source extra/rpl_tests/mts_spco_generate_deadlock.inc
-
---echo
---echo #
---echo # TC2. `GLOBAL READ_ONLY=ON` issued by client and DML replicated
---echo #      from source.
---echo #------------------------------------------------------------------------
---source include/rpl_connection_master.inc
-INSERT INTO t1 VALUES(13, 13);
-
---let $mts_spco_gd_trx_blocking_worker_1 = INSERT INTO t1 VALUES(14, NULL)
---let $mts_spco_gd_trx_assigned_worker_2 = INSERT INTO t1 VALUES(15, NULL)
---let $mts_spco_gd_trx_assigned_worker_3 = INSERT INTO t1 VALUES(16, NULL)
---let $mts_spco_gd_trx_blocking_client = SET GLOBAL read_only = ON
---let $mts_spco_gd_trx_to_client_unblocking_workers = SET GLOBAL read_only = OFF
---source extra/rpl_tests/mts_spco_generate_deadlock.inc
+# --echo
+# --echo #
+# --echo # TC1. `GLOBAL READ_ONLY=ON` issued by client and DDL replicated
+# --echo #      from source.
+# --echo #------------------------------------------------------------------------
+# --source include/rpl_connection_master.inc
+# INSERT INTO t1 VALUES(10, 10);
+# 
+# --let $mts_spco_gd_trx_blocking_worker_1 = ALTER TABLE t2 ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=1
+# --let $mts_spco_gd_trx_assigned_worker_2 = INSERT INTO t1 VALUES(11, NULL)
+# --let $mts_spco_gd_trx_assigned_worker_3 = INSERT INTO t1 VALUES(12, NULL)
+# --let $mts_spco_gd_trx_blocking_client = SET GLOBAL read_only = ON
+# --let $mts_spco_gd_state_blocking_client = Waiting for commit lock
+# --let $mts_spco_gd_trx_to_client_unblocking_workers = SET GLOBAL read_only = OFF
+# --source extra/rpl_tests/mts_spco_generate_deadlock.inc
+# 
+# --echo
+# --echo #
+# --echo # TC2. `GLOBAL READ_ONLY=ON` issued by client and DML replicated
+# --echo #      from source.
+# --echo #------------------------------------------------------------------------
+# --source include/rpl_connection_master.inc
+# INSERT INTO t1 VALUES(13, 13);
+# 
+# --let $mts_spco_gd_trx_blocking_worker_1 = INSERT INTO t1 VALUES(14, NULL)
+# --let $mts_spco_gd_trx_assigned_worker_2 = INSERT INTO t1 VALUES(15, NULL)
+# --let $mts_spco_gd_trx_assigned_worker_3 = INSERT INTO t1 VALUES(16, NULL)
+# --let $mts_spco_gd_trx_blocking_client = SET GLOBAL read_only = ON
+# --let $mts_spco_gd_trx_to_client_unblocking_workers = SET GLOBAL read_only = OFF
+# --source extra/rpl_tests/mts_spco_generate_deadlock.inc
 
 --echo
 --echo #

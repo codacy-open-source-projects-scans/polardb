@@ -9,11 +9,11 @@ source include/show_master_status.inc;
 save_master_pos;
 --echo connection slave;
 connection slave;
-reset slave;
-let $master_host= query_get_value(SHOW REPLICA STATUS, Source_Host, 1);
+reset slave for channel 'test';
+let $master_host= query_get_value(SHOW REPLICA STATUS for channel 'test', Source_Host, 1);
 --echo Master-Host: $master_host
-eval CHANGE REPLICATION SOURCE to SOURCE_HOST='$IPv6';
-let $master_host= query_get_value(SHOW REPLICA STATUS, Source_Host, 1);
+eval CHANGE REPLICATION SOURCE to SOURCE_HOST='$IPv6' for channel "test";
+let $master_host= query_get_value(SHOW REPLICA STATUS for channel 'test', Source_Host, 1);
 --echo Master-Host: $master_host
 --echo disconnect slave;
 disconnect slave;

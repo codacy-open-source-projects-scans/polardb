@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2022, Oracle and/or its affiliates.
+Copyright (c) 1995, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 Copyright (c) 2008, 2009 Google Inc.
 Copyright (c) 2009, Percona Inc.
 
@@ -113,8 +113,10 @@ bool srv_downgrade_logs = false;
 bool srv_upgrade_old_undo_found = false;
 #endif /* INNODB_DD_TABLE */
 
-#include "lizard0cleanout.h"
+#include "lizard0cleanout0safe.h"
 #include "lizard0gcs.h"
+#include "lizard0erase.h"
+#include "row0purge.h"
 
 /* Revert to old partition file name if upgrade fails. */
 bool srv_downgrade_partition_files = false;
@@ -1738,7 +1740,7 @@ void srv_export_innodb_status(void) {
 #ifdef UNIV_DEBUG
   rw_lock_s_lock(&purge_sys->latch, UT_LOCATION_HERE);
 
-  scn_t done_trx_scn = purge_sys->done.scn;
+  scn_t done_trx_scn = purge_sys->done.ommt.scn;
 
   /* Purge always deals with transaction end points represented by
   transaction number. We are allowed to purge transactions with number
@@ -1767,6 +1769,9 @@ void srv_export_innodb_status(void) {
     export_vars.innodb_purge_view_trx_scn_age =
         (ulint)(max_trx_scn - low_limit_scn + 1);
   }
+
+  export_vars.innodb_purge_done_scn = done_trx_scn;
+  export_vars.innodb_erase_done_scn = lizard::erase_sys->done.ommt.scn;
 
 #endif /* UNIV_DEBUG */
 
@@ -2835,7 +2840,13 @@ static bool srv_task_execute(void) {
   if (thr != nullptr) {
     que_run_threads(thr);
 
-    purge_sys->n_completed.fetch_add(1);
+    ut_ad(que_node_get_type(thr->child) == QUE_NODE_PURGE);
+    purge_node_t *node = static_cast<purge_node_t *>(thr->child);
+    if (node->is_history_purge()) {
+      purge_sys->n_completed.fetch_add(1);
+    } else {
+      lizard::erase_sys->n_completed.fetch_add(1);
+    }
   }
 
   return (thr != nullptr);
@@ -2905,6 +2916,8 @@ void srv_worker_thread() {
 static ulint srv_do_purge(ulint *n_total_purged,
                           bool *is_blocked_by_retention) {
   ulint n_pages_purged;
+  /** Lizard: Set non-zero to give it a chance to erase. */
+  ulint n_pages_erased = ULINT_UNDEFINED;
 
   static ulint count = 0;
   static ulint n_use_threads = 0;
@@ -2953,7 +2966,9 @@ static ulint srv_do_purge(ulint *n_total_purged,
     ut_a(n_use_threads <= n_threads);
 
     /* Take a snapshot of the history list before purge. */
-    if ((rseg_history_len = trx_sys->rseg_history_len.load()) == 0) {
+    if ((rseg_history_len = trx_sys->rseg_history_len.load()) == 0 &&
+        /** Lizard: Now will erase untill can not be erased. */
+        n_pages_erased == 0) {
       break;
     }
 
@@ -2973,9 +2988,14 @@ static ulint srv_do_purge(ulint *n_total_purged,
           (undo::spaces->find_first_inactive_explicit(nullptr) != nullptr);
       undo::spaces->s_unlock();
     }
-  } while (purge_sys->state == PURGE_STATE_RUN &&
-           (n_pages_purged > 0 || need_explicit_truncate) &&
-           !srv_purge_should_exit(n_pages_purged));
+
+    n_pages_erased =
+        lizard::trx_erase(n_use_threads, srv_purge_batch_size, do_truncate);
+
+  } while (
+      purge_sys->state == PURGE_STATE_RUN &&
+      (n_pages_purged > 0 || need_explicit_truncate || n_pages_erased > 0) &&
+      !srv_purge_should_exit(n_pages_purged));
 
   return rseg_history_len;
 }

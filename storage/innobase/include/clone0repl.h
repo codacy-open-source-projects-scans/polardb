@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2018, 2022, Oracle and/or its affiliates.
+Copyright (c) 2018, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -119,7 +119,7 @@ class Clone_persist_gtid {
     /* Should never be zero. It can be set to max only before
     GTID persister is active and no GTID is persisted. */
     ut_ad(ret_scn > 0 || srv_force_recovery >= SRV_FORCE_NO_UNDO_LOG_SCAN);
-    if (ret_scn == lizard::SCN_NULL) {
+    if (ret_scn == SCN_NULL) {
       ut_ad(!is_thread_active());
       ut_ad(m_num_gtid_mem.load() == 0);
     } else if (m_num_gtid_mem.load() == 0) {
@@ -128,7 +128,7 @@ class Clone_persist_gtid {
       progress" is sufficient but not necessary condition here. This is mainly
       for cases when there is no GTID and purge doesn't need to wait. */
       if (!m_flush_in_progress.load()) {
-        ret_scn = lizard::SCN_NULL;
+        ret_scn = SCN_NULL;
       }
     }
     return (ret_scn);
@@ -143,7 +143,7 @@ class Clone_persist_gtid {
     /* Zero is special value. It is from old database without GTID
     persistence. */
     if (max_trx_scn == 0) {
-      max_trx_scn = lizard::SCN_NULL;
+      max_trx_scn = SCN_NULL;
     }
     m_gtid_trx_scn.store(max_trx_scn);
   }

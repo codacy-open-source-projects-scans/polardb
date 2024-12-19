@@ -3,10 +3,10 @@ Warnings:
 Note	####	Sending passwords in plain text without SSL/TLS is extremely insecure.
 Note	####	Storing MySQL user name or password information in the master info repository is not secure and is therefore not recommended. Please consider using the USER and PASSWORD connection options for START SLAVE; see the 'START SLAVE Syntax' in the MySQL Manual for more information.
 [connection master]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET @old_replica_parallel_workers= @@global.replica_parallel_workers;
 SET GLOBAL replica_parallel_workers= 4;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 select THREAD_ID
 into @worker_thread_id
 from performance_schema.replication_applier_status_by_worker
@@ -15,7 +15,6 @@ limit 1;
 select NAME from performance_schema.threads
 where THREAD_ID = @worker_thread_id;
 NAME
-thread/sql/replica_worker
 
 ## Create index_test() procedure
 DROP PROCEDURE IF EXISTS index_test;
@@ -53,7 +52,7 @@ SELECT CHANNEL_NAME, WORKER_ID, THREAD_ID FROM performance_schema.replication_ap
 
 OK: Handler_read_key
 
-OK: Result set: Empty  Expected: Empty
+OK: Result set: Non-empty  Expected: Non-empty
 
 OK: Extra rows: 0  Missing rows: 0
 ========
@@ -122,7 +121,7 @@ SELECT CHANNEL_NAME, WORKER_ID, THREAD_ID FROM performance_schema.replication_ap
 
 OK: Handler_read_key
 
-OK: Result set: Empty  Expected: Empty
+OK: Result set: Non-empty  Expected: Non-empty
 
 OK: Extra rows: 0  Missing rows: 0
 ========
@@ -138,7 +137,7 @@ SELECT CHANNEL_NAME, WORKER_ID, THREAD_ID FROM performance_schema.replication_ap
 
 OK: Handler_read_key
 
-OK: Result set: Non-empty  Expected: Non-empty
+OK: Result set: Empty  Expected: Empty
 
 OK: Extra rows: 0  Missing rows: 0
 ========
@@ -146,7 +145,7 @@ SELECT CHANNEL_NAME, WORKER_ID, THREAD_ID FROM performance_schema.replication_ap
 
 OK: Handler_read_key
 
-OK: Result set: Non-empty  Expected: Non-empty
+OK: Result set: Empty  Expected: Empty
 
 OK: Extra rows: 0  Missing rows: 0
 ========
@@ -154,7 +153,7 @@ SELECT CHANNEL_NAME, WORKER_ID, THREAD_ID FROM performance_schema.replication_ap
 
 OK: Handler_read_key
 
-OK: Result set: Non-empty  Expected: Non-empty
+OK: Result set: Empty  Expected: Empty
 
 OK: Extra rows: 0  Missing rows: 0
 ========
@@ -170,7 +169,7 @@ OK: Extra rows: 0  Missing rows: 0
 DROP PROCEDURE index_test;
 DROP TABLE IF EXISTS test.indexes_off;
 DROP TABLE IF EXISTS test.indexes_on;
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_parallel_workers= @old_replica_parallel_workers;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 include/rpl_end.inc

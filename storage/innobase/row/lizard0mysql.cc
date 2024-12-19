@@ -16,7 +16,7 @@ THD *thd_get_current_thd();
 namespace lizard {
 
 /** Whether to enable use as of query (true by default) */
-bool srv_force_normal_query_if_fbq = true;
+bool srv_flashback_query_enable = true;
 
 static utc_t utc_distance(utc_t x, utc_t y) { return x > y ? x - y : y - x; }
 
@@ -72,7 +72,7 @@ static scn_t convert_timestamp_to_scn_low(utc_t user_utc, dberr_t *err) {
 int convert_timestamp_to_scn(THD *thd, utc_t utc, scn_t *scn) {
   dberr_t err;
 
-  if (!srv_force_normal_query_if_fbq) {
+  if (!srv_flashback_query_enable) {
     *scn = SCN_MAX;
     return 0;
   }
@@ -80,6 +80,24 @@ int convert_timestamp_to_scn(THD *thd, utc_t utc, scn_t *scn) {
   *scn = convert_timestamp_to_scn_low(utc, &err);
 
   return convert_error_code_to_mysql(err, 0, thd);
+}
+
+/**
+  Get Snapshot_vison from prebuilt
+
+  @param[in]        prebuilt    row_prebuilt_t
+
+  @return           snapshot_vision if has,
+                    nullptr if hasn't
+*/
+const lizard::Snapshot_vision *row_prebuilt_get_snapshot_vision(
+    const row_prebuilt_t *prebuilt) {
+  TABLE *mysql_table;
+  mysql_table = prebuilt->m_mysql_table;
+  /* If it's not a flash back query, just return */
+  if (!mysql_table || !mysql_table->table_snapshot.is_vision()) return nullptr;
+
+  return mysql_table->table_snapshot.vision();
 }
 
 /**
@@ -92,75 +110,28 @@ int convert_timestamp_to_scn(THD *thd, utc_t utc, scn_t *scn) {
                                 ERROR: DB_AS_OF_INTERNAL,
   DB_SNAPSHOT_OUT_OF_RANGE, DB_AS_OF_TABLE_DEF_CHANGED, DB_SNAPSHOT_TOO_OLD
 */
-dberr_t prebuilt_bind_flashback_query(row_prebuilt_t *prebuilt) {
-  TABLE *table;
-  // trx_t *trx;
-  // bool err = false;
-  dict_index_t *clust_index;
-  Snapshot_vision *snapshot_vision = nullptr;
+dberr_t row_prebuilt_bind_flashback_query(row_prebuilt_t *prebuilt) {
+  const Snapshot_vision *snapshot_vision = nullptr;
   ut_ad(prebuilt);
 
-  table = prebuilt->m_mysql_table;
-  // trx = prebuilt->trx;
-
   /* forbid as-of query */
-  if (!srv_force_normal_query_if_fbq) return DB_SUCCESS;
+  if (!srv_flashback_query_enable) return DB_SUCCESS;
 
   /* scn query context should never set twice */
   if (prebuilt->m_asof_query.is_assigned()) return DB_SUCCESS;
 
-    //  if (trx) {
-    //    /* Change gcn on vision to current snapshot gcn. */
-    //    gcn_t gcn = thd_get_snapshot_gcn(trx->mysql_thd);
-    //    if (gcn != GCN_NULL) trx->vision.set_asof_gcn(gcn);
-    /* Set gcn on m_asof_query if exist. */
-    //    if (trx->vision.is_asof_gcn()) {
-    //      prebuilt->m_asof_query.set(SCN_NULL, trx->vision.get_asof_gcn());
-    //      return DB_SUCCESS;
-    //    }
-    //  }
-
-#if defined TURN_MVCC_SEARCH_TO_AS_OF
-
-  if (!table || !table->table_snapshot.is_vision()) {
-    ut_ad(prebuilt->trx->vision.is_active());
-
-    /* temporary table is not allowed using as-of query */
-    if (prebuilt->index->table->is_temporary()) return DB_SUCCESS;
-
-    prebuilt->trx->vision.set_as_of_scn(prebuilt->trx->vision.snapshot_scn());
-
+  /* If it's not a flash back query, just return */
+  if ((snapshot_vision = row_prebuilt_get_snapshot_vision(prebuilt)) == nullptr) {
     return DB_SUCCESS;
   }
-#endif
 
-  /* If it's not a flash back query, just return */
-  if (!table || !table->table_snapshot.is_vision()) return DB_SUCCESS;
-
-  snapshot_vision = table->table_snapshot.vision();
-
-  DBUG_EXECUTE_IF("simulate_gcn_def_changed_error", { goto simulate_error; });
+  if (snapshot_vision->get_flashback_area()) {
+    ut_ad(prebuilt->table->is_2pp);
+    lizard_stats.flashback_area_query_cnt.inc();
+  }
 
   if (snapshot_vision->too_old()) {
     return DB_SNAPSHOT_TOO_OLD;
-  }
-
-#ifdef UNIV_DEBUG
-simulate_error:
-#endif
-
-  /* Check if it's a temporary table */
-  if (prebuilt->index && prebuilt->index->table &&
-      prebuilt->index->table->is_temporary()) {
-    /** Something wrong must happen. */
-    return DB_AS_OF_INTERNAL;
-  }
-
-  /** Check if there is a DDL before the moment of as-of query. Only check
-  clustered index */
-  clust_index = prebuilt->index->table->first_index();
-  if (!clust_index->is_usable_as_of(prebuilt->trx, snapshot_vision)) {
-    return DB_AS_OF_TABLE_DEF_CHANGED;
   }
 
   /* set as as-of query */
@@ -176,7 +147,7 @@ simulate_error:
 
   @return           dberr_t     DB_SUCCESS, or DB_SNAPSHOT_OUT_OF_RANGE.
 */
-dberr_t prebuilt_unbind_flashback_query(row_prebuilt_t *prebuilt) {
+dberr_t row_prebuilt_unbind_flashback_query(row_prebuilt_t *prebuilt) {
   dberr_t err = DB_SUCCESS;
 
   if (prebuilt->m_asof_query.too_old()) {

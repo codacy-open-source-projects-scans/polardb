@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2022, Oracle and/or its affiliates.
+Copyright (c) 1996, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -296,5 +296,7 @@ inline bool trx_undo_t::is_prepared() const {
   return state == TRX_UNDO_PREPARED_80028 || state == TRX_UNDO_PREPARED ||
          state == TRX_UNDO_PREPARED_IN_TC;
 }
+
+inline bool trx_undo_t::is_2pp() const { return flag & TRX_UNDO_FLAG_2PP; }
 
 #endif /* !UNIV_HOTBACKUP */

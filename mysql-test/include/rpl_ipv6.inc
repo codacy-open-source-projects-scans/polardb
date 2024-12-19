@@ -9,9 +9,9 @@ source include/show_master_status.inc;
 save_master_pos;
 --echo connection slave;
 connection slave;
-reset slave;
-eval CHANGE REPLICATION SOURCE TO SOURCE_HOST='$IPv6';
-let $master_host= query_get_value(SHOW REPLICA STATUS, Source_Host, 1);
+reset slave for channel 'test';
+eval CHANGE REPLICATION SOURCE TO SOURCE_HOST='$IPv6' for channel "test";
+let $master_host= query_get_value(SHOW REPLICA STATUS for channel 'test', Source_Host, 1);
 --echo Master-Host: $master_host
 --echo disconnect slave;
 disconnect slave;

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2022, Oracle and/or its affiliates.
+Copyright (c) 1994, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -524,6 +524,9 @@ byte *btr_cur_parse_del_mark_set_sec_rec(
     byte *end_ptr,             /*!< in: buffer end */
     page_t *page,              /*!< in/out: page or NULL */
     page_zip_des_t *page_zip); /*!< in/out: compressed page, or NULL */
+
+                                              
+
 #ifndef UNIV_HOTBACKUP
 
 /** Estimates the number of rows in a given index range.

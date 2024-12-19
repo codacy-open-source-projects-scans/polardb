@@ -45,6 +45,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ut0dbg.h"
 
 #include "sql/binlog/binlog_xa_specification.h"
+#include "sql/lizard/lizard_service.h"
 
 #include <atomic>
 #include <queue>
@@ -104,17 +105,55 @@ struct SYS_VAR;
 #define TXN_UNDO_PREV_GCN (TXN_UNDO_PREV_UTC + 8)
 /* Undo log state */
 #define TXN_UNDO_LOG_STATE (TXN_UNDO_PREV_GCN + 8)
+/*--------------------------------------------------------*/
+/* Transaction Slot extention storage format (XES)
+ *
+ * Name               Bytes
+ * -------------      -----
+ * Storage Format     1 (Bits: [TAG | AC_PMMT | AC_CMMT.....])
+ * Tag                2 (Bits: [ROLLBACK | CSR_ASSIGNED.....])
+ * AC                 ...
+ *   PROPOSAL_GCN     8
+ *   BRANCH           2
+ *   LOCAL BRANCH     2
+ *   MASTER TRX ID    8
+ * UNUSED             12
+ * */
+/*--------------------------------------------------------*/
 /* Flag how to use reserved space */
 #define TXN_UNDO_LOG_EXT_STORAGE (TXN_UNDO_LOG_STATE + 2)
-/* New flags. */
-#define TXN_UNDO_LOG_TAGS_1 (TXN_UNDO_LOG_EXT_STORAGE + 1)
+
+/*--------------------------------------------------------*/
+// TXN Extention Storage (Tags)
+/*--------------------------------------------------------*/
+/*--------------------------------------------------------*/
+/* New tags. */
+#define TXN_UNDO_LOG_XES_TAGS (TXN_UNDO_LOG_EXT_STORAGE + 1)
+/*--------------------------------------------------------*/
+
+/*--------------------------------------------------------*/
+// TXN Extention Storage (Async Commit)
+/*--------------------------------------------------------*/
+/* Proposal GCN. */
+#define TXN_UNDO_LOG_XES_AC_PROPOSAL_GCN (TXN_UNDO_LOG_XES_TAGS + 2)
+/* The count of a global transaction branchs */
+#define TXN_UNDO_LOG_XES_AC_N_GLOBALS (TXN_UNDO_LOG_XES_AC_PROPOSAL_GCN + 8)
+/* The count of a global transaction branchs in a node. */
+#define TXN_UNDO_LOG_XES_AC_N_LOCALS (TXN_UNDO_LOG_XES_AC_N_GLOBALS + 2)
+/* Master branch trx_id.*/
+#define TXN_UNDO_LOG_XES_AC_MASTER_TID (TXN_UNDO_LOG_XES_AC_N_LOCALS + 2)
+/** Master branch UBA. Reused TRX_UNDO_SLOT, and it can only be represented when
+master_trx_id is not empty.*/
+#define TXN_UNDO_LOG_XES_AC_MASTER_SLOT_PTR TRX_UNDO_SLOT
+/*--------------------------------------------------------*/
+
 /* Unused space */
-#define TXN_UNDO_LOG_EXT_RESERVED (TXN_UNDO_LOG_TAGS_1 + 2)
+#define TXN_UNDO_LOG_XES_RESERVED (TXN_UNDO_LOG_XES_AC_MASTER_TID + 8)
 /* Unused space size */
-#define TXN_UNDO_LOG_EXT_RESERVED_LEN 32
+#define TXN_UNDO_LOG_XES_RESERVED_LEN 12
 /* txn undo log header size */
 #define TXN_UNDO_LOG_EXT_HDR_SIZE \
-  (TXN_UNDO_LOG_EXT_RESERVED + TXN_UNDO_LOG_EXT_RESERVED_LEN)
+  (TXN_UNDO_LOG_XES_RESERVED + TXN_UNDO_LOG_XES_RESERVED_LEN)
 /*-------------------------------------------------------------*/
 static_assert(TXN_UNDO_LOG_EXT_HDR_SIZE == TRX_UNDO_LOG_GTID_HDR_SIZE,
               "txn and trx undo log header size must be equal!");
@@ -130,22 +169,40 @@ static_assert(TXN_UNDO_LOG_EXT_HDR_SIZE == 275,
 #define TXN_UNDO_LOG_COMMITED 2
 #define TXN_UNDO_LOG_PURGED 3
 
+/* 2PC Purge done state */
+#define TXN_UNDO_LOG_ERASED 4
+
 /*****************************************
  *        TXN_UNDO_LOG_EXT_STORAGE           *
  *****************************************/
 /** Empty TXN_UNDO_LOG_EXT_STORAGE */
-#define TXN_EXT_STORAGE_NONE 0x00
-/** bit_0: TXN have TXN_UNDO_LOG_TAGS_1. */
-#define TXN_EXT_FLAG_HAVE_TAGS_1 0x01
+#define XES_ALLOCATED_NONE 0x00
+
+/** bit_0: TXN have TXN_UNDO_LOG_XES_TAGS. */
+#define XES_ALLOCATED_TAGS 0x01
+/** bit_1: Prepare info of async commit transaction. */
+#define XES_ALLOCATED_AC_PREPARE 0x02
+/** bit_2: Commit info of async commit transaction. */
+#define XES_ALLOCATED_AC_COMMIT 0x04
+
 /** Initial value of TXN_UNDO_LOG_EXT_STORAGE. */
-#define TXN_EXT_STORAGE_V1 TXN_EXT_FLAG_HAVE_TAGS_1
+#define XES_ALLOCATED_V1 XES_ALLOCATED_TAGS
 
 /******************************************
- *           TXN_UNDO_LOG_TAGS_1       *
+ *           TXN_UNDO_LOG_XES_TAGS       *
  ******************************************/
 /** bit_0: Finish state of the transaction (true: ROLLBACK,
 false: other state). */
-#define TXN_NEW_TAGS_1_ROLLBACK 0x01
+#define XES_TAGS_ROLLBACK 0x01
+/**
+  bit_1: true if it's a ASSIGNED GCN, false it's a AUTOMATIC GCN. This bit is
+  only meaningful when doing async commit, and the state is prepare.
+
+  NOTE:
+  1. The commit gcn CSR is in the utc field of cmmt mark.
+  2. However, the proposal gcn CSR is in the txn_tags_1.
+*/
+#define XES_TAGS_AC_ASSIGNED 0x02
 
 namespace lizard {
 
@@ -165,9 +222,6 @@ extern ulong txn_retention_time;
   ((TXN_UNDO_PAGE_REUSE_LIMIT * 100) / UNIV_PAGE_SIZE)
 
 /**------------------------------------------------------------------------*/
-/** NULL value of slot ptr  */
-constexpr undo_ptr_t UNDO_PTR_NULL = std::numeric_limits<undo_ptr_t>::min();
-
 /** SLOT OFFSET:: Temporary table record */
 constexpr ulint SLOT_OFFSET_TEMP_TAB_REC = (ulint)0xFFFF;
 
@@ -349,6 +403,9 @@ bool trx_undo_page_validate(const page_t *page);
 /** Confirm the consistent of scn, undo type, undo state. */
 bool undo_commit_mark_validate(const trx_undo_t *undo);
 
+/** Confirm the consistent of proposal mark. */
+bool undo_proposal_mark_validate(const trx_undo_t *undo);
+
 bool trx_undo_hdr_slot_validate(const trx_ulogf_t *log_hdr, mtr_t *mtr);
 
 /** Check if an update undo log has been marked as purged.
@@ -454,12 +511,12 @@ extern void trx_undo_hdr_add_space_for_txn(page_t *undo_page,
   @param[in]      log_hdr           undo log hdr
   @param[in]      prev_image        prev scn/utc if the undo log header is
   reused
-  @param[in]      txn_ext_storage   txn extension storage flag
+  @param[in]      xes_storage   txn extension storage flag
   @param[in]      mtr               mini transaction
 */
 void trx_undo_hdr_txn_ext_init(page_t *undo_page, trx_ulogf_t *log_hdr,
                                const commit_mark_t &prev_image,
-                               uint8 txn_ext_storage, mtr_t *mtr);
+                               uint8 xes_storage, mtr_t *mtr);
 
 /**
   Add space for txn extension and initialize the fields.
@@ -467,13 +524,13 @@ void trx_undo_hdr_txn_ext_init(page_t *undo_page, trx_ulogf_t *log_hdr,
   @param[in]      undo_page         undo log header page
   @param[in]      mtr               mini transaction
   @param[in]      offset            txn header byte offset on page
-  @param[in]      txn_ext_storage   txn extension storage flag
+  @param[in]      xes_storage   txn extension storage flag
   @param[out]     slot_addr         slot address of created txn
   @param[out]     prev_image        prev scn/utc
 */
 void trx_undo_header_add_space_for_txn(trx_rseg_t *rseg, page_t *undo_page,
                                        mtr_t *mtr, ulint offset,
-                                       uint8 txn_ext_storage,
+                                       uint8 xes_storage,
                                        slot_addr_t *slot_addr,
                                        commit_mark_t *prev_image);
 /**
@@ -484,9 +541,9 @@ void trx_undo_header_add_space_for_txn(trx_rseg_t *rseg, page_t *undo_page,
   @param[in]      mtr
   @param[out]     txn_undo_ext
 */
-void trx_undo_hdr_read_txn(const page_t *undo_page,
-                           const trx_ulogf_t *undo_header, mtr_t *mtr,
-                           txn_undo_hdr_t *txn_undo_hdr);
+void trx_undo_hdr_read_txn_slot(const page_t *undo_page,
+                                const trx_ulogf_t *undo_header, mtr_t *mtr,
+                                txn_slot_t *txn_slot);
 /**
   Read the scn, utc, gcn from prev image.
 
@@ -598,11 +655,14 @@ void undo_encode_slot_addr(const slot_addr_t &slot_addr, slot_ptr_t *slot_ptr);
   Whether the txn rollback segment has been assigned
   @param[in]      trx
 */
-bool trx_is_txn_rseg_assigned(trx_t *trx);
+bool trx_is_txn_rseg_assigned(const trx_t *trx);
 /**
   Whether the txn undo log has modified.
 */
 bool trx_is_txn_rseg_updated(const trx_t *trx);
+
+/** Get txn undo if allocated. */
+trx_undo_t *txn_undo_get(const trx_t *trx);
 /**
   Always assign transaction rollback segment for trx
   @param[in]      trx
@@ -631,10 +691,11 @@ bool txn_check_xid_rseg_mapping(const XID *xid, const trx_rseg_t *expect_rseg);
  *
  * @param[in]	trx
  * @param[out]	Slot address
+ * @param[out]	trx id
  *
  * @retval	innodb error code.
  **/
-dberr_t trx_assign_txn_undo(trx_t *trx, slot_ptr_t *slot_ptr);
+dberr_t trx_assign_txn_undo(trx_t *trx, slot_ptr_t *slot_ptr, trx_id_t *trx_id);
 
 /*-----------------------------------------------------------------------------*/
 /**
@@ -729,43 +790,49 @@ void txn_purge_segment_to_free_list(trx_rseg_t *rseg, fil_addr_t hdr_addr,
 
   @return         bool       true if the record should be cleaned out.
 */
-bool txn_undo_hdr_lookup_low(txn_rec_t *txn_rec, txn_lookup_t *txn_lookup,
-                             mtr_t *txn_mtr);
+std::pair<bool, txn_status_t> txn_slot_lookup_low(txn_rec_t *txn_rec,
+                                                  txn_lookup_t *txn_lookup,
+                                                  mtr_t *txn_mtr);
 
 /**
-  set txn_undo_hdr_t
+  set txn_slot_t
 
   @param[in/out]  txn_rec    txn info of the records.
 
   @return         bool       true if the record should be cleaned out.
 */
 inline void txn_lookup_t_set(txn_lookup_t *txn_lookup,
-                             const txn_undo_hdr_t &txn_undo_hdr,
+                             const txn_slot_t &txn_slot,
                              const commit_mark_t &real_image,
-                             const txn_state_t &real_state) {
+                             const txn_status_t &real_status) {
   if (txn_lookup == nullptr) return;
 
-  txn_lookup->txn_undo_hdr = txn_undo_hdr;
+  txn_lookup->txn_slot = txn_slot;
   txn_lookup->real_image = real_image;
-  txn_lookup->real_state = real_state;
+  txn_lookup->real_status = real_status;
 #if defined UNIV_DEBUG || defined LIZARD_DEBUG
-  if (real_state == TXN_STATE_ACTIVE || real_state == TXN_STATE_COMMITTED ||
-      real_state == TXN_STATE_PURGED) {
-    if (real_state != TXN_STATE_ACTIVE) {
+  if (real_status == txn_status_t::ACTIVE ||
+      real_status == txn_status_t::COMMITTED ||
+      real_status == txn_status_t::PURGED ||
+      real_status == txn_status_t::ERASED) {
+    if (real_status != txn_status_t::ACTIVE) {
       /** TXN reuse, current scn should be larger than prev scn */
-      ut_a(txn_undo_hdr.image.scn > txn_undo_hdr.prev_image.scn);
+      ut_a(txn_slot.image.scn > txn_slot.prev_image.scn);
     }
-    ut_a(real_image == txn_undo_hdr.image);
-  } else if (real_state == TXN_STATE_REUSE) {
-    ut_a(real_image == txn_undo_hdr.prev_image);
+    ut_a(real_image == txn_slot.image);
+  } else if (real_status == txn_status_t::REUSE) {
+    ut_a(real_image == txn_slot.prev_image);
   }
 #endif /* UNIV_DEBUG || LIZARD_DEBUG */
 }
 
 inline bool txn_rec_lock_state_by_lookup(txn_rec_t *txn_rec,
                                          txn_lookup_t *txn_lookup, mtr_t *mtr) {
+  bool active = false;
   ut_ad(txn_lookup && mtr);
-  return txn_undo_hdr_lookup_low(txn_rec, txn_lookup, mtr);
+
+  std::tie(active, std::ignore) = txn_slot_lookup_low(txn_rec, txn_lookup, mtr);
+  return active;
 }
 
 /**
@@ -775,16 +842,63 @@ inline bool txn_rec_lock_state_by_lookup(txn_rec_t *txn_rec,
 
   Return the cleanout flag to decide yourself.
 
-  @param[in/out]	txn record
-  @param[in/out]	cleanout is needed?
+  @param[in/out]  txn record
+  @param[in/out]  txn state
+  @param[in/out]  cleanout is needed?
 
-  @retval	true		active
-                false		committed
+  @retval true    active
+          false   committed
+*/
+inline bool txn_rec_real_state_by_lookup(txn_rec_t *txn_rec,
+                                         txn_status_t *txn_status,
+                                         bool *cleanout) {
+  bool active = false;
+  bool cache_hit = false;
+  txn_lookup_t txn_lookup;
+
+  /** Unknown the real state */
+  ut_ad(undo_ptr_is_active(txn_rec->undo_ptr));
+  ut_ad(txn_rec && txn_status);
+
+  /** Pcur is nullptr, didn't support block level tcn cache. */
+  cache_hit = trx_search_tcn(txn_rec, txn_status);
+  if (cache_hit) {
+    ut_ad(!undo_ptr_is_active(txn_rec->undo_ptr));
+    lizard_ut_ad(txn_rec->scn > 0 && txn_rec->scn <= SCN_MAX);
+    lizard_ut_ad(txn_rec->gcn > 0 && txn_rec->gcn <= GCN_MAX);
+    if (cleanout) *cleanout = true;
+    return false;
+  }
+
+  /** Record is still active, lookup txn hdr to confirm it. */
+  std::tie(active, *txn_status) =
+      txn_slot_lookup_low(txn_rec, &txn_lookup, nullptr);
+  if (active) {
+    return active;
+  } else {
+    /** cleanout when trx real state has committed. */
+    if (cleanout) *cleanout = true;
+    return false;
+  }
+}
+
+/**
+  Decide the real trx state.
+    1) Search tcn cache
+    2) Lookup txn undo
+
+  Return the cleanout flag to decide yourself.
+
+  @param[in/out]  txn record
+  @param[in/out]  cleanout is needed?
+
+  @retval true    active
+          false   committed
 */
 inline bool txn_rec_real_state_by_misc(txn_rec_t *txn_rec,
                                        bool *cleanout = nullptr) {
-  bool active = false;
-  bool cache_hit = false;
+  txn_status_t txn_status = txn_status_t::ACTIVE;
+
   /** If record is not active, the trx must be committed. */
   if (!undo_ptr_is_active(txn_rec->undo_ptr)) {
     lizard_ut_ad(txn_rec->scn > 0 && txn_rec->scn <= SCN_MAX);
@@ -795,25 +909,7 @@ inline bool txn_rec_real_state_by_misc(txn_rec_t *txn_rec,
     return false;
   }
 
-  /** Pcur is nullptr, didn't support block level tcn cache. */
-  cache_hit = trx_search_tcn(txn_rec, nullptr, nullptr);
-  if (cache_hit) {
-    ut_ad(!undo_ptr_is_active(txn_rec->undo_ptr));
-    lizard_ut_ad(txn_rec->scn > 0 && txn_rec->scn <= SCN_MAX);
-    lizard_ut_ad(txn_rec->gcn > 0 && txn_rec->gcn <= GCN_MAX);
-    if (cleanout) *cleanout = true;
-    return false;
-  }
-
-  /** Record is still active, lookup txn hdr to confirm it. */
-  active = txn_undo_hdr_lookup_low(txn_rec, nullptr, nullptr);
-  if (active) {
-    return active;
-  } else {
-    /** cleanout when trx real state has committed. */
-    if (cleanout) *cleanout = true;
-    return false;
-  }
+  return txn_rec_real_state_by_lookup(txn_rec, &txn_status, cleanout);
 }
 
 /**
@@ -835,9 +931,27 @@ extern bool txn_rec_cleanout_state_by_misc(txn_rec_t *txn_rec, btr_pcur_t *pcur,
                                            const dict_index_t *index,
                                            const ulint *offsets);
 
-inline bool txn_lookup_rollptr_is_valid(const txn_lookup_t *txn_lookup) {
-  return (txn_lookup->real_state < txn_state_t::TXN_STATE_PURGED);
+inline bool txn_lookup_rollptr_is_valid(const txn_lookup_t *txn_lookup,
+                                        bool flashback_area) {
+  if (flashback_area && txn_lookup->txn_slot.is_2pp) {
+    return (txn_lookup->real_status < txn_status_t::ERASED);
+  } else {
+    return (txn_lookup->real_status < txn_status_t::PURGED);
+  }
 }
+  /**
+    Lookup the referenced transaction state.
+    1) Lookup the TXN of **txn_rec**, so get the master_uba, master_trx_id
+    2) Search the real trx state of the master transaction.
+
+    @param[in/out]  txn record
+    @param[out]     referenced (master) transaction txn record.
+
+    @retval true    active
+            false   committed
+  */
+extern bool txn_rec_get_master_by_lookup(txn_rec_t *txn_rec,
+                                         txn_rec_t *ref_txn_rec);
 
 /** Collect rsegs into the purge heap for the first time */
 bool trx_collect_rsegs_for_purge(TxnUndoRsegs *elem,
@@ -873,6 +987,8 @@ inline void txn_undo_set_state(trx_ulogf_t *log_hdr, ulint state, mtr_t *mtr) {
   else if (state == TXN_UNDO_LOG_PURGED)
     ut_a(old_state == TXN_UNDO_LOG_COMMITED || /* Normal case */
          old_state == TXN_UNDO_LOG_PURGED);    /* Crash recovery */
+  else if (state == TXN_UNDO_LOG_ERASED)
+    ut_a(old_state == TXN_UNDO_LOG_PURGED);
   else
     ut_a(state == TXN_UNDO_LOG_ACTIVE);
 #endif
@@ -887,9 +1003,8 @@ inline void txn_undo_set_state(trx_ulogf_t *log_hdr, ulint state, mtr_t *mtr) {
             or err if it's not TXN undo */
 inline std::pair<commit_mark_t, bool> txn_undo_set_state_at_purge(
     const trx_rseg_t *rseg, const page_size_t &page_size) {
-  commit_mark_t cmmt = COMMIT_MARK_NULL;
-
-  if (fsp_is_txn_tablespace_by_id(rseg->space_id)) {
+  commit_mark_t cmmt;
+  if (rseg->is_txn) {
     mtr_t mtr;
     mtr_start(&mtr);
 
@@ -921,6 +1036,19 @@ inline void txn_undo_set_state_at_init(trx_ulogf_t *log_hdr, mtr_t *mtr) {
   txn_undo_set_state(log_hdr, TXN_UNDO_LOG_ACTIVE, mtr);
 }
 
+/**
+  Set TXN_UNDO_LOG_STATE as TXN_UNDO_LOG_ERASED when erase. NOTES:
+  1. Can not hold any other undo page latch because no rsegs mutex is held.
+  2. Did not hold rseg mutext because only a TXN undo page is modified.
+
+  @params[in]   txn_cursor        TXN cursor
+  @params[in]   scn               the corresponding scn
+  @params[in]   page_size         TXN undo page size.
+*/
+extern void txn_undo_set_state_at_erase(const txn_cursor_t &txn_cursor,
+                                        scn_t scn,
+                                        const page_size_t &page_size);
+
 /*
   Undo retention controller.
 */
@@ -947,16 +1075,11 @@ class Undo_retention {
  protected:
   volatile bool m_stat_done;
 
-  volatile ulint m_last_top_utc;  // to output status
-
   std::atomic<ulint> m_total_used_size;
   std::atomic<ulint> m_total_file_size;
 
   Undo_retention()
-      : m_stat_done(false),
-        m_last_top_utc(0),
-        m_total_used_size(0),
-        m_total_file_size(0) {}
+      : m_stat_done(false), m_total_used_size(0), m_total_file_size(0) {}
 
   Undo_retention &operator=(const Undo_retention &) = delete;
   Undo_retention(const Undo_retention &) = delete;
@@ -983,15 +1106,13 @@ class Undo_retention {
   undo tablespace size and retention configuration.
 
   @return     true     if blocking purge */
-  bool purge_advise();
+  bool purge_advise(ulint us);
 
   /* Create the lizard undo retention mutex. */
   inline void init_mutex() { mutex_create(LATCH_ID_UNDO_RETENTION, &m_mutex); }
 
   /* Free the lizard undo retention mutex. */
   static inline void destroy() { mutex_free(&(instance()->m_mutex)); }
-
-  void get_stat_data(ulint *used_size, ulint *file_size, ulint *retained_time);
 };
 
 /* Init undo_retention */
@@ -1032,12 +1153,25 @@ class XA_specification_strategy {
    * @retval  true
    * @retval  false
    */
-  bool has_gcn() const;
+  bool has_commit_gcn() const;
 
   /**
-   * Overwrite commit gcn in trx when commit detached XA
+   * Overwrite commit info in trx when commit detached XA
    */
-  void overwrite_gcn(trx_t *trx) const;
+  void overwrite_xa_when_commit(trx_t *trx) const;
+
+  /**
+   * Judge if has proposal gcn when set prepare in TC for detached XA
+   *
+   * @retval  true if has
+   * @retval  false
+   */
+  bool has_proposal_gcn() const;
+
+  /**
+   * Overwrite prepafe info in trx when prepare in TC for detached XA
+   */
+  void overwrite_xa_when_prepare(trx_t *trx) const;
 
  private:
   const trx_t *m_trx;
@@ -1067,12 +1201,12 @@ trx_rseg_t *get_txn_rseg_by_xid(const XID *xid);
 
   @param[in]  rseg         The rollseg where the transaction is being looked up.
   @params[in] xid          xid
-  @param[out] txn_undo_hdr Corresponding txn undo header
+  @param[out] txn_slot     Corresponding txn undo header
 
   @retval     true if the corresponding transaction is found, false otherwise.
 */
 bool txn_rseg_find_trx_info_by_xid(trx_rseg_t *rseg, const XID *xid,
-                                   txn_undo_hdr_t *txn_undo_hdr);
+                                   txn_slot_t *txn_slot);
 
 /**
   Only write XID on the TXN.
@@ -1099,6 +1233,113 @@ void trx_undo_mem_init_for_txn(trx_rseg_t *rseg, trx_undo_t *undo,
                                page_t *undo_page,
                                const trx_ulogf_t *undo_header, ulint type,
                                uint32_t flag, ulint state, mtr_t *mtr);
+
+/** When report update undo, set 2pp flag if need.
+ *
+ * @param[in]		index	clust index
+ * @param[in]		trx	transaction context
+ * @param[in/out]	undo	update undo
+ * @param[in/out]	mtr
+ * @param[in/out]	is_2pp */
+void trx_undo_set_2pp_at_report(const dict_index_t *index, trx_t *trx,
+                                      trx_undo_t *update_undo,
+                                      bool is_2pp);
+
+/**
+  Reads the two-phase commit purge flag in the transaction undo log header
+  @param[in]  undo_header     Pointer to the undo log header
+  @param[in]  mtr             Mini-transaction
+  @return     True if the 2PP flag is set, false otherwise
+*/
+bool trx_undo_log_is_2pp(const trx_ulogf_t *log_hdr, mtr_t *mtr);
+
+/**
+  Check if is two-phase purge flag in the undo log segment tailer.
+  @param[in]    undo log header page.
+  @param[in]    page size
+  @param[in]    mini transaction
+*/
+bool trx_useg_is_2pp(const page_t *undo_page,
+                           const page_size_t &page_size, mtr_t *mtr);
+
+/**
+ * Allocate semi-page list when allocate new txn/update undo log segemnt.
+ *
+ * @param[in/out]	txn undo page
+ * @param[in]		page size
+ * @param[in/out]	mtr */
+void trx_useg_allocate(page_t *undo_page, const page_size_t &page_size,
+                       mtr_t *mtr);
+
+/** Verify the trx useg. */
+bool trx_useg_verify(page_t *undo_page, const page_size_t &page_size,
+                     mtr_t *mtr);
+
+/**
+  Get newest log header in last (oldest) log segment from free list .
+  @params[in]   rseg            update undo rollback segment
+  @params[out]  log header address of last log
+
+  @retval	commit mark of last log header
+*/
+extern commit_mark_t txn_free_get_last_log(trx_rseg_t *rseg, fil_addr_t &addr,
+                                           mtr_t *mtr, rseg_stat_t *stat);
+
+/**
+  Get newest log header in last (oldest) log segment from free list .
+  @params[in]   rseg            update undo rollback segment
+  @params[out]  log header address of last log
+
+  @retval	commit mark of last log header
+*/
+commit_mark_t txn_free_get_last_log(trx_rseg_t *rseg, fil_addr_t &addr,
+                                    rseg_stat_t *stat = nullptr);
+
+/**
+  Check if the TXN is purged or erased. The latch of the TXN page will be held
+  if precheck failed.
+
+  @param[in/out]  txn_rec         txn_info of record
+  @param[in]      flashback_area  true if it's a flashback area query
+  @param[in]      txn_mtr         txn mtr
+
+  @retval         true if txn has been purged (non flashback area) or
+                  erased (flashback area)
+*/
+extern bool txn_undo_is_missing_history(txn_rec_t *txn_rec, bool flashback_area,
+                                        mtr_t *txn_mtr);
+
+/** Calculate rsegment status of undo tablespace.
+ *
+ * @param[in/out]	status array.
+ * */
+void trx_trunc_status(std::vector<trunc_status_t> &array);
+
+void trx_purge_status(purge_status_t &status);
+
+/**
+  Check if the txn retention time has been satisfied.
+  If the retention time has been satisfied, the txn undo has been retained for
+  the required period as defined by txn_retention_time.
+
+  @param[in]  utc        utc on txn to be checked
+
+  @retval     true if the txn retention satisfied
+*/
+extern bool txn_retention_satisfied(utc_t utc);
+
+/**********************************************************************************/
+//	Purge/Erase Status
+/**********************************************************************************/
+/**
+ * prepare_in_tc is treated as first phase commit within 2PC, so we should
+ * mark our transaction system like trx_commit_mark, but only proposal xa
+ * transaction will really do something.
+ * */
+extern proposal_mark_t trx_prepare_mark(trx_t *trx, trx_undo_t *undo,
+                                        trx_ulogf_t *log_hdr, mtr_t *mtr);
+
+extern xes_tags_t undo_decode_xes_tags(ulint tags);
 
 }  // namespace lizard
 
@@ -1153,29 +1394,29 @@ void trx_undo_header_add_space_for_xid(page_t *undo_page, trx_ulogf_t *log_hdr,
 #if defined UNIV_DEBUG || defined LIZARD_DEBUG
 
 /* Assert the txn_desc is initial */
-#define assert_txn_desc_initial(trx)                          \
-  do {                                                        \
-    ut_a((trx)->txn_desc.undo_ptr == lizard::UNDO_PTR_NULL && \
-         lizard::commit_mark_state((trx)->txn_desc.cmmt) ==   \
-             SCN_STATE_INITIAL);                              \
+#define assert_txn_desc_initial(trx)                        \
+  do {                                                      \
+    ut_a((trx)->txn_desc.undo_ptr == UNDO_PTR_NULL &&       \
+         lizard::commit_mark_state((trx)->txn_desc.cmmt) == \
+             SCN_STATE_INITIAL);                            \
   } while (0)
 
 /* Assert the txn_desc is allocated */
-#define assert_txn_desc_allocated(trx)                        \
-  do {                                                        \
-    ut_a((trx)->txn_desc.undo_ptr != lizard::UNDO_PTR_NULL && \
-         lizard::commit_mark_state((trx)->txn_desc.cmmt) ==   \
-             SCN_STATE_INITIAL);                              \
+#define assert_txn_desc_allocated(trx)                      \
+  do {                                                      \
+    ut_a((trx)->txn_desc.undo_ptr != UNDO_PTR_NULL &&       \
+         lizard::commit_mark_state((trx)->txn_desc.cmmt) == \
+             SCN_STATE_INITIAL);                            \
   } while (0)
 
-#define assert_undo_ptr_initial(undo_ptr)         \
-  do {                                            \
-    ut_a((*(undo_ptr)) == lizard::UNDO_PTR_NULL); \
+#define assert_undo_ptr_initial(undo_ptr) \
+  do {                                    \
+    ut_a((*(undo_ptr)) == UNDO_PTR_NULL); \
   } while (0)
 
 #define assert_undo_ptr_allocated(undo_ptr)    \
   do {                                         \
-    ut_a((undo_ptr) != lizard::UNDO_PTR_NULL); \
+    ut_a((undo_ptr) != UNDO_PTR_NULL); \
   } while (0)
 
 #define assert_trx_undo_ptr_initial(trx) \
@@ -1194,11 +1435,11 @@ void trx_undo_header_add_space_for_xid(page_t *undo_page, trx_ulogf_t *log_hdr,
     ut_a(lizard::trx_undo_hdr_slot_validate(undo_hdr, mtr)); \
   } while (0)
 
-#define trx_undo_hdr_txn_validation(undo_page, undo_hdr, mtr)               \
-  do {                                                                      \
-    txn_undo_hdr_t txn_undo_hdr;                                            \
-    lizard::trx_undo_hdr_read_txn(undo_page, undo_hdr, mtr, &txn_undo_hdr); \
-    ut_a(txn_undo_hdr.magic_n == TXN_MAGIC_N);                              \
+#define trx_undo_hdr_txn_validation(undo_page, undo_hdr, mtr)                \
+  do {                                                                       \
+    txn_slot_t txn_slot;                                                     \
+    lizard::trx_undo_hdr_read_txn_slot(undo_page, undo_hdr, mtr, &txn_slot); \
+    ut_a(txn_slot.magic_n == TXN_MAGIC_N);                                   \
   } while (0)
 
 #define undo_addr_validation(undo_addr, index)          \
@@ -1209,6 +1450,11 @@ void trx_undo_header_add_space_for_xid(page_t *undo_page, trx_ulogf_t *log_hdr,
 #define undo_commit_mark_validation(undo)          \
   do {                                             \
     ut_a(lizard::undo_commit_mark_validate(undo)); \
+  } while (0)
+
+#define undo_proposal_mark_validation(undo)          \
+  do {                                               \
+    ut_a(lizard::undo_proposal_mark_validate(undo)); \
   } while (0)
 
 #define assert_trx_in_recovery(trx)                                            \
@@ -1235,6 +1481,7 @@ void trx_undo_header_add_space_for_xid(page_t *undo_page, trx_ulogf_t *log_hdr,
 #define trx_undo_hdr_txn_validation(undo_page, undo_hdr, mtr)
 #define undo_addr_validation(undo_addr, index)
 #define undo_commit_mark_validation(undo)
+#define undo_proposal_mark_validation(undo)
 #define assert_trx_in_recovery(trx)
 #define txn_undo_free_list_validation(rseg_hdr, undo_page, mtr)
 #define trx_undo_hdr_slot_validation(undo_hdr, mtr)

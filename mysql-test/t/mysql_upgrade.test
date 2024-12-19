@@ -12,7 +12,7 @@
 
 --let $MYSQLD_LOG= $MYSQLTEST_VARDIR/log/mysql_upgrade_test.log
 --replace_result $MYSQLD_LOG MYSQLD_LOG
---let $restart_parameters = restart:--upgrade=FORCE --sql-mode=$sql_mode_old,ANSI_QUOTES --log-error=$MYSQLD_LOG
+--let $restart_parameters = restart:--upgrade=FORCE --sql-mode=$sql_mode_old,ANSI_QUOTES --new_rpc=1 --log-error=$MYSQLD_LOG
 --let $wait_counter= 10000
 --source include/restart_mysqld.inc
 

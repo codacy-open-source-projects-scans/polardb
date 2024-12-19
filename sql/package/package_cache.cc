@@ -40,13 +40,13 @@
 
 #include "sql/consensus/consensus_proc.h"
 
-#ifndef DBUG_OFF
+#ifndef NDEBUG
 #include "sql/package/proc_dummy.h"
 #endif
 
 #include "sql/package/show_native_procedure.h"
 
-#include "sql/package/proc_undo_purge.h"
+#include "sql/lizard/undo_proc.h"
 #include "sql/xa/lizard_xa_proc.h"
 #include "sql/xrpc/xrpc_proc.h"
 
@@ -55,6 +55,7 @@
 #ifdef RDS_HAVE_JEMALLOC
 #include "sql/sql_jemalloc.h"
 #endif
+#include "sql/package/proc_gpp.h"
 
 namespace im {
 
@@ -132,13 +133,11 @@ void package_context_init() {
 #ifdef HAVE_PSI_INTERFACE
   init_package_psi_key();
 #endif
-
-  /* The schema of dummy and dummy_2 proc */
-  LEX_CSTRING PROC_DUMMY_SCHEMA = {C_STRING_WITH_LEN("mysql")};
-
   package_inited = true;
 
-#ifndef DBUG_OFF
+#ifndef NDEBUG
+  /* The schema of dummy and dummy_2 proc */
+  LEX_CSTRING PROC_DUMMY_SCHEMA = {C_STRING_WITH_LEN("mysql")};
   register_package<Proc, Proc_dummy>(PROC_DUMMY_SCHEMA);
   register_package<Proc, Proc_dummy_2>(PROC_DUMMY_SCHEMA);
 #endif
@@ -155,12 +154,20 @@ void package_context_init() {
   /* dbms_xa.send_heartbeat() */
   register_package<Proc, Xa_proc_send_heartbeat>(XA_PROC_SCHEMA);
 
-  /* dbms_xa.Xa_proc_advance_gcn_no_flush() */
+  /* dbms_xa.advance_gcn_no_flush() */
   register_package<Proc, Xa_proc_advance_gcn_no_flush>(XA_PROC_SCHEMA);
+
+  /* dbms_xa.ac_prepare */
+  register_package<Proc, Xa_proc_ac_prepare>(XA_PROC_SCHEMA);
+
+  /* dbms_xa.ac_commit */
+  register_package<Proc, Xa_proc_ac_commit>(XA_PROC_SCHEMA);
 
   /* dbms_trans.returning() */
   register_package<Proc, Trans_proc_returning>(TRANS_PROC_SCHEMA);
 
+  /* dbms_undo.trunc_status() */
+  register_package<Proc, Proc_trunc_status>(PROC_UNDO_SCHEMA);
   /* dbms_undo.purge_status() */
   register_package<Proc, Proc_purge_status>(PROC_UNDO_SCHEMA);
 
@@ -223,6 +230,8 @@ void package_context_init() {
       CONSENSUS_PROC_SCHEMA);
   register_package<Proc, Consensus_proc_force_single_mode>(
       CONSENSUS_PROC_SCHEMA);
+  register_package<Proc, Consensus_proc_force_learner_node>(
+      CONSENSUS_PROC_SCHEMA);
   register_package<Proc, Consensus_proc_fix_cluster_id>(CONSENSUS_PROC_SCHEMA);
   register_package<Proc, Consensus_proc_fix_matchindex>(CONSENSUS_PROC_SCHEMA);
   register_package<Proc, Consensus_proc_show_global>(CONSENSUS_PROC_SCHEMA);
@@ -236,6 +245,8 @@ void package_context_init() {
 
   /** xrpc.perf_hist() */
   register_package<Proc, Proc_perf_hist>(XRPC_PROC_SCHEMA);
+  /** xrpc.cmd() */
+  register_package<Proc, Proc_cmd>(im::XRPC_PROC_SCHEMA);
 
   /* procedures: polarx.changeset_* */
   register_package<Proc, Changeset_proc_start>(POLARX_PROC_SCHEMA);
@@ -253,6 +264,9 @@ void package_context_init() {
   register_package<Proc, Proc_generate_key>(KEYRING_PROC_SCHEMA);
   /* dbms_keyring.current_key_id(...) */
   register_package<Proc, Proc_current_key_id>(KEYRING_PROC_SCHEMA);
+
+  /* dbms_stat.flush_gpp() */
+  register_package<Proc, Proc_index_stat_flush_gpp>(PROC_STAT_SCHEMA);
 }
 
 } /* namespace im */

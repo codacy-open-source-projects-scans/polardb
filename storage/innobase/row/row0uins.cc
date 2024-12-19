@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1997, 2022, Oracle and/or its affiliates.
+Copyright (c) 1997, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -319,11 +319,12 @@ static void row_undo_ins_parse_undo_rec(undo_node_t *node, THD *thd,
   ulint dummy;
   bool dummy_extern;
   type_cmpl_t type_cmpl;
+  bool is_2pp = false;
 
   ut_ad(node);
 
   ptr = trx_undo_rec_get_pars(node->undo_rec, &type, &dummy, &dummy_extern,
-                              &undo_no, &table_id, type_cmpl);
+                              &undo_no, &table_id, &is_2pp, type_cmpl);
   ut_ad(type == TRX_UNDO_INSERT_REC);
   node->rec_type = type;
 

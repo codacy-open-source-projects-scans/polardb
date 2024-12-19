@@ -102,8 +102,8 @@ CREATE TABLE t1 (word CHAR(20) NOT NULL);
 SET @@SESSION.binlog_format='statement';
 --source include/sync_slave_sql_with_master.inc
 --source include/stop_slave.inc
---eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user'
-CHANGE REPLICATION FILTER replicate_ignore_table=(db1.t1);
+--eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user' for channel 'test';
+CHANGE REPLICATION FILTER replicate_ignore_table=(db1.t1) for channel "test";
 --source include/start_slave.inc
 
 --echo # DMLs as STATEMENTS and replicate them to ignored table
@@ -115,8 +115,8 @@ DELETE FROM t1;
 
 # clean up
 --source include/stop_slave.inc
-CHANGE REPLICATION FILTER replicate_ignore_table=();
-CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL;
+CHANGE REPLICATION FILTER replicate_ignore_table=() for channel "test";
+CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL for channel "test";
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
 --replace_result $saved_binlog_format SAVED_BINLOG_FORMAT
@@ -144,8 +144,8 @@ CREATE TABLE t1 (word CHAR(20) NOT NULL);
 SET @@SESSION.binlog_format='ROW';
 --source include/sync_slave_sql_with_master.inc
 --source include/stop_slave.inc
---eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user'
-CHANGE REPLICATION FILTER replicate_ignore_table=(db1.t1);
+--eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user' for channel 'test';
+CHANGE REPLICATION FILTER replicate_ignore_table=(db1.t1) for channel "test";
 --source include/start_slave.inc
 
 --echo # DMLs as STATEMENTS and replicate them to ignored table
@@ -157,8 +157,8 @@ DELETE FROM t1;
 
 # clean up
 --source include/stop_slave.inc
-CHANGE REPLICATION FILTER replicate_ignore_table=();
-CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL;
+CHANGE REPLICATION FILTER replicate_ignore_table=() for channel "test";
+CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL for channel "test";
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
 --replace_result $saved_binlog_format SAVED_BINLOG_FORMAT
@@ -183,7 +183,7 @@ USE test;
 --let $ignored_db=db1_wl15032
 --source include/rpl_connection_slave.inc
 --source include/stop_slave.inc
---eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user'
+--eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user' for channel 'test';
 --eval CHANGE REPLICATION FILTER replicate_ignore_db=($ignored_db)
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
@@ -226,8 +226,8 @@ SET @@SESSION.default_table_encryption = FALSE;
 --source include/sync_slave_sql_with_master.inc
 
 --source include/stop_slave.inc
-CHANGE REPLICATION FILTER replicate_ignore_db=();
-CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL;
+CHANGE REPLICATION FILTER replicate_ignore_db=() for channel "test";
+CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL for channel "test";
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
 --source include/rpl_reset.inc
@@ -245,8 +245,8 @@ CREATE TABLE t1 (word CHAR(20) NOT NULL);
 SET @@SESSION.binlog_format='statement';
 --source include/sync_slave_sql_with_master.inc
 --source include/stop_slave.inc
---eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user'
-CHANGE REPLICATION FILTER replicate_ignore_table=(db1.t1);
+--eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user' for channel 'test';
+CHANGE REPLICATION FILTER replicate_ignore_table=(db1.t1) for channel "test";
 --source include/start_slave.inc
 
 --echo # Issue SAVEPOINTS and ROLLBACK to SAVEPOINTS and replicate them to ignored table
@@ -266,8 +266,8 @@ COMMIT;
 --echo #
 
 --source include/stop_slave.inc
-CHANGE REPLICATION FILTER replicate_ignore_table=();
-CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL;
+CHANGE REPLICATION FILTER replicate_ignore_table=() for channel "test";
+CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL for channel "test";
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
 --replace_result $saved_binlog_format SAVED_BINLOG_FORMAT
@@ -288,7 +288,7 @@ USE test;
 --source include/sync_slave_sql_with_master.inc
 
 --source include/stop_slave.inc
---eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user'
+--eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user' for channel 'test';
 --eval CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = ($ignored_db)
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
@@ -308,8 +308,8 @@ USE test;
 
 # clean up
 --source include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL;
-CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = ();
+CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL for channel "test";
+CHANGE REPLICATION FILTER REPLICATE_IGNORE_DB = () for channel "test";
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
 --eval DROP DATABASE $ignored_db
@@ -326,7 +326,7 @@ CREATE TABLE tload (c1 TEXT);
 --source include/sync_slave_sql_with_master.inc
 
 --source include/stop_slave.inc
---eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user'
+--eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user' for channel 'test';
 --eval CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE = (test.tload)
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
@@ -343,8 +343,8 @@ LOAD DATA INFILE '../../std_data/words.dat' INTO TABLE tload;
 
 # clean up
 --source include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL;
-CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE = ();
+CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL for channel "test";
+CHANGE REPLICATION FILTER REPLICATE_IGNORE_TABLE = () for channel "test";
 --source include/start_slave.inc
 --source include/rpl_connection_master.inc
 DROP TABLE tload;
@@ -363,7 +363,7 @@ DROP TABLE tload;
 CREATE TABLE tload (c1 TEXT);
 --source include/sync_slave_sql_with_master.inc
 --source include/stop_slave.inc
---eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user'
+--eval CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER='$user' for channel 'test';
 --source include/start_slave.inc
 
 # commit empty transaction on the secondary
@@ -391,7 +391,7 @@ SET GTID_NEXT=AUTOMATIC;
 --source include/assert.inc
 
 --source include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL;
+CHANGE REPLICATION SOURCE TO PRIVILEGE_CHECKS_USER=NULL for channel "test";
 --source include/start_slave.inc
 
 # clean up

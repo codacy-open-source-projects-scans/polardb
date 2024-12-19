@@ -29,7 +29,7 @@ ALTER USER IF EXISTS b21807286_not_exists@localhost IDENTIFIED BY 'haha4';
 Warnings:
 Note	3162	Authorization ID 'b21807286_not_exists'@'localhost' does not exist.
 DROP USER b21807286@localhost;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [On Slave]
 include/show_binlog_events.inc
 Log_name	Pos	Event_type	Server_id	End_log_pos	Info

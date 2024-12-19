@@ -63,6 +63,7 @@
 #include "sql/sql_jemalloc.h"
 #endif
 
+#include "sql/lizard/lizard_hb_freezer.h"
 
 /* Global scope variables */
 char innodb_version[SERVER_VERSION_LENGTH];
@@ -71,6 +72,7 @@ char innodb_version[SERVER_VERSION_LENGTH];
 static uint rds_version = 0;
 static char *polardbx_release_date_ptr = NULL;
 static char *polardbx_engine_version_ptr = NULL;
+static char *polardbx_product_version_ptr = NULL;
 
 int32 opt_rpc_port = DEFAULT_RPC_PORT;
 bool opt_enable_polarx_rpc = true;
@@ -84,6 +86,8 @@ ulonglong opt_import_tablespace_iterator_interval_ms =
   @returns void.
 */
 void print_build_info() {
+  printf("PolarDB Version: %s\n", POLARDB_VERSION);
+  printf("PolarDB Product Version: %s\n", POLARDBX_PRODUCT_VERSION);
   printf("Engine Malloc Library: %s\n", MALLOC_LIBRARY);
   printf("Engine Version: %s\n", POLARDBX_ENGINE_VERSION);
   printf("Engine Release Date: %s\n", POLARDBX_RELEASE_DATE);
@@ -150,10 +154,15 @@ static Sys_var_charptr Sys_polardbx_release_date(
     READ_ONLY GLOBAL_VAR(polardbx_release_date_ptr), NO_CMD_LINE, IN_SYSTEM_CHARSET,
     DEFAULT(POLARDBX_RELEASE_DATE));
 
-static Sys_var_charptr Sys_polardbx_release_version(
+static Sys_var_charptr Sys_polardbx_engine_version(
     "polardbx_engine_version", "PolarDB-X engine version",
     READ_ONLY GLOBAL_VAR(polardbx_engine_version_ptr), NO_CMD_LINE, IN_SYSTEM_CHARSET,
     DEFAULT(POLARDBX_ENGINE_VERSION));
+
+static Sys_var_charptr Sys_polardbx_product_version(
+    "polardbx_product_version", "PolarDB-X product version",
+    READ_ONLY GLOBAL_VAR(polardbx_product_version_ptr), NO_CMD_LINE, IN_SYSTEM_CHARSET,
+    DEFAULT(POLARDBX_PRODUCT_VERSION));
 
 static Sys_var_deprecated_alias Sys_rds_release_date(
     "rds_release_date", Sys_polardbx_release_date);
@@ -275,11 +284,11 @@ static Sys_var_charptr Sys_client_endpoint_ip(
     DEFAULT(0), NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
 
 static bool set_owned_vision_gcn_on_update(sys_var *, THD *thd, enum_var_type) {
-  if (thd->variables.innodb_snapshot_gcn == MYSQL_GCN_NULL) {
+  if (thd->variables.innodb_snapshot_gcn == GCN_NULL) {
     thd->owned_vision_gcn.reset();
   } else {
-    thd->owned_vision_gcn.set(
-        MYSQL_CSR_ASSIGNED, thd->variables.innodb_snapshot_gcn, MYSQL_SCN_NULL);
+    thd->owned_vision_gcn = {csr_t::CSR_ASSIGNED,
+                             thd->variables.innodb_snapshot_gcn, SCN_NULL};
   }
   return false;
 }
@@ -287,20 +296,23 @@ static bool set_owned_vision_gcn_on_update(sys_var *, THD *thd, enum_var_type) {
 static Sys_var_ulonglong Sys_innodb_snapshot_seq(
     "innodb_snapshot_seq", "Innodb snapshot sequence.",
     HINT_UPDATEABLE SESSION_ONLY(innodb_snapshot_gcn), CMD_LINE(REQUIRED_ARG),
-    VALID_RANGE(MYSQL_GCN_MIN, MYSQL_GCN_NULL), DEFAULT(MYSQL_GCN_NULL),
+    VALID_RANGE(GCN_INITIAL, GCN_NULL), DEFAULT(GCN_NULL),
     BLOCK_SIZE(1), NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0),
     ON_UPDATE(set_owned_vision_gcn_on_update));
 
 static bool set_owned_commit_gcn_on_update(sys_var *, THD *thd, enum_var_type) {
-  thd->owned_commit_gcn.set(thd->variables.innodb_commit_gcn,
-                            MYSQL_CSR_ASSIGNED);
+  if (thd->variables.innodb_commit_gcn == GCN_NULL) {
+    thd->owned_commit_gcn.reset();
+  } else {
+    thd->owned_commit_gcn.assign_from_var(thd->variables.innodb_commit_gcn);
+  }
   return false;
 }
 
 static Sys_var_ulonglong Sys_innodb_commit_seq(
     "innodb_commit_seq", "Innodb commit sequence",
     HINT_UPDATEABLE SESSION_ONLY(innodb_commit_gcn), CMD_LINE(REQUIRED_ARG),
-    VALID_RANGE(MYSQL_GCN_MIN, MYSQL_GCN_NULL), DEFAULT(MYSQL_GCN_NULL),
+    VALID_RANGE(GCN_INITIAL, GCN_NULL), DEFAULT(GCN_NULL),
     BLOCK_SIZE(1), NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0),
     ON_UPDATE(set_owned_commit_gcn_on_update));
 
@@ -325,21 +337,21 @@ static Sys_var_bool Sys_innodb_current_snapshot_gcn(
 */
 bool freeze_db_if_no_cn_heartbeat_enable_on_update(sys_var *, THD *,
                                                    enum_var_type) {
-  const bool is_enable = lizard::xa::no_heartbeat_freeze;
+  const bool is_enable = lizard::no_heartbeat_freeze;
 
   /** 1. Pretend to send heartbeat. */
   if (is_enable) {
-    lizard::xa::hb_freezer_heartbeat();
+    lizard::hb_freezer_heartbeat();
   }
 
-  lizard::xa::opt_no_heartbeat_freeze = lizard::xa::no_heartbeat_freeze;
+  lizard::opt_no_heartbeat_freeze = lizard::no_heartbeat_freeze;
   return false;
 }
 static Sys_var_bool Sys_freeze_db_if_no_cn_heartbeat_enable(
     "innodb_freeze_db_if_no_cn_heartbeat_enable",
     "If set to true, will freeze purge sys and updating "
     "if there is no heartbeat.",
-    GLOBAL_VAR(lizard::xa::no_heartbeat_freeze), CMD_LINE(OPT_ARG),
+    GLOBAL_VAR(lizard::no_heartbeat_freeze), CMD_LINE(OPT_ARG),
     DEFAULT(false), NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0),
     ON_UPDATE(freeze_db_if_no_cn_heartbeat_enable_on_update));
 
@@ -347,7 +359,7 @@ static Sys_var_ulonglong Sys_freeze_db_if_no_cn_heartbeat_timeout_sec(
     "innodb_freeze_db_if_no_cn_heartbeat_timeout_sec",
     "If the heartbeat has not been received after the "
     "timeout, freezing the purge sys and updating.",
-    GLOBAL_VAR(lizard::xa::opt_no_heartbeat_freeze_timeout),
+    GLOBAL_VAR(lizard::opt_no_heartbeat_freeze_timeout),
     CMD_LINE(REQUIRED_ARG), VALID_RANGE(1, 24 * 60 * 60), DEFAULT(10),
     BLOCK_SIZE(1), NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
 
@@ -459,8 +471,10 @@ static Sys_var_bool Sys_opt_outline_enabled(
 static Sys_var_bool Sys_outline_allowed_sql_digest_truncate(
     "outline_allowed_sql_digest_truncate",
     "Whether allowed the incomplete of sql digest when add outline",
-    SESSION_VAR(outline_allowed_sql_digest_truncate), CMD_LINE(OPT_ARG),
-    DEFAULT(true), NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+    SESSION_VAR(outline_allowed_sql_digest_truncate),
+    CMD_LINE(OPT_ARG), DEFAULT(true), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+
 static Sys_var_bool Sys_auto_savepoint("auto_savepoint",
                                        "Whether to make implicit savepoint for "
                                        "each INSERT/DELETE/UPDATE statement",
@@ -622,3 +636,22 @@ static Sys_var_bool Sys_enable_show_ipk_info(
 
 static Sys_var_deprecated_alias Sys_show_ipk_info(
     "show_ipk_info", Sys_enable_show_ipk_info);
+
+static Sys_var_bool Sys_query_via_flashback_area(
+    "query_via_flashback_area",
+    "Whether queries should be executed via the flashback area of the table "
+    "during a transaction. ",
+    SESSION_VAR(opt_query_via_flashback_area), CMD_LINE(OPT_ARG), DEFAULT(0),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+
+static Sys_var_bool Sys_opt_flashback_area(
+    "opt_flashback_area", "Enable flashback area when a new table is created. ",
+    SESSION_VAR(opt_flashback_area), CMD_LINE(OPT_ARG), DEFAULT(0),
+    NO_MUTEX_GUARD, IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+
+static Sys_var_bool Sys_opt_index_format_gpp_enabled(
+    "opt_index_format_gpp_enabled",
+    "When this option is enabled,"
+    "it will add gpp column on secondary index if suitable.",
+    SESSION_VAR(opt_index_format_gpp_enabled), CMD_LINE(OPT_ARG), DEFAULT(true),
+    NO_MUTEX_GUARD, IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));

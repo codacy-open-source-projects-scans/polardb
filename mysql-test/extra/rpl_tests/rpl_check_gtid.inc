@@ -62,7 +62,7 @@ if (`SELECT "$binlog" = "binlog"`)
 
 if (`SELECT "$binlog" = "relaylog"`)
 {
-  --let $command_set= SHOW SLAVE STATUS
+  --let $command_set= SHOW SLAVE STATUS for channel "test"
   --let $command_set_info= Relay_Log_File
   --let $command_show= SHOW RELAYLOG EVENTS
 }
@@ -73,16 +73,34 @@ if (`SELECT "$binlog" <> "" and "$gtid_set_end" <> "" and "$gtid_set_ini" <> ""`
   --let $server_log= query_get_value($command_set, $command_set_info, 1)
   if (`SELECT "$debug" <> ""`)
   {
-    --eval $command_show in "$server_log"
+    --eval $command_show
   }
-  --let $type= query_get_value($command_show in "$server_log", Event_type, 2)
-  --let $info= query_get_value($command_show in "$server_log", Info, 2)
+
+  if (`SELECT "$binlog" = "binlog"`)
+  {
+    --let $command_show= SHOW BINLOG EVENTS in "$server_log"
+  }
+
+  if (`SELECT "$binlog" = "relaylog"`)
+  {
+    --let $command_show= SHOW RELAYLOG EVENTS in "$server_log" for channel "test" 
+  }
+
+  --let $type= query_get_value($command_show, Event_type, 2)
+  --let $info= query_get_value($command_show, Info, 2)
+
+  if ($type == Previous_consensus_index)
+  {
+    --let $type= query_get_value($command_show, Event_type, 3)
+    --let $info= query_get_value($command_show, Info, 3)
+  }
+
   if ($type != Previous_gtids)
   {
     --source include/show_rpl_debug_info.inc
     --echo $type $info --- Type should be Previous_gtids.
     --echo log='$server_log'
-    --eval $command_show in "$server_log"
+    --eval $command_show
     --die
   }
   if ($gtid_set_end == 0 && $gtid_set_ini == 0)
@@ -94,7 +112,7 @@ if (`SELECT "$binlog" <> "" and "$gtid_set_end" <> "" and "$gtid_set_ini" <> ""`
       --let $datadir= `select @@datadir`
       --echo log='$server_log'
       --exec $MYSQL_BINLOG $datadir/$server_log
-      --eval $command_show in "$server_log"
+      --eval $command_show
       --die
     }
   }
@@ -107,7 +125,7 @@ if (`SELECT "$binlog" <> "" and "$gtid_set_end" <> "" and "$gtid_set_ini" <> ""`
       --let $datadir= `select @@datadir`
       --echo log='$server_log'
       --exec $MYSQL_BINLOG $datadir/$server_log
-      --eval $command_show in "$server_log"
+      --eval $command_show
       --die
     }
   }
@@ -120,7 +138,7 @@ if (`SELECT "$binlog" <> "" and "$gtid_set_end" <> "" and "$gtid_set_ini" <> ""`
       --let $datadir= `select @@datadir`
       --echo log='$server_log'
       --exec $MYSQL_BINLOG $datadir/$server_log
-      --eval $command_show in "$server_log"
+      --eval $command_show
       --die
     }
   }
@@ -133,12 +151,23 @@ if (`SELECT "$binlog" <> "" and "$gtid_end" <> "" and "$gtid_ini" <> ""`)
   --let $pos= 1
   --let $info= unknown
   --let $server_log= query_get_value($command_set, $command_set_info, 1)
+
+  if (`SELECT "$binlog" = "binlog"`)
+  {
+    --let $command_show= SHOW BINLOG EVENTS in "$server_log"
+  }
+
+  if (`SELECT "$binlog" = "relaylog"`)
+  {
+    --let $command_show= SHOW RELAYLOG EVENTS in "$server_log" for channel "test" 
+  }
+
   while (`SELECT $trans <= $gtid_end AND "$type" <> "No such row"`)
   {
-    --let $type= query_get_value($command_show in "$server_log", Event_type, $pos)
+    --let $type= query_get_value($command_show, Event_type, $pos)
     if ($type == Gtid)
     {
-      --let $info= query_get_value($command_show in "$server_log", Info, $pos)
+      --let $info= query_get_value($command_show, Info, $pos)
       if (`SELECT "$info" REGEXP "^SET @@SESSION.GTID_NEXT= '$server_uuid:$trans'"`)
       {
         --let $trans= `SELECT $trans + 1`
@@ -151,7 +180,7 @@ if (`SELECT "$binlog" <> "" and "$gtid_end" <> "" and "$gtid_ini" <> ""`)
     --source include/show_rpl_debug_info.inc
     --echo $type $info -- We should retrieve from $gtid_ini to $gtid_end.
     --echo log='$server_log'
-    --eval $command_show in "$server_log"
+    --eval $command_show
     --die
   }
 }

@@ -7,9 +7,9 @@ Note	####	Storing MySQL user name or password information in the master info rep
 # Non MTS mode
 ###############################
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_parallel_workers = 0;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 create table tt (id int);
 ###############################
@@ -21,7 +21,7 @@ SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema
 begin;
 insert into tt values (1);
 commit;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection master]
 SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
 ###############################
@@ -31,7 +31,7 @@ SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema
 begin;
 insert into tt values (1);
 commit;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection master]
 set global xa_detach_on_prepare = true;
 ###############################
@@ -43,7 +43,7 @@ insert into tt values (1);
 xa end '1';
 xa prepare '1';
 xa commit '1';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 ###############################
 # Case 3: Detached XA + Rollback
@@ -54,7 +54,7 @@ insert into tt values (2);
 xa end '2';
 xa prepare '2';
 xa rollback '2';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 ###############################
 # Case 4: Detached XA One Phase
@@ -64,7 +64,7 @@ xa begin '3';
 insert into tt values (3);
 xa end '3';
 xa commit '3' one phase;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 [connection master]
 set global xa_detach_on_prepare = false;
@@ -77,7 +77,7 @@ insert into tt values (4);
 xa end '4';
 xa prepare '4';
 xa commit '4';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 ###############################
 # Case 6: Attached XA + Rollback
@@ -88,7 +88,7 @@ insert into tt values (5);
 xa end '5';
 xa prepare '5';
 xa rollback '5';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 ###############################
 # cleanup
@@ -96,16 +96,16 @@ include/sync_slave_sql_with_master.inc
 [connection master]
 set global xa_detach_on_prepare = default;
 drop table tt;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 ###############################
 # MTS by DATABASE
 ###############################
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_preserve_commit_order = 0;
 SET GLOBAL replica_parallel_type = 'DATABASE';
 SET GLOBAL replica_parallel_workers = 4;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 create table tt (id int);
 ###############################
@@ -117,7 +117,7 @@ SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema
 begin;
 insert into tt values (1);
 commit;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection master]
 SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
 ###############################
@@ -127,7 +127,7 @@ SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema
 begin;
 insert into tt values (1);
 commit;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection master]
 set global xa_detach_on_prepare = true;
 ###############################
@@ -139,7 +139,7 @@ insert into tt values (1);
 xa end '1';
 xa prepare '1';
 xa commit '1';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 ###############################
 # Case 3: Detached XA + Rollback
@@ -150,7 +150,7 @@ insert into tt values (2);
 xa end '2';
 xa prepare '2';
 xa rollback '2';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 ###############################
 # Case 4: Detached XA One Phase
@@ -160,7 +160,7 @@ xa begin '3';
 insert into tt values (3);
 xa end '3';
 xa commit '3' one phase;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 [connection master]
 set global xa_detach_on_prepare = false;
@@ -173,7 +173,7 @@ insert into tt values (4);
 xa end '4';
 xa prepare '4';
 xa commit '4';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 ###############################
 # Case 6: Attached XA + Rollback
@@ -184,7 +184,7 @@ insert into tt values (5);
 xa end '5';
 xa prepare '5';
 xa rollback '5';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 ###############################
 # cleanup
@@ -192,16 +192,16 @@ include/sync_slave_sql_with_master.inc
 [connection master]
 set global xa_detach_on_prepare = default;
 drop table tt;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 ###############################
 # MTS by Logical_clock
 ###############################
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_preserve_commit_order = default;
 SET GLOBAL replica_parallel_type = 'LOGICAL_CLOCK';
 SET GLOBAL replica_parallel_workers = 4;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 create table tt (id int);
 ###############################
@@ -213,7 +213,7 @@ SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema
 begin;
 insert into tt values (1);
 commit;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection master]
 SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
 ###############################
@@ -223,7 +223,7 @@ SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema
 begin;
 insert into tt values (1);
 commit;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection master]
 set global xa_detach_on_prepare = true;
 ###############################
@@ -235,7 +235,7 @@ insert into tt values (1);
 xa end '1';
 xa prepare '1';
 xa commit '1';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 ###############################
 # Case 3: Detached XA + Rollback
@@ -246,7 +246,7 @@ insert into tt values (2);
 xa end '2';
 xa prepare '2';
 xa rollback '2';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 ###############################
 # Case 4: Detached XA One Phase
@@ -256,7 +256,7 @@ xa begin '3';
 insert into tt values (3);
 xa end '3';
 xa commit '3' one phase;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 [connection master]
 set global xa_detach_on_prepare = false;
@@ -269,7 +269,7 @@ insert into tt values (4);
 xa end '4';
 xa prepare '4';
 xa commit '4';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 ###############################
 # Case 6: Attached XA + Rollback
@@ -280,7 +280,7 @@ insert into tt values (5);
 xa end '5';
 xa prepare '5';
 xa rollback '5';
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection slave]
 ###############################
 # cleanup
@@ -288,15 +288,15 @@ include/sync_slave_sql_with_master.inc
 [connection master]
 set global xa_detach_on_prepare = default;
 drop table tt;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 ###############################
 # Restore variables
 ###############################
 [connection slave]
-include/stop_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
 SET GLOBAL replica_preserve_commit_order = default;
 SET GLOBAL replica_parallel_type = default;
 SET GLOBAL replica_parallel_workers = default;
-include/start_slave.inc
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 include/rpl_end.inc

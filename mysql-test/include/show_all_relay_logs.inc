@@ -59,7 +59,7 @@ eval CREATE TEMPORARY TABLE $_sarl_table_name
 while ($_sarl_number < $_sarl_count)
 {
   --let $_sarl_file= `SELECT filename FROM $_sarl_table_name LIMIT $_sarl_number, 1`
-  --let $statement= SHOW RELAYLOG EVENTS IN '$_sarl_file'
+  --let $statement= SHOW RELAYLOG EVENTS IN '$_sarl_file' FOR CHANNEL 'test'
   --let $_sarl_header= ======== $statement ========
 
   if ($output_file != '')

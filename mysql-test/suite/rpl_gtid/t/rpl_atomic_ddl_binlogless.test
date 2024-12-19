@@ -27,7 +27,7 @@ CALL mtr.add_suppression("You need to use --log-bin to make --binlog-format work
 #
 
 --source include/stop_slave_sql.inc
-CHANGE REPLICATION FILTER Replicate_Do_DB= (test1);
+CHANGE REPLICATION FILTER Replicate_Do_DB= (test1) for channel "test";
 
 --source include/rpl_connection_master.inc
 CREATE TABLE test.t1 (a INT);
@@ -40,7 +40,7 @@ CREATE TABLE test.t1 (a INT);
 
 # remove filter
 --source include/stop_slave_sql.inc
-CHANGE REPLICATION FILTER REPLICATE_DO_DB= ();
+CHANGE REPLICATION FILTER REPLICATE_DO_DB= () for channel "test";
 --source include/start_slave_sql.inc
 
 #

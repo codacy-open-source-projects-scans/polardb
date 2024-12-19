@@ -28,8 +28,10 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #define LIZARD_LIZARD_SNAPSHOT_INCLUDED
 
 #include "lex_string.h"
-#include "lizard_iface.h"
 #include "my_dbug.h"
+#include "my_inttypes.h"
+
+#include "sql/lizard/lizard_service.h"
 
 class THD;
 class Item;
@@ -69,7 +71,8 @@ typedef enum {
  */
 class Snapshot_hint {
  public:
-  explicit Snapshot_hint(Item *item) : m_item(item) {}
+  explicit Snapshot_hint(Item *item)
+      : m_item(item), m_flashback_area(false) {}
 
   virtual ~Snapshot_hint() {}
 
@@ -106,8 +109,15 @@ class Snapshot_hint {
   /** Calculate number from hint item. */
   virtual bool val_int(uint64_t *value) = 0;
 
+  void set_flashback_area(bool value) { m_flashback_area = value; }
+
+  bool get_flashback_area() const { return m_flashback_area; }
+
  protected:
   Item *m_item;
+
+  /** opt_query_via_flashback_area */
+  bool m_flashback_area;
 };
 
 /** Parse node special */
@@ -162,9 +172,9 @@ class Snapshot_time_hint : public Snapshot_hint {
 class Snapshot_gcn_hint : public Snapshot_hint {
  public:
   explicit Snapshot_gcn_hint(Item *item)
-      : Snapshot_gcn_hint(item, MYSQL_CSR_ASSIGNED, MYSQL_SCN_NULL) {}
+      : Snapshot_gcn_hint(item, csr_t::CSR_ASSIGNED, SCN_NULL) {}
 
-  explicit Snapshot_gcn_hint(Item *item, my_csr_t csr, my_scn_t scn)
+  explicit Snapshot_gcn_hint(Item *item, csr_t csr, scn_t scn)
       : Snapshot_hint(item), m_csr(csr), m_current_scn(scn) {}
 
   virtual Snapshot_type type() const override { return AS_OF_GCN; }
@@ -190,12 +200,12 @@ class Snapshot_gcn_hint : public Snapshot_hint {
   */
   virtual int evoke_vision(TABLE *table, THD *thd) override;
 
-  my_csr_t get_csr() const { return m_csr; }
-  my_scn_t get_current_scn() const { return m_current_scn; }
+  csr_t get_csr() const { return m_csr; }
+  scn_t get_current_scn() const { return m_current_scn; }
 
  private:
-  my_csr_t m_csr;
-  my_scn_t m_current_scn;
+  csr_t m_csr;
+  scn_t m_current_scn;
 };
 
 /*------------------------------------------------------------------------------*/
@@ -207,6 +217,8 @@ class Snapshot_gcn_hint : public Snapshot_hint {
  */
 class Snapshot_vision {
  public:
+  Snapshot_vision() : m_flashback_area(false) {}
+
   virtual ~Snapshot_vision() {}
 
   /*------------------------------------------------------------------------------*/
@@ -238,7 +250,16 @@ class Snapshot_vision {
 
   virtual bool modification_visible(void *txn_rec) const = 0;
 
-  virtual my_trx_id_t up_limit_tid() const { return 0; }
+
+  void set_flashback_area(bool value) { m_flashback_area = value; }
+
+  bool get_flashback_area() const { return m_flashback_area; }
+
+  virtual trx_id_t up_limit_tid() const { return 0; }
+
+ protected:
+  /** opt_query_via_flashback_area */
+  bool m_flashback_area;
 };
 
 /**
@@ -292,9 +313,9 @@ class Snapshot_time_vision : public Snapshot_vision {
 */
 class Snapshot_scn_vision : public Snapshot_vision {
  public:
-  Snapshot_scn_vision() : m_scn(MYSQL_SCN_NULL), m_up_limit_tid(0) {}
+  Snapshot_scn_vision() : m_scn(SCN_NULL), m_up_limit_tid(0) {}
 
-  Snapshot_scn_vision(my_scn_t scn, my_trx_id_t tid)
+  Snapshot_scn_vision(scn_t scn, trx_id_t tid)
       : m_scn(scn), m_up_limit_tid(tid) {}
 
   ~Snapshot_scn_vision() override {}
@@ -315,7 +336,7 @@ class Snapshot_scn_vision : public Snapshot_vision {
   virtual Snapshot_type type() const override { return AS_OF_SCN; }
 
   virtual void store_int(uint64_t value) override {
-    m_scn = static_cast<my_scn_t>(value);
+    m_scn = static_cast<scn_t>(value);
   }
   virtual void after_activate() override;
 
@@ -335,13 +356,13 @@ class Snapshot_scn_vision : public Snapshot_vision {
   */
   virtual bool modification_visible(void *) const override;
 
-  virtual my_trx_id_t up_limit_tid() const override { return m_up_limit_tid; }
+  virtual trx_id_t up_limit_tid() const override { return m_up_limit_tid; }
 
-  void set_up_limit_tid(my_trx_id_t tid) { m_up_limit_tid = tid; }
+  void set_up_limit_tid(trx_id_t tid) { m_up_limit_tid = tid; }
 
  private:
-  my_scn_t m_scn;
-  my_trx_id_t m_up_limit_tid;
+  scn_t m_scn;
+  trx_id_t m_up_limit_tid;
 };
 
 /**
@@ -350,14 +371,14 @@ class Snapshot_scn_vision : public Snapshot_vision {
 class Snapshot_gcn_vision : public Snapshot_vision {
  public:
   Snapshot_gcn_vision()
-      : m_gcn(MYSQL_GCN_NULL),
-        m_csr(MYSQL_CSR_NONE),
-        m_current_scn(MYSQL_SCN_NULL),
+      : m_gcn(GCN_NULL),
+        m_csr(csr_t::CSR_AUTOMATIC),
+        m_current_scn(SCN_NULL),
         m_up_limit_tid(0) {}
 
-  Snapshot_gcn_vision(my_gcn_t gcn, my_scn_t scn, my_trx_id_t tid)
+  Snapshot_gcn_vision(gcn_t gcn, scn_t scn, trx_id_t tid)
       : m_gcn(gcn),
-        m_csr(MYSQL_CSR_NONE),
+        m_csr(csr_t::CSR_AUTOMATIC),
         m_current_scn(scn),
         m_up_limit_tid(tid) {}
 
@@ -381,7 +402,7 @@ class Snapshot_gcn_vision : public Snapshot_vision {
   virtual Snapshot_type type() const override { return AS_OF_GCN; }
 
   virtual void store_int(uint64_t value) override {
-    m_gcn = static_cast<my_gcn_t>(value);
+    m_gcn = static_cast<gcn_t>(value);
   }
 
   /** Do pushup GCS gcn if come from outer. */
@@ -391,13 +412,13 @@ class Snapshot_gcn_vision : public Snapshot_vision {
     return static_cast<uint64_t>(m_gcn);
   }
 
-  void store_current_scn(my_scn_t scn) { m_current_scn = scn; }
+  void store_current_scn(scn_t scn) { m_current_scn = scn; }
 
-  my_scn_t current_scn() const { return m_current_scn; }
+  scn_t current_scn() const { return m_current_scn; }
 
-  void store_csr(my_csr_t csr) { m_csr = csr; }
+  void store_csr(csr_t csr) { m_csr = csr; }
 
-  my_csr_t csr() const { return m_csr; }
+  csr_t csr() const { return m_csr; }
 
   virtual bool is_vision() const override { return true; }
 
@@ -411,18 +432,23 @@ class Snapshot_gcn_vision : public Snapshot_vision {
   */
   virtual bool modification_visible(void *) const override;
 
-  virtual my_trx_id_t up_limit_tid() const override { return m_up_limit_tid; }
+  virtual trx_id_t up_limit_tid() const override { return m_up_limit_tid; }
 
-  void set_up_limit_tid(my_trx_id_t tid) { m_up_limit_tid = tid; }
+  void set_up_limit_tid(trx_id_t tid) { m_up_limit_tid = tid; }
+
+  /**
+    Some XA branchs should share a commit number.
+  */
+  bool modification_visible_by_share_cn(void *) const;
 
  private:
-  my_gcn_t m_gcn;
+  gcn_t m_gcn;
 
-  my_csr_t m_csr;
+  csr_t m_csr;
 
-  my_scn_t m_current_scn;
+  scn_t m_current_scn;
 
-  my_trx_id_t m_up_limit_tid;
+  trx_id_t m_up_limit_tid;
 };
 
 /**
@@ -443,7 +469,7 @@ class Snapshot_noop_vision : public Snapshot_vision {
 
   virtual void after_activate() override { assert(0); }
 
-  virtual uint64_t val_int() const override { return MYSQL_SCN_NULL; }
+  virtual uint64_t val_int() const override { return SCN_NULL; }
 
   virtual bool is_vision() const override { return false; }
 
@@ -495,6 +521,8 @@ class Table_snapshot {
 
   /** Return current vision. */
   Snapshot_vision *vision() { return m_vision; }
+
+  const Snapshot_vision *vision() const { return m_vision; }
 
   /** Activate a vision that can be used by innodb later.
   return true if error. */

@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+   Copyright (c) 2000, 2022, Oracle and/or its affiliates. Copyright (c) 2023, 2024, Alibaba and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -1518,6 +1518,7 @@ static const std::pair<const char *, Create_func *> func_array[] = {
     {"PERIOD_ADD", SQL_FN(Item_func_period_add, 2)},
     {"PERIOD_DIFF", SQL_FN(Item_func_period_diff, 2)},
     {"PI", SQL_FN(Item_func_pi, 0)},
+    {"POLARDB_VERSION", SQL_FN(Item_func_polardb_version, 0)},
     {"POW", SQL_FN(Item_func_pow, 2)},
     {"POWER", SQL_FN(Item_func_pow, 2)},
     {"PS_CURRENT_THREAD_ID", SQL_FN(Item_func_pfs_current_thread_id, 0)},

@@ -131,7 +131,6 @@ bool Sql_cmd_xa_rollback::process_detached_xa_rollback(THD *thd) {
       [this]() -> void { this->release_locks(); }};
   this->setup_thd_context(thd);
   if (this->enter_commit_order(thd)) return true;
-  this->attach_again();
 
   CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("before_rollback_xa_trx");
   this->assign_xid_to_thd(thd);

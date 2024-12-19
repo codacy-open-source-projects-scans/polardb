@@ -6,6 +6,7 @@ Note	####	Storing MySQL user name or password information in the master info rep
 [connection slave]
 include/gtid_utils.inc
 include/rpl_reset.inc
+rpl_channel_name='test'
 [connection master]
 RESET MASTER;
 CREATE DATABASE db;
@@ -21,17 +22,17 @@ BEGIN;
 COMMIT;
 SET @@GTID_NEXT=AUTOMATIC;
 [connection slave]
-CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 1;
-include/start_slave.inc
+CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION= 1 for channel "test";
+include/start_slave.inc [FOR CHANNEL 'test']
 [connection master]
 DROP DATABASE db;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection master]
 SET @@GTID_NEXT='11111111-1111-1111-1111-111111111111:1';
 BEGIN;
 COMMIT;
 SET @@GTID_NEXT=AUTOMATIC;
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 [connection master]
 [connection slave]
 include/assert.inc [The slave's GTID_PURGED must be equal to the master's one]

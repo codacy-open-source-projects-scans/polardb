@@ -8,12 +8,12 @@ Note	####	Storing MySQL user name or password information in the master info rep
 include/rpl_connect.inc [creating master]
 include/rpl_connect.inc [creating slave_1]
 include/rpl_connect.inc [creating slave_2]
-include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD = 0.1;
-include/start_slave.inc
-include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD = 1;
-include/start_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
+CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD = 0.1 for channel 'test';
+include/start_slave.inc [FOR CHANNEL 'test']
+include/stop_slave.inc [FOR CHANNEL 'test']
+CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD = 1 for channel 'test';
+include/start_slave.inc [FOR CHANNEL 'test']
 Slave has received heartbeat event
 include/assert.inc [slave_1 should have received more heartbeats than slave_2]
 
@@ -23,9 +23,9 @@ Warnings:
 Note	####	Sending passwords in plain text without SSL/TLS is extremely insecure.
 Note	####	Storing MySQL user name or password information in the master info repository is not secure and is therefore not recommended. Please consider using the USER and PASSWORD connection options for START SLAVE; see the 'START SLAVE Syntax' in the MySQL Manual for more information.
 include/rpl_start_slaves.inc
-include/stop_slave.inc
-CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD=0.1;
-include/start_slave.inc
+include/stop_slave.inc [FOR CHANNEL 'test']
+CHANGE REPLICATION SOURCE TO SOURCE_HEARTBEAT_PERIOD=0.1 for channel 'test';
+include/start_slave.inc [FOR CHANNEL 'test']
 slave_1 has received heartbeat event
 [on master]
 CREATE TABLE t1 (a INT PRIMARY KEY, b VARCHAR(10), c LONGTEXT);
@@ -34,12 +34,12 @@ SHOW TABLES;
 Tables_in_test
 t1
 [on slave_2]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 SHOW TABLES;
 Tables_in_test
 t1
 [on slave_1]
-include/sync_slave_sql_with_master.inc
+include/sync_slave_sql_with_master.inc [FOR CHANNEL 'test']
 SHOW TABLES;
 Tables_in_test
 t1

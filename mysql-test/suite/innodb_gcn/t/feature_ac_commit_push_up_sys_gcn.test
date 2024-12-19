@@ -1,0 +1,51 @@
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+
+--echo #####################################
+--echo # ac_prepare will push up sys GCN.
+--echo #####################################
+
+connect(con1, localhost, root,,);
+
+connection default;
+--let $commit_gcn = `select @base_seq + 100`
+
+connection con1;
+set session xa_detach_on_prepare = on;
+xa start 'ac_t5_b1';
+xa end 'ac_t5_b1';
+
+connection con1;
+--echo call dbms_xa.ac_prepare('ac_t5_b1', '', 1, 1, 1, commit_gcn)
+--disable_query_log
+--disable_result_log
+--eval call dbms_xa.ac_prepare('ac_t5_b1', '', 1, 1, 1, $commit_gcn)
+--enable_result_log
+--enable_query_log
+
+--let $expect_sys_gcn= $commit_gcn
+--let $actual_sys_gcn= `select VARIABLE_VALUE from performance_schema.global_status where variable_name = 'Lizard_current_gcn'`
+--let $assert_text=expect_sys_gcn == actual_sys_gcn
+--let $assert_cond="$expect_sys_gcn" = "$actual_sys_gcn"
+--source include/assert.inc
+
+--echo #####################################
+--echo # ac_commit will push up sys GCN.
+--echo #####################################
+
+connection default;
+--let $commit_gcn = `select @base_seq + 100`
+
+connection con1;
+echo call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+  #master_trx_id, #master_uba, #gcn);
+--disable_query_log
+--eval call dbms_xa.ac_commit('ac_t5_b1', '', 1, $commit_gcn, "", 0, 0)
+--enable_query_log
+
+--let $expect_sys_gcn= $commit_gcn
+--let $actual_sys_gcn= `select VARIABLE_VALUE from performance_schema.global_status where variable_name = 'Lizard_current_gcn'`
+--let $assert_text=expect_sys_gcn == actual_sys_gcn
+--let $assert_cond="$expect_sys_gcn" = "$actual_sys_gcn"
+--source include/assert.inc
+
+--disconnect con1

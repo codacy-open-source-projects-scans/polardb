@@ -22,8 +22,8 @@
 
 --sleep $slave_sleep
 
---let $remaining_delay= query_get_value(SELECT REMAINING_DELAY FROM performance_schema.replication_applier_status, REMAINING_DELAY, 1)
---let $sql_remaining_delay= query_get_value(SHOW SLAVE STATUS, SQL_Remaining_Delay, 1)
+--let $remaining_delay= query_get_value(SELECT REMAINING_DELAY FROM performance_schema.replication_applier_status where channel_name="test", REMAINING_DELAY, 1)
+--let $sql_remaining_delay= query_get_value(SHOW SLAVE STATUS for channel 'test', SQL_Remaining_Delay, 1)
 
 # Assert that the remaining delay value shown by both show slave status
 # and replication_applier_status table of performance schema is same.
@@ -37,7 +37,7 @@
 --source include/sync_slave_sql_with_master.inc
 
 --let $assert_text= Status should not be 'Waiting until SOURCE_DELAY seconds after source executed event'
---let $assert_cond= NOT("[SHOW SLAVE STATUS, Slave_SQL_Running_State, 1]" LIKE "Waiting until % seconds after source executed event")
+--let $assert_cond= NOT("[SHOW SLAVE STATUS for channel \'test\', Slave_SQL_Running_State, 1]" LIKE "Waiting until % seconds after source executed event")
 --source include/assert.inc
 
 --source include/rpl_connection_master.inc
