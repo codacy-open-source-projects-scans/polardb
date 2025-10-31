@@ -1,0 +1,46 @@
+include/master-slave.inc
+[connection master]
+include/stop_slave.inc [FOR CHANNEL 'test']
+RESET SLAVE ALL;
+include/start_slave.inc [FOR CHANNEL 'test']
+
+====================================================================
+Testing index for columns CHANNEL_NAME
+====================================================================
+############ Explain for Query ####################################
+explain select HOST 
+from performance_schema.replication_connection_configuration 
+where CHANNEL_NAME = "impossible";
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	NULL	NULL	NULL	NULL	NULL	NULL	NULL	#	NULL	no matching row in const table
+############ Explain for Query ####################################
+explain select HOST
+from performance_schema.replication_connection_configuration
+where CHANNEL_NAME > "impossible";
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	replication_connection_configuration	NULL	ALL	PRIMARY	NULL	NULL	NULL	#	33.33	Using where
+############ Explain for Query ####################################
+explain select HOST
+from performance_schema.replication_connection_configuration
+where CHANNEL_NAME < "2";
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	replication_connection_configuration	NULL	ALL	PRIMARY	NULL	NULL	NULL	#	33.33	Using where
+############ Explain for Query ####################################
+explain select HOST
+from performance_schema.replication_connection_configuration
+where CHANNEL_NAME = "channel_1";
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	NULL	NULL	NULL	NULL	NULL	NULL	NULL	#	NULL	no matching row in const table
+############# Explain End #########################################
+flush status;
+select HOST
+from performance_schema.replication_connection_configuration
+where CHANNEL_NAME = "channel_1";
+HOST
+OK: handler_read_key incremented
+include/stop_slave.inc [FOR CHANNEL 'test']
+RESET SLAVE ALL;
+Warnings:
+Warning	1287	'RESET SLAVE' is deprecated and will be removed in a future release. Please use RESET REPLICA instead
+include/start_slave.inc [FOR CHANNEL 'test']
+include/rpl_end.inc

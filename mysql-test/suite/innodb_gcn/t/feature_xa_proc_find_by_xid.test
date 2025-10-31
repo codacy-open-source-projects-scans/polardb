@@ -1,0 +1,164 @@
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+
+set global innodb_purge_rseg_truncate_frequency = 1;
+
+create table t1 (id int);
+
+--source include/wait_innodb_all_purged.inc
+
+set global innodb_undo_retention = 9000;
+
+--echo ###############################
+--echo # case 1
+--echo ###############################
+--let $commit_gcn = `select @base_seq + 100`
+xa start 'ac_fbx1_b1';
+insert into t1 values (1);
+xa end 'ac_fbx1_b1';
+xa prepare 'ac_fbx1_b1';
+--disable_query_log
+--eval set innodb_commit_seq = $commit_gcn
+--enable_query_log
+xa commit 'ac_fbx1_b1';
+
+--let $expect_gcn= $commit_gcn
+--let $expect_status= COMMIT
+--let $my_xid= 'ac_fbx1_b1','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ###############################
+--echo # case 2
+--echo ###############################
+--let $commit_gcn = `select @base_seq + 200`
+xa start 'ac_fbx1_b2';
+insert into t1 values (1);
+xa end 'ac_fbx1_b2';
+xa prepare 'ac_fbx1_b2';
+--disable_query_log
+--eval set innodb_commit_seq = $commit_gcn
+--enable_query_log
+xa rollback 'ac_fbx1_b2';
+
+--let $expect_gcn=
+--let $expect_status= ROLLBACK
+--let $my_xid= 'ac_fbx1_b2','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ###############################
+--echo # case 3
+--echo ###############################
+connect (conn1,localhost,root,,);
+connection conn1;
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+
+connection default;
+--let $commit_gcn = `select @base_seq + 300`
+xa start 'ac_fbx1_b3';
+insert into t1 values (1);
+xa end 'ac_fbx1_b3';
+xa prepare 'ac_fbx1_b3';
+
+connection conn1;
+--let $expect_status=DETACHED_PREPARE
+--let $my_xid='ac_fbx1_b3','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+connection default;
+--disable_query_log
+--eval set innodb_commit_seq = $commit_gcn
+--enable_query_log
+xa commit 'ac_fbx1_b3';
+
+connection conn1;
+--let $expect_gcn= $commit_gcn
+--let $expect_status= COMMIT
+--let $my_xid= 'ac_fbx1_b3','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
+connection default;
+
+--echo ###############################
+--echo # case 4
+--echo ###############################
+--let $commit_gcn = `select @base_seq + 400`
+xa start 'ac_fbx1_b4';
+xa end 'ac_fbx1_b4';
+xa prepare 'ac_fbx1_b4';
+--disable_query_log
+--eval set innodb_commit_seq = $commit_gcn
+--enable_query_log
+xa commit 'ac_fbx1_b4';
+
+--let $expect_status=NOTSTART_OR_FORGET
+--let $my_xid='ac_fbx1_b4','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ###############################
+--echo # case 5
+--echo ###############################
+--disable_ps_protocol
+--let $commit_gcn = `select @base_seq + 500`
+xa start 'ac_fbx1_b5';
+--error ER_XAER_RMFAIL
+call dbms_xa.find_by_xid('ac_fbx1_b5', '', 1);
+insert into t1 values (1);
+--error ER_XAER_RMFAIL
+call dbms_xa.find_by_xid('ac_fbx1_b5', '', 1);
+xa end 'ac_fbx1_b5';
+--error ER_XAER_RMFAIL
+call dbms_xa.find_by_xid('ac_fbx1_b5', '', 1);
+xa prepare 'ac_fbx1_b5';
+--disable_result_log
+call dbms_xa.find_by_xid('ac_fbx1_b5', '', 1);
+--enable_result_log
+
+--disable_query_log
+--eval set innodb_commit_seq = $commit_gcn
+--enable_query_log
+xa commit 'ac_fbx1_b5';
+
+--echo ###############################
+--echo # case 6
+--echo ###############################
+--error ER_XA_PROC_WRONG_XID
+call dbms_xa.find_by_xid('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '', 1);
+--enable_ps_protocol
+
+--echo ###############################
+--echo # case 7
+--echo ###############################
+--let $commit_gcn = `select @base_seq + 700`
+xa start 'drds-13ef7e97bbc00000@e394da2fea20da21', 'DRDS_POLARX1_QATEST_APP_000003_GROUP@0004';
+insert into t1 values (1);
+xa end 'drds-13ef7e97bbc00000@e394da2fea20da21', 'DRDS_POLARX1_QATEST_APP_000003_GROUP@0004';
+xa prepare 'drds-13ef7e97bbc00000@e394da2fea20da21', 'DRDS_POLARX1_QATEST_APP_000003_GROUP@0004';
+--disable_query_log
+--eval set innodb_commit_seq = $commit_gcn
+--enable_query_log
+xa commit 'drds-13ef7e97bbc00000@e394da2fea20da21', 'DRDS_POLARX1_QATEST_APP_000003_GROUP@0004';
+
+--let $expect_gcn= $commit_gcn
+--let $expect_status= COMMIT
+--let $my_xid= 'drds-13ef7e97bbc00000@e394da2fea20da21','DRDS_POLARX1_QATEST_APP_000003_GROUP@0004',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+--echo ###############################
+--echo # case 8
+--echo ###############################
+--let $commit_gcn = `select @base_seq + 800`
+xa start 'ac_fbx1_b8';
+insert into t1 values (1);
+xa end 'ac_fbx1_b8';
+--disable_query_log
+--eval set innodb_commit_seq = $commit_gcn
+--enable_query_log
+xa commit 'ac_fbx1_b8' one phase;
+
+--let $expect_gcn= $commit_gcn
+--let $expect_status= COMMIT
+--let $my_xid= 'ac_fbx1_b8','',1
+--source suite/innodb_gcn/include/xa_info_verify.inc
+
+drop table t1;
+
+set global innodb_undo_retention = default;
+set global innodb_purge_rseg_truncate_frequency = default;

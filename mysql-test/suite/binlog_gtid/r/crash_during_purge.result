@@ -1,0 +1,423 @@
+call mtr.add_suppression('Unsafe statement written .*');
+call mtr.add_suppression('Found .*');
+create database db_crash_9;
+create table db_crash_9.t(id int);
+insert into db_crash_9.t values(0);
+create table db_crash_9.t2(id int);
+insert into db_crash_9.t2 values(0);
+# run cmd: insert into db_crash_9.t values(1)
+xa recover;
+formatID	gtrid_length	bqual_length	data
+# 01. succ
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 11. crash_purge_before_update_index
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(28);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 21. crash_purge_before_remove_logs_from_index
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(40);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 31. fault_injection_copy_part_file
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(52);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 41. crash_create_before_rename_index_file
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(64);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 51. crash_create_after_rename_index_file
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(76);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 61. crash_purge_before_truncate_before
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(88);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 71. crash_purge_before_update_index_after_truncate
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(100);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 81. crash_purge_critical_after_update_index
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(112);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 91. crash_purge_non_critical_after_update_index
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(124);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# run cmd: update db_crash_9.t set id = id+1
+xa recover;
+formatID	gtrid_length	bqual_length	data
+# 02. succ
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 12. crash_purge_before_update_index
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(146);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 22. crash_purge_before_remove_logs_from_index
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(158);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 32. fault_injection_copy_part_file
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(170);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 42. crash_create_before_rename_index_file
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(182);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 52. crash_create_after_rename_index_file
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(194);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 62. crash_purge_before_truncate_before
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(206);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 72. crash_purge_before_update_index_after_truncate
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(218);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 82. crash_purge_critical_after_update_index
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(230);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+# 92. crash_purge_non_critical_after_update_index
+set @@debug='';
+flush logs;
+xa recover;
+formatID	gtrid_length	bqual_length	data
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+finish load
+flush logs;
+insert into db_crash_9.t2 values(1);
+select @@debug;
+@@debug
+
+call dbms_consensus.purge_log(242);;
+show consensus logs;
+ERROR HY000: Lost connection to MySQL server during query
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	xx
+xa commit 'xx';
+SET GLOBAL debug="";
+drop table db_crash_9.t;
+drop table db_crash_9.t2;
+drop database db_crash_9;

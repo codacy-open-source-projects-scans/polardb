@@ -1,0 +1,85 @@
+--source suite/innodb_gcn/include/init_conn_base_seq.inc
+
+delimiter //;
+
+create procedure print_idx_image(in image_idx int)
+begin
+  set @image_gcn = (select image_gcn from foo_history where id = image_idx);
+  select image_idx, foo.* from foo as of gcn @image_gcn;
+end //
+
+create procedure print_all_images(in n_image int)
+begin
+  declare image_idx int default 1;
+  while image_idx <= n_image DO
+    call print_idx_image(image_idx);
+    set image_idx = image_idx + 1;
+  end while;
+end //
+
+create procedure update_foo_history()
+begin
+  set @image_number = @image_number + 1;
+  set @i_gcn = (select VARIABLE_VALUE from performance_schema.global_status where variable_name = 'Lizard_current_gcn');
+  set @i_gcn = @i_gcn + 1;
+  insert into foo_history (image_gcn) values (@i_gcn);
+end //
+
+delimiter ;//
+
+create table foo_history (id int auto_increment, image_gcn bigint, primary key(id));
+
+create table foo (id int, sec int, primary key(id), index sec (sec));
+
+set @image_number = 0;
+
+begin;
+--disable_query_log
+--let $my_gcn = `select @base_seq + 100`
+--eval set innodb_commit_seq = $my_gcn
+--enable_query_log
+insert into foo values (1, 10);
+commit;
+call update_foo_history();
+
+begin;
+--disable_query_log
+--let $my_gcn = `select @base_seq + 200`
+--eval set innodb_commit_seq = $my_gcn
+--enable_query_log
+insert into foo values (2, 20);
+commit;
+call update_foo_history();
+
+begin;
+--disable_query_log
+--let $my_gcn = `select @base_seq + 300`
+--eval set innodb_commit_seq = $my_gcn
+--enable_query_log
+delete from foo where id = 2;
+commit;
+call update_foo_history();
+
+begin;
+--disable_query_log
+--let $my_gcn = `select @base_seq + 400`
+--eval set innodb_commit_seq = $my_gcn
+--enable_query_log
+update foo set id = 3 where id = 2;
+commit;
+call update_foo_history();
+
+call print_all_images(@image_number);
+
+--source include/restart_mysqld.inc
+
+select @@global.innodb_undo_retention;
+select @@global.innodb_undo_space_reserved_size;
+
+call print_all_images(4);
+
+drop table foo;
+drop table foo_history;
+drop procedure print_idx_image;
+drop procedure print_all_images;
+drop procedure update_foo_history;

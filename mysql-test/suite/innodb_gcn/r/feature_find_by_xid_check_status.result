@@ -1,0 +1,62 @@
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+set global innodb_undo_retention = 9000;
+###############################
+# Case: ATTACHED
+###############################
+set session xa_detach_on_prepare = on;
+xa start 'ac_t3_b1';
+xa end 'ac_t3_b1';
+include/assert.inc [expect_status == actual_status]
+###############################
+# Case: DETACHED_PREPARE
+###############################
+call dbms_xa.ac_prepare('ac_t3_b1', '', 1, 1, 1, commit_gcn)
+include/assert.inc [expect_status == actual_status]
+###############################
+# Case: COMMIT
+###############################
+call dbms_xa.ac_commit(#gtrid, #bqual, #formatID, #server_uuid,
+#master_trx_id, #master_uba, #gcn)
+include/assert.inc [expect_status == actual_status]
+include/assert.inc [expect_gcn == actual_gcn]
+include/assert.inc [expect_m_trx_id == actual_m_trx_id]
+include/assert.inc [expect_m_uba == actual_m_uba]
+include/assert.inc [expect_status == actual_status]
+###############################
+# Case: ROLLBACK
+###############################
+xa start 'ac_t3_b2';
+xa end 'ac_t3_b2';
+call dbms_xa.ac_prepare('ac_t3_b2', '', 1, 1, 1, commit_gcn)
+xa rollback 'ac_t3_b2';
+include/assert.inc [expect_status == actual_status]
+###############################
+# Case: find_by_xid after ac_commit acquire_locks
+###############################
+set session xa_detach_on_prepare = on;
+xa start 'ac_t3_b3';
+xa end 'ac_t3_b3';
+call dbms_xa.ac_prepare('ac_t3_b3', '', 1, 1, 1, commit_gcn)
+send call dbms_xa.ac_commit('ac_t3_b3', '', 1, commit_gcn, "", 0, 0)
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	8	0	ac_t3_b3
+set debug_sync='now WAIT_FOR parked';
+include/assert.inc [expect_status == actual_status]
+set debug_sync='now SIGNAL go';
+###############################
+# Case: find_by_xid after XA ROLLBACK acquire_locks
+###############################
+set session xa_detach_on_prepare = on;
+xa start 'ac_t3_b4';
+xa end 'ac_t3_b4';
+call dbms_xa.ac_prepare('ac_t3_b4', '', 1, 1, 1, commit_gcn)
+set debug_sync='detached_xa_commit_after_acquire_commit_lock SIGNAL parked WAIT_FOR go';
+xa rollback 'ac_t3_b4';
+set debug_sync='now WAIT_FOR parked';
+include/assert.inc [expect_status == actual_status]
+set debug_sync='now SIGNAL go';
+###############################
+# cleanup
+###############################
+set global innodb_undo_retention = default;

@@ -1,0 +1,95 @@
+# start a new learner
+# connect leader
+call dbms_consensus.add_learner(learner_cluster_info);
+select count(*) from information_schema.alisql_cluster_global where role='LEARNER';
+count(*)
+1
+create database aaa;
+use aaa;
+create table t (id int);
+insert into t values(1);
+# start a new learner
+call dbms_consensus.add_learner(learner_cluster_info);
+select count(*) from information_schema.alisql_cluster_global where role='LEARNER';
+count(*)
+2
+stop xpaxos_replication;
+call dbms_consensus.drop_learner("learner_info_1");
+call dbms_consensus.drop_learner("learner_info_2");
+select count(*) from information_schema.alisql_cluster_global where role='LEARNER';
+count(*)
+0
+call dbms_consensus.force_single_mode();
+call dbms_consensus.add_learner("learner_info_2");
+call dbms_consensus.upgrade_learner("learner_info_2");
+select count(*) from information_schema.alisql_cluster_global where role='FOLLOWER';
+count(*)
+1
+start xpaxos_replication;
+"slave_host_id":No such row
+create user rep identified with mysql_native_password by '123456';
+grant replication slave on *.* to rep;
+stop slave for channel 'aaa';
+ERROR HY000: Slave channel 'aaa' does not exist.
+reset slave all for channel 'aaa';
+ERROR HY000: Slave channel 'aaa' does not exist.
+change master to master_host = '127.0.0.1', master_port = MYPORT_1,  master_user = 'rep', master_password = '123456',   master_auto_position=1  for channel 'aaa';
+"io_running":No,"sql_running":No
+"io_running":No,"sql_running":No
+start slave for channel 'aaa';
+"io_running":Yes,"sql_running":Yes
+drop database if exists d1;
+create database if not exists d1;
+drop table if exists d1.t0;
+create table d1.t0(c1 int , c2 varchar(100));
+insert into d1.t0 values(3, "ddddddddddddddddddddddddddddddddddddddddddddddddddd");
+select * from d1.t0;
+c1	c2
+3	ddddddddddddddddddddddddddddddddddddddddddddddddddd
+"io_running":Yes,"sql_running":Yes
+select * from d1.t0;
+c1	c2
+3	ddddddddddddddddddddddddddddddddddddddddddddddddddd
+call dbms_consensus.change_leader("learner_info_2");
+"io_running":No,"sql_running":No
+stop slave for channel 'aaa';
+ERROR HY000: The consensus follower is not allowed to to do current operation.
+start slave for channel 'aaa';
+ERROR HY000: The consensus follower is not allowed to to do current operation.
+reset slave all for channel 'aaa';
+change master to master_host = '127.0.0.1', master_port = MYPORT_1,  master_user = 'rep', master_password = '123456',   master_auto_position=1  for channel 'aaa';
+ERROR HY000: The consensus follower is not allowed to to do current operation.
+show slave status for channel 'aaa';
+ERROR HY000: Slave channel 'aaa' does not exist.
+show slave status for channel 'aaa';
+ERROR HY000: Slave channel 'aaa' does not exist.
+stop slave for channel 'aaa';
+ERROR HY000: Slave channel 'aaa' does not exist.
+reset slave all for channel 'aaa';
+ERROR HY000: Slave channel 'aaa' does not exist.
+change master to master_host = '127.0.0.1', master_port = MYPORT_1,  master_user = 'rep', master_password = '123456',   master_auto_position=1  for channel 'aaa';
+"io_running":No,"sql_running":No
+start slave for channel 'aaa';
+"io_running":Yes,"sql_running":Yes
+select * from d1.t0;
+c1	c2
+3	ddddddddddddddddddddddddddddddddddddddddddddddddddd
+insert into d1.t0 values(3, "ddddddddddddddddddddddddddddddddddddddddddddddddddd");
+select * from d1.t0;
+c1	c2
+3	ddddddddddddddddddddddddddddddddddddddddddddddddddd
+3	ddddddddddddddddddddddddddddddddddddddddddddddddddd
+"io_running":Yes,"sql_running":Yes
+select * from d1.t0;
+c1	c2
+3	ddddddddddddddddddddddddddddddddddddddddddddddddddd
+stop slave for channel 'aaa';
+reset slave all for channel 'aaa';
+show slave status for channel 'aaa';
+ERROR HY000: Slave channel 'aaa' does not exist.
+select * from d1.t0;
+c1	c2
+3	ddddddddddddddddddddddddddddddddddddddddddddddddddd
+drop database if exists d1;
+drop database if exists aaa;
+drop user rep;

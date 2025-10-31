@@ -1,0 +1,35 @@
+create user test@localhost;
+GRANT SELECT ON *.* to test@localhost;
+connect(normal_user, localhost, test, , test);
+
+connection default;
+
+# normal user can not see this variable
+connection normal_user;
+
+show variables like 'rds_release_date';
+show variables like 'polardbx_engine_version';
+
+# super user can see this variable
+connection default;
+--replace_column 1 19900210
+select @@rds_release_date;
+
+select @@polardbx_engine_version;
+
+--replace_column 2 19900210
+show variables like 'rds_release_date';
+
+show variables like 'polardbx_engine_version';
+
+--error ER_INCORRECT_GLOBAL_LOCAL_VAR
+set global rds_release_date="20230711";
+
+--error ER_INCORRECT_GLOBAL_LOCAL_VAR
+set global polardbx_engine_version="20230711";
+
+# print mysqld commit id
+--exec $MYSQLD --version | grep "commit id" -i | wc -l | tr -d ' \t'
+
+# clear
+drop user test@localhost;

@@ -1,0 +1,15 @@
+SET @base_seq = (SELECT CAST(variable_value AS UNSIGNED) FROM performance_schema.global_status WHERE variable_name = 'Lizard_current_gcn');
+create table t1 (id int);
+insert into t1 values (1);
+SELECT * FROM t1 AS OF GCN #AS_OF_GCN
+id
+1
+include/assert.inc [AS OF QUERY SHOULD NOT PUSH UP SYS GCN]
+begin;
+set innodb_snapshot_seq = #SET_VAR_GCN
+select * from t1;
+id
+1
+commit;
+include/assert.inc [SET innodb_snapshot_seq WILL PUSH UP SYS GCN]
+drop table t1;

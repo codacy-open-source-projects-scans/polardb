@@ -1,0 +1,65 @@
+
+--source include/master-slave.inc
+ 
+connection slave;
+ 
+let $MYSQLD_DATADIR= `SELECT @@datadir`;
+--exec echo '' > $MYSQLD_DATADIR/../../log/mysqld.2.err
+
+set global binlog_cache_size=1024*1024;
+--exec grep 'set global binlog_cache_size' $MYSQLD_DATADIR/../../log/mysqld.2.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+ 
+set global binlog_cache_size=1024*512;
+--exec grep 'set global binlog_cache_size=' $MYSQLD_DATADIR/../../log/mysqld.2.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+ 
+set global binlog_cache_size=1024*1024;
+--exec grep 'set global binlog_cache_size' $MYSQLD_DATADIR/../../log/mysqld.2.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+ 
+set global binlog_cache_size=default;
+--exec grep 'set global binlog_cache_size' $MYSQLD_DATADIR/../../log/mysqld.2.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+
+stop slave;
+--exec grep ':stop slave' $MYSQLD_DATADIR/../../log/mysqld.2.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+start slave;
+--exec grep ':start slave' $MYSQLD_DATADIR/../../log/mysqld.2.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+ 
+
+#connection master
+connection master;
+let @binlog_cache_size = @@global.binlog_cache_size;
+
+let $MYSQLD_DATADIR= `SELECT @@datadir`;
+--exec echo '' > $MYSQLD_DATADIR/../../log/mysqld.1.err
+
+set global binlog_cache_size=1024*1024;
+--exec grep 'set global binlog_cache_size' $MYSQLD_DATADIR/../../log/mysqld.1.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+ 
+set global binlog_cache_size=1024*512;
+--exec grep 'set global binlog_cache_size=' $MYSQLD_DATADIR/../../log/mysqld.1.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+ 
+set global binlog_cache_size=1024*1024;
+--exec grep 'set global binlog_cache_size' $MYSQLD_DATADIR/../../log/mysqld.1.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+ 
+set global binlog_cache_size=default;
+--exec grep 'set global binlog_cache_size' $MYSQLD_DATADIR/../../log/mysqld.1.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+
+set global rds_audit_log_flush=1;
+--exec grep 'set global rds_audit_log_flush=1' $MYSQLD_DATADIR/../../log/mysqld.1.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+
+set global diagnose_excluded_vars_list='binlog_cache_size';
+
+set global rds_audit_log_flush=1;
+--exec grep 'set global rds_audit_log_flush=1' $MYSQLD_DATADIR/../../log/mysqld.1.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+
+set global binlog_cache_size=default;
+--exec grep 'set global binlog_cache_size' $MYSQLD_DATADIR/../../log/mysqld.1.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+
+set global diagnose_excluded_vars_list=DEFAULT;
+set global rds_audit_log_flush=1;
+--exec grep 'set global rds_audit_log_flush=1' $MYSQLD_DATADIR/../../log/mysqld.1.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+
+reset master;
+--exec grep ':reset master' $MYSQLD_DATADIR/../../log/mysqld.1.err | sed 's/^\(.*\)\(\[.*\)/\2/'
+
+--source include/rpl_end.inc
+

@@ -1,0 +1,70 @@
+flush local logs;
+flush local logs;
+flush local logs;
+# --------- normal case -----------
+use test;
+create table t1 (id int primary key, data longblob);
+insert into t1 values (1, repeat("a", 2048576));
+insert into t1 values (0, 'a');
+consistent!!!!!!!
+# --------- normal case 2 ---------
+set global debug="+d,get_log_from_fifo_fail_when_blob_end";
+insert into t1 values (100, repeat("a", 2048576));
+set global debug="";
+consistent!!!!!!!
+# --------- case 1 ---------
+insert into t1 values (2, repeat("a", 2048576));
+set global debug="+d,crash_during_large_event_binlog_flush";
+insert into t1 values (3, repeat("a", 2048576));
+ERROR HY000: Lost connection to MySQL server during query
+# restart
+insert into t1 values (13, 'a');
+consistent!!!!!!!
+# --------- case 2 ---------
+insert into t1 values (4, repeat("a", 2048576));
+set global debug="+d,crash_during_large_event_binlog_flush_slow";
+insert into t1 values (5, repeat("a", 2048576));
+ERROR HY000: Lost connection to MySQL server during query
+# restart
+insert into t1 values (15, 'a');
+consistent!!!!!!!
+# --------- case 3 ---------
+insert into t1 values (6, repeat("a", 2048576));
+set global debug="+d,crash_during_large_event_receive";
+insert into t1 values (7, repeat("a", 2048576));
+insert into t1 values (8, repeat("a", 2048576));
+insert into t1 values (18, 'a');
+consistent!!!!!!!
+# --------- case 4 ---------
+insert into t1 values (9, repeat("a", 2048576));
+set global debug="+d,crash_during_large_event_receive_slow";
+insert into t1 values (10, repeat("a", 2048576));
+insert into t1 values (11, repeat("a", 2048576));
+insert into t1 values (111, 'a');
+consistent!!!!!!!
+# --------- case 5 ---------
+set global debug="+d,crash_during_large_event_receive";
+set force_revise=1;
+set sql_log_bin=0;
+flush relay logs;
+set force_revise=0;
+set sql_log_bin=1;
+insert into t1 values (23, repeat("a", 2048576));
+insert into t1 values (24, 'a');
+set global consensus_force_promote=1;
+show global status like '%fifo%';
+Variable_name	Value
+consensus_fifo_cache_first_index	2
+consensus_fifo_cache_log_count	115
+consensus_fifo_cache_used_size	22540152
+call dbms_consensus.force_purge_cache(2);;
+show global status like '%fifo%';
+Variable_name	Value
+consensus_fifo_cache_first_index	3
+consensus_fifo_cache_log_count	114
+consensus_fifo_cache_used_size	22539898
+insert into t1 values (25, repeat("a", 2048576));
+consistent!!!!!!!
+drop table t1;
+set global debug="";
+set global consensus_force_promote=1;

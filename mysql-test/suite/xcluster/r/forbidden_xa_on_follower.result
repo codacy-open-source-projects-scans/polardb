@@ -1,0 +1,22 @@
+USE test;
+CREATE TABLE xa_test_table (c1 int primary key, c2 int) ENGINE=INNODB;
+XA START 'xid1';
+INSERT INTO xa_test_table VALUE (1,1);
+XA END 'xid1';
+XA PREPARE 'xid1';
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	4	0	xid1
+SELECT * FROM xa_test_table;
+c1	c2
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	4	0	xid1
+XA START 'xid_exec_xa_on_follower';
+ERROR HY000: The consensus follower is not allowed to to do current operation.
+XA COMMIT 'xid1';
+ERROR HY000: The consensus follower is not allowed to to do current operation.
+XA ROLLBACK 'xid1';
+ERROR HY000: The consensus follower is not allowed to to do current operation.
+XA COMMIT 'xid1';
+drop table xa_test_table;

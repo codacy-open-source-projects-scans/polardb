@@ -1,0 +1,2 @@
+--force-restart --consensus_log_level=2 --log_error_verbosity=3
+

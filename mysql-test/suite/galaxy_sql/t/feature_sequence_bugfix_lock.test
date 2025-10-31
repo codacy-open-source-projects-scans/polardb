@@ -1,0 +1,31 @@
+--source include/have_binlog_format_row.inc
+
+--disable_warnings
+
+connection default;
+
+create database s_db;
+create user normal_1@'%' identified by 'pass';
+grant all on s_db.* to normal_1@'%' ;
+
+
+connect(m_normal_1, 127.0.0.1, normal_1, pass, s_db);
+
+--echo ####################################
+--echo 1.test lock write
+--echo ####################################
+
+connection m_normal_1;
+use s_db;
+create sequence s1 start with 1 maxvalue 10 increment by 1 nocache;
+lock table s1 write;
+select * from s1;
+drop sequence s1;
+
+disconnect m_normal_1;
+
+connection default;
+drop database s_db;
+drop user normal_1@'%';
+
+--enable_warnings
