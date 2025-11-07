@@ -228,6 +228,7 @@ using std::log2;
 using std::max;
 using std::min;
 
+bool opt_disable_binlog_savepoint = true;
 /**
   While we have legacy_db_type, we have this array to
   check for dups and to find handlerton from legacy_db_type.
@@ -1575,7 +1576,7 @@ std::pair<int, bool> commit_owned_gtids(THD *thd, bool all,
       longer allowed.
     */
     if (thd->owned_gtid.sidno > 0 && !thd->se_persists_gtid() &&
-        thd->xpaxos_replication_channel && !is_xa_second_phase) {
+        (thd->xpaxos_replication_channel && !is_xa_second_phase)) {
       error = gtid_state->save(thd);
     }
   }
@@ -2347,8 +2348,14 @@ int ha_savepoint(THD *thd, SAVEPOINT *sv) {
       !thd->in_sub_stmt ? Transaction_ctx::SESSION : Transaction_ctx::STMT;
 
   DBUG_TRACE;
-
   auto ha_list = thd->get_transaction()->ha_trx_info(trx_scope);
+
+  /* 
+  ** Store the state into struct SAVEPOINT, try to ensure that the pair's status won't be changed. 
+  ** Read the variable outside the loop to ensure consistent states between different storage engines.  
+  */
+  sv->binlog_savepoint_disabled = opt_disable_binlog_savepoint;
+
   for (auto const &ha_info : ha_list) {
     int err;
     auto ht = ha_info.ht();
@@ -2358,6 +2365,7 @@ int ha_savepoint(THD *thd, SAVEPOINT *sv) {
       error = 1;
       break;
     }
+
     if ((err = ht->savepoint_set(
              ht, thd,
              (uchar *)(sv + 1) + ht->savepoint_offset))) {  // cannot happen
@@ -7327,7 +7335,7 @@ int handler::read_range_first(const key_range *start_key,
 
   eq_range = eq_range_arg;
   set_end_range(end_key, RANGE_SCAN_ASC);
-
+  range_read_rows = 0;
   range_key_part = table->key_info[active_index].key_part;
 
   if (!start_key)  // Read first record
@@ -7345,6 +7353,9 @@ int handler::read_range_first(const key_range *start_key,
     */
     unlock_row();
     result = HA_ERR_END_OF_FILE;
+  }
+  if (!result) {
+    range_read_rows++;
   }
   return result;
 }
@@ -7400,6 +7411,13 @@ int handler::read_range_next() {
   DBUG_TRACE;
 
   int result;
+  if (end_range != nullptr && end_range->m_limit != HA_POS_ERROR) {
+    if (range_read_rows > end_range->m_limit) {
+      DBUG_PRINT("range_limit",
+        ("range(%p) limit reaches, read_rows(%llu)", end_range->key, range_read_rows));
+      return HA_ERR_END_OF_FILE;
+    }
+  }
   if (eq_range) {
     /* We trust that index_next_same always gives a row in range */
     result =
@@ -7416,6 +7434,9 @@ int handler::read_range_next() {
       unlock_row();
       result = HA_ERR_END_OF_FILE;
     }
+  }
+  if (!result) {
+    range_read_rows++;
   }
   return result;
 }
@@ -8019,6 +8040,60 @@ int handler::ha_write_row(uchar *buf) {
     return error; /* purecov: inspected */
 
   DEBUG_SYNC_C("ha_write_row_end");
+  return 0;
+}
+
+int handler::ha_update_row_for_gu_follower(const uchar *old_data,
+                                           const uchar *new_data) {
+  int error;
+  assert(table_share->tmp_table != NO_TMP_TABLE || m_lock_type == F_WRLCK);
+  Log_func *log_func = Update_rows_log_event::binlog_row_logging_function;
+
+  DBUG_TRACE;
+
+  assert(new_data == table->record[0]);
+  assert(old_data == table->record[1]);
+
+  mark_trx_read_write();
+
+  if (unlikely((error = binlog_log_row(table, old_data, new_data, log_func))))
+    return error;
+
+  return 0;
+}
+
+int handler::ha_update_row_for_gu_leader(const uchar *old_data, uchar *new_data,
+                                         const uchar *binlog_new_data) {
+  int error = 0;
+  assert(table_share->tmp_table != NO_TMP_TABLE || m_lock_type == F_WRLCK);
+  Log_func *log_func = Update_rows_log_event::binlog_row_logging_function;
+
+  /*
+    Some storage engines require that the new record is in record[0]
+    (and the old record is in record[1]).
+   */
+  assert(binlog_new_data == table->record[0]);
+  assert(old_data == table->record[1]);
+
+  mark_trx_read_write();
+
+  MYSQL_TABLE_IO_WAIT(PSI_TABLE_UPDATE_ROW, active_index, error,
+                      { error = update_row(old_data, new_data); })
+
+  // no change in a total group, skip logging GROUP_UPDATE_ROWS_EVENT
+  if (error == HA_ERR_RECORD_IS_THE_SAME) {
+    if (unlikely((error = binlog_log_row(table, old_data, binlog_new_data,
+                                         log_func)))) {
+      return error;
+    }
+    ++group_update_group_same_count;
+    return error;
+  }
+
+  if (unlikely(error)) return error;
+  if (unlikely(
+          (error = binlog_log_row(table, old_data, binlog_new_data, log_func))))
+    return error;
   return 0;
 }
 

@@ -42,6 +42,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "rem0types.h"
 #include "trx0types.h"
 #include "univ.i"
+#include "lizard0txn0rec0types.h"
 
 // Forward declaration
 struct txn_rec_t;
@@ -60,8 +61,8 @@ class Vision;
  negatives. The caller must confirm all positive results by checking if the trx
  is still active.
 */
-trx_t *row_vers_impl_x_locked(const rec_t *rec, const dict_index_t *index,
-                              const ulint *offsets);
+txn_rw_t row_vers_impl_x_locked(const rec_t *rec, const dict_index_t *index,
+                                const ulint *offsets);
 
 /** Finds out if we must preserve a delete marked earlier version of a clustered
  index record, because it is >= the purge view.
@@ -71,8 +72,8 @@ trx_t *row_vers_impl_x_locked(const rec_t *rec, const dict_index_t *index,
                                  clustered index record; it will also hold
                                   the latch on purge_view
  @return true if earlier version should be preserved */
-bool row_vers_must_preserve_del_marked(txn_rec_t *txn_rec,
-                                       const table_name_t &name, mtr_t *mtr);
+//bool row_vers_must_preserve_del_marked(txn_rec_t *txn_rec,
+//                                       const table_name_t &name, mtr_t *mtr);
 
 /** Finds out if a version of the record, where the version >= the current
  purge view, should have ientry as its secondary index entry. We check
@@ -114,11 +115,13 @@ bool row_vers_old_has_index_entry(
                           was freshly inserted afterwards.
  @param[out]   vrow   reports virtual column info if any
  @param[in]   lob_undo   undo log to be applied to blobs.
+ @param[in]   layout   txn layout
  @return DB_SUCCESS or DB_MISSING_HISTORY */
 dberr_t row_vers_build_for_consistent_read(
     const rec_t *rec, mtr_t *mtr, dict_index_t *index, ulint **offsets,
     const lizard::Vision *vision, mem_heap_t **offset_heap, mem_heap_t *in_heap,
-    rec_t **old_vers, const dtuple_t **vrow, lob::undo_vers_t *lob_undo);
+    rec_t **old_vers, const dtuple_t **vrow, lob::undo_vers_t *lob_undo,
+    const txn_layout_t &layout);
 
 /** Constructs the last committed version of a clustered index record,
  which should be seen by a semi-consistent read.

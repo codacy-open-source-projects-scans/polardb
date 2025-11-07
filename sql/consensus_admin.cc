@@ -348,22 +348,23 @@ static bool invalid_on_consensus_limited(enum_sql_command cmd,
   /* update(2018.01.22): disallow change master */
   /* update(2018.04.10): allow follower install/uninstall/show plugins */
   /* update(2018.11.21): allow follower check table */
-  return (cmd > SQLCOM_SELECT && cmd <= SQLCOM_DROP_INDEX) ||
-         (cmd == SQLCOM_LOAD) || (cmd == SQLCOM_GRANT) ||
-         (cmd == SQLCOM_CHANGE_MASTER) ||
-         (cmd == SQLCOM_RENAME_TABLE) ||
-         (cmd >= SQLCOM_CREATE_DB && cmd < SQLCOM_CHECK) ||
-         (cmd >= SQLCOM_ASSIGN_TO_KEYCACHE && cmd < SQLCOM_FLUSH) ||
-         (cmd >= SQLCOM_DELETE_MULTI && cmd <= SQLCOM_UPDATE_MULTI) ||
-         (cmd >= SQLCOM_CREATE_USER && cmd <= SQLCOM_REVOKE_ALL) ||
-         (cmd >= SQLCOM_CREATE_PROCEDURE && cmd <= SQLCOM_SHOW_STATUS_FUNC) ||
-         (cmd >= SQLCOM_CREATE_VIEW && cmd <= SQLCOM_DROP_TRIGGER) ||
-         (cmd >= SQLCOM_XA_START && cmd <= SQLCOM_XA_ROLLBACK) ||
-         (cmd == SQLCOM_ALTER_TABLESPACE) ||
-         (cmd == SQLCOM_BINLOG_BASE64_EVENT) ||
-         (cmd >= SQLCOM_CREATE_SERVER && cmd <= SQLCOM_DROP_EVENT) ||
-         (cmd >= SQLCOM_GET_DIAGNOSTICS && cmd <= SQLCOM_SHOW_CREATE_USER) ||
-         (cmd == SQLCOM_ALTER_INSTANCE);
+  /* update(2025.03.20): disable start/stop slave on follower */
+  return (cmd > SQLCOM_SELECT && cmd <= SQLCOM_DROP_INDEX) || /* 0-10 */
+         (cmd == SQLCOM_LOAD) || /* 30 */
+         (cmd == SQLCOM_GRANT) || /* 34 */
+         (cmd >= SQLCOM_CREATE_DB && cmd <= SQLCOM_OPTIMIZE) || /* 36-45 */
+         (cmd >= SQLCOM_ASSIGN_TO_KEYCACHE && cmd <= SQLCOM_PRELOAD_KEYS) || /* 47-48 */
+         (cmd >= SQLCOM_SLAVE_START && cmd <= SQLCOM_SLAVE_STOP) || /* 57-58 */
+         (cmd >= SQLCOM_CHANGE_MASTER && cmd <= SQLCOM_RENAME_TABLE) || /* 62-64 */
+         (cmd >= SQLCOM_DELETE_MULTI && cmd <= SQLCOM_UPDATE_MULTI) || /* 74-75 */
+         (cmd >= SQLCOM_CREATE_USER && cmd <= SQLCOM_REVOKE_ALL) || /* 84-87 */
+         (cmd >= SQLCOM_CREATE_PROCEDURE && cmd <= SQLCOM_SHOW_STATUS_FUNC) || /* 89-98 */
+         (cmd >= SQLCOM_CREATE_VIEW && cmd <= SQLCOM_XA_ROLLBACK) || /* 102-110 */
+         (cmd == SQLCOM_ALTER_TABLESPACE) || /* 114 */
+         (cmd == SQLCOM_BINLOG_BASE64_EVENT) || /* 117 */
+         (cmd >= SQLCOM_CREATE_SERVER && cmd <= SQLCOM_DROP_EVENT) || /* 119-124 */
+         (cmd >= SQLCOM_GET_DIAGNOSTICS && cmd <= SQLCOM_SHOW_CREATE_USER) || /* 133-136 */
+         (cmd == SQLCOM_ALTER_INSTANCE); /* 138 */
 }
 
 static bool invalid_on_logger_limited(enum_sql_command cmd) {
@@ -380,7 +381,7 @@ static bool invalid_on_consensus_force_recovery_limited(enum_sql_command cmd) {
 int consensus_command_limit(THD *thd) {
   /* rw check: leader read-write, others read-only */
   bool reject_query = false;
-  bool is_leader = false;
+  bool is_leader = !ConsensusLogManager::enable_consensus();
   DBUG_ENTER("consensus_command_limit");
   // dd_upgrade execute inner sql before consensus module startup
   if (!opt_initialize && consensus_ptr != NULL) {
@@ -505,8 +506,7 @@ int start_consensus_apply_threads() {
 
       // Todo: mi must be itself
       /* If server id is not set, start_slave_thread() will say it */
-      if (mi &&
-          channel_map.is_xpaxos_replication_channel_name(mi->get_channel())) {
+      if (mi && channel_map.is_xpaxos_channel(mi)) {
         /* same as in start_slave() cache the global var values into rli's
          * members */
         mi->rli->opt_replica_parallel_workers =
@@ -614,25 +614,74 @@ void stop_slave_threads() {
   channel_map.unlock();
 }
 
-
-int check_exec_consensus_log_end_condition(Relay_log_info *rli,
-                                           bool is_xpaxos_replication) {
+int check_exec_consensus_log_end_condition(Relay_log_info *rli) {
   DBUG_ENTER("check_exec_consensus_log_end_condition");
+  // determine whether exit
+  uint64 stop_term = consensus_log_manager.get_stop_term();
+  long time_diff= 0;
+  if (opt_consensus_leader_stop_apply_time && rli->last_master_timestamp)
+    time_diff= ((long)(time(0) - rli->last_master_timestamp) - rli->mi->clock_diff_with_master);
+
+  if (consensus_log_manager.get_apply_term() >= stop_term
+      || (0 < opt_consensus_stop_apply_index && opt_consensus_stop_apply_index <= consensus_log_manager.get_real_apply_index())
+      || opt_consensus_leader_stop_apply
+      || (opt_consensus_leader_stop_apply_time && time_diff < (long)opt_consensus_leader_stop_apply_time)) {
+    xp::system(ER_XP_APPLIER)
+        << "Apply thread stop, opt_consensus_leader_stop_apply: "
+        << (opt_consensus_leader_stop_apply ? "true" : "false")
+        << ", seconds_behind_master: " << time_diff
+        << ", consensus_leader_stop_apply_time: "
+        << opt_consensus_leader_stop_apply_time
+        << ", consensus_stop_apply_index: "
+        << opt_consensus_stop_apply_index;
+    opt_consensus_leader_stop_apply = false;
+    mysql_mutex_lock(consensus_log_manager.get_apply_thread_lock());
+    mysql_cond_broadcast(consensus_log_manager.get_catchup_cond());
+    consensus_log_manager.set_apply_catchup(true);
+    rli->sql_thread_kill_accepted = true;
+    rli->force_apply_queue_before_stop = true;
+    mysql_mutex_unlock(consensus_log_manager.get_apply_thread_lock());
+    xp::system(ER_XP_APPLIER)
+        << "Apply thread catchup commit index, consensus index: "
+        << rli->get_consensus_apply_index()
+        << ", current term: " << consensus_log_manager.get_current_term()
+        << ", apply term: " << consensus_log_manager.get_apply_term()
+        << ", stop term: " << consensus_log_manager.get_stop_term();
+    DBUG_RETURN(1);
+  }
+  DBUG_RETURN(0);
+}
+
+int check_wait_commitindex(Relay_log_info *rli, bool is_xpaxos_replication) {
+  DBUG_ENTER("check_wait_commitindex");
   if (is_xpaxos_replication && !opt_disable_wait_commitindex) {
     uint64 tmpCommitIndex = 0;
-    // when the followe case, continue read, return 0
+    // xp::system(ER_XP_APPLIER)
+    //     << "check_wait_commitindex "
+    //     << ", current term: " << consensus_log_manager.get_current_term()
+    //     << ", apply term: " << consensus_log_manager.get_apply_term()
+    //     << ", stop term: " << consensus_log_manager.get_stop_term()
+    //     << ", tmpCommitIndex: " << consensus_ptr->getCommitIndex()
+    //     << ", get_real_apply_index: " << consensus_log_manager.get_real_apply_index()
+    //     << ", get_consensus_apply_index: " << rli->get_consensus_apply_index()
+    //     << ", get_apply_index_current_pos: " << consensus_log_manager.get_apply_index_current_pos()
+    //     << ", get_apply_index_end_pos: " << consensus_log_manager.get_apply_index_end_pos()
+    //     << ", get_apply_ev_sequence: " << consensus_log_manager.get_apply_ev_sequence()
+    //     << ", get_apply_ev_finish_count: " << consensus_log_manager.get_apply_ev_finish_count();
+
+    // when any the followe case match, continue read, return 0
     //   commitIndex > applyIndex
     //   commitIndex == applyIndex && apply_current_pos < apply_end_pos
-    // any the followe case, wait and retry
+    //   !is_trx_apply_finished
+    // when any the followe case, wait and retry
     //   commitIndex < applyIndex
-    //   commitIndex == applyIndex && apply_current_pos >= apply_end_pos
-    while (((tmpCommitIndex = consensus_ptr->checkCommitIndex(
-                 consensus_log_manager.get_real_apply_index() - 1,
-                 consensus_log_manager.get_current_term())) <
-            consensus_log_manager.get_real_apply_index()) ||
-           (tmpCommitIndex == consensus_log_manager.get_real_apply_index() &&
-            consensus_log_manager.get_apply_index_current_pos() >=
-                consensus_log_manager.get_apply_index_end_pos())) {
+    //   commitIndex == applyIndex && apply_current_pos >= apply_end_pos && is_trx_apply_finished
+    while (((tmpCommitIndex = consensus_ptr->checkCommitIndex(consensus_log_manager.get_current_term())) <
+              consensus_log_manager.get_real_apply_index())
+            || (tmpCommitIndex == consensus_log_manager.get_real_apply_index()
+                && consensus_log_manager.get_apply_index_current_pos() >=
+                      consensus_log_manager.get_apply_index_end_pos()
+                && consensus_log_manager.is_trx_apply_finished())) {
       if (consensus_ptr->isShutdown()) {
         xp::info(ER_XP_APPLIER)
             << "Apply thread is terminated because of shutdown";
@@ -655,48 +704,20 @@ int check_exec_consensus_log_end_condition(Relay_log_info *rli,
         }
       }
 
-      // determine whether exit
-      uint64 stop_term = consensus_log_manager.get_stop_term();
-      long time_diff = (long)(time(0) - rli->last_master_timestamp);
-      if (stop_term == UINT64_MAX && 0 == opt_consensus_stop_apply_index) {
+      if (consensus_log_manager.get_stop_term() == UINT64_MAX) {
         my_sleep(opt_consensus_check_commit_index_interval);
         continue;
-      } else if (consensus_log_manager.get_apply_term() >= stop_term ||
-                 (0 < opt_consensus_stop_apply_index &&
-                  opt_consensus_stop_apply_index <= consensus_log_manager.get_real_apply_index()) ||
-                 opt_consensus_leader_stop_apply ||
-                 (opt_consensus_leader_stop_apply_time &&
-                  (time_diff < (long)opt_consensus_leader_stop_apply_time))) {
-        xp::system(ER_XP_APPLIER)
-            << "Apply thread stop, opt_consensus_leader_stop_apply: "
-            << (opt_consensus_leader_stop_apply ? "true" : "false")
-            << ", seconds_behind_master: " << time_diff
-            << ", consensus_leader_stop_apply_time: "
-            << opt_consensus_leader_stop_apply_time
-            << ", consensus_stop_apply_index: "
-            << opt_consensus_stop_apply_index;
-        opt_consensus_leader_stop_apply = false;
-        mysql_mutex_lock(consensus_log_manager.get_apply_thread_lock());
-        mysql_cond_broadcast(consensus_log_manager.get_catchup_cond());
-        consensus_log_manager.set_apply_catchup(true);
-        rli->sql_thread_kill_accepted = true;
-        rli->force_apply_queue_before_stop = true;
-        mysql_mutex_unlock(consensus_log_manager.get_apply_thread_lock());
-        xp::system(ER_XP_APPLIER)
-            << "Apply thread catchup commit index, consensus index: "
-            << rli->get_consensus_apply_index()
-            << ", current term: " << consensus_log_manager.get_current_term()
-            << ", apply term: " << consensus_log_manager.get_apply_term()
-            << ", stop term: " << consensus_log_manager.get_stop_term();
+      } else if (check_exec_consensus_log_end_condition(rli)) {
         DBUG_RETURN(1);
       } else if (consensus_ptr->getCommitIndex() >
-                     consensus_log_manager.get_real_apply_index() ||
-                 (consensus_ptr->getCommitIndex() ==
-                      consensus_log_manager.get_real_apply_index() &&
-                  consensus_log_manager.get_apply_index_current_pos() <
-                      consensus_log_manager.get_apply_index_end_pos()) ||
-                 (consensus_ptr->getCommitIndex() == 1 &&
-                  consensus_log_manager.get_real_apply_index() == 1)) {
+                     consensus_log_manager.get_real_apply_index()
+                 || (consensus_ptr->getCommitIndex() ==
+                        consensus_log_manager.get_real_apply_index()
+                     && (consensus_log_manager.get_apply_index_current_pos() <
+                          consensus_log_manager.get_apply_index_end_pos()
+                         || !consensus_log_manager.is_trx_apply_finished()))
+                || (consensus_ptr->getCommitIndex() == 1
+                    && consensus_log_manager.get_real_apply_index() == 1)) {
         // not reach commit index, continue to read log
         break;
       } else {
@@ -742,14 +763,17 @@ void update_consensus_apply_pos(Relay_log_info *rli, Log_event *ev,
       consensus_log_manager.set_real_apply_index(consensus_index);
       consensus_log_manager.set_apply_index_end_pos(consensus_index_end_pos);
 
-      // xp::info(ER_XP_APPLIER) << "update_consensus_apply_pos: " <<
-      // consensus_index
+      // xp::info(ER_XP_APPLIER) << "update_consensus_apply_pos: "
+      //                       << ", consensus_index: " << consensus_index
       //                       << ", consensus_term: " << consensus_term
       //                       << ", consensus_index: " << consensus_index
+      //                       << ", get_flag: " << r_ev->get_flag()
       //                       << ", consensus_index_end_pos: " <<
       //                       consensus_index_end_pos
       //                       << ", consensus_index_current_pos: " <<
-      //                       ev->future_event_relay_log_pos;
+      //                       ev->future_event_relay_log_pos
+      //                       << ", apply_ev_sequence: " <<
+      //                       consensus_log_manager.get_apply_ev_sequence();
     }
 
     consensus_log_manager.set_apply_index_current_pos(
@@ -772,7 +796,6 @@ int calculate_consensus_apply_start_pos(Relay_log_info *rli,
   bool recover_outer = false;
   uint recover_flag = 0;
   uint64 recover_checksum = 0;
-  uint64 rli_appliedindex = 0;
   uint64 log_pos = 0;
   char log_name[FN_REFLEN];
 
@@ -931,12 +954,7 @@ int calculate_consensus_apply_start_pos(Relay_log_info *rli,
     }
 
     // deal with appliedindex
-    rli_appliedindex = rli->get_consensus_apply_index();
-    rli_appliedindex = opt_appliedindex_force_delay >= rli_appliedindex
-                           ? 0
-                           : rli_appliedindex - opt_appliedindex_force_delay;
-    consensus_ptr->updateAppliedIndex(rli_appliedindex);
-    replica_read_manager.update_lsn(rli_appliedindex);
+    update_applied_index(rli->get_consensus_apply_index());
 
     /*
      * Wait until new leader empty log is committed,
@@ -959,5 +977,40 @@ int calculate_consensus_apply_start_pos(Relay_log_info *rli,
     }
   }
 
+  return 0;
+}
+
+void update_applied_index(const unsigned long long commitIndex)
+{
+  uint64 tmpi = opt_appliedindex_force_delay >= commitIndex
+                    ? 0
+                    : commitIndex - opt_appliedindex_force_delay;
+  consensus_ptr->updateAppliedIndex(tmpi);
+  replica_read_manager.update_lsn(tmpi);
+}
+
+int check_limit_xa(THD *thd, const bool is_commit_one_phase)
+{
+  if (!thd->slave_thread
+      && opt_consensus_disable_commit_before_change_leader
+      && ((!is_commit_one_phase && consensus_log_manager.is_in_limit_xa_finish())
+          || (is_commit_one_phase && consensus_log_manager.is_in_limit_all()))) {
+    XID empty_xid;
+    xp::warn(ER_XP_COMMIT) << "Cannot do xa finish because leadership changing"
+        << ", leader_transfer_state: " << consensus_log_manager.get_leader_transfer_state()
+        << ", xa_finishing_count: " << xa_finishing_count.load()
+        << ", xid " 
+        << ((thd->get_transaction()->xid_state() 
+            && thd->get_transaction()->xid_state()->get_xid()) 
+          ? *thd->get_transaction()->xid_state()->get_xid()
+          : empty_xid)
+        << ", one_phase " << is_commit_one_phase
+        << ", status "
+        << (thd->get_transaction()->xid_state()
+          ? thd->get_transaction()->xid_state()->state_name()
+          : "null");
+    my_error(ER_CONSENSUS_LEADERSHIP_IS_CHANGING, MYF(0));
+    return 1;
+  }
   return 0;
 }

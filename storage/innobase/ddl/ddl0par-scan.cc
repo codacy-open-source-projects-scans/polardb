@@ -30,6 +30,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "ddl0impl-builder.h"
 #include "ddl0impl-cursor.h"
+#include "my_sys.h"
 #include "row0pread.h"
 #include "row0row.h"
 #include "ut0stage.h"
@@ -96,6 +97,8 @@ dberr_t Parallel_cursor::scan(Builders &builders) noexcept {
 
   ut_a(!m_ctx.m_online || m_ctx.m_trx->isolation_level ==
                               trx_t::isolation_level_t::REPEATABLE_READ);
+
+  DEBUG_SYNC_C("before_ddl_par_scan");
 
   size_t n_threads{};
 
@@ -187,6 +190,18 @@ dberr_t Parallel_cursor::scan(Builders &builders) noexcept {
 
   using Thread_ctx = Parallel_reader::Thread_ctx;
 
+  Parallel_reader::Config config(FULL_SCAN, index());
+  config.m_is_ddl_parallel_scan = true;
+
+  /** It's possible to create multiple indexes in a single scan. If one of these
+   * indexes can skip file sorting, it may lead to the release of page locks,
+   * resulting in ddl cleanout collected records not being on the same page.  */
+
+  for (auto builder : builders) {
+    if (builder->is_skip_file_sort()) {
+      config.m_is_ddl_parallel_scan = false;
+    }
+  }
   auto batch_inserter = [&](Thread_ctx *thread_ctx) {
     size_t i{};
     bool latches_released{};
@@ -236,6 +251,7 @@ dberr_t Parallel_cursor::scan(Builders &builders) noexcept {
             thread_ctx->get_state() != Parallel_reader::State::THREAD) {
           thread_ctx->savepoint();
           latches_released = true;
+          DEBUG_SYNC_C("ddl_bulk_inserter_latches_released");
         }
         return DB_SUCCESS;
       });
@@ -320,7 +336,6 @@ dberr_t Parallel_cursor::scan(Builders &builders) noexcept {
     return DB_ERROR;
   });
 
-  Parallel_reader::Config config(FULL_SCAN, index());
 
   /* Called for each row during the scan. */
   auto err = reader.add_scan(

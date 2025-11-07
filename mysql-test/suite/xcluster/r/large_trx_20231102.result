@@ -109,6 +109,9 @@ xa prepare 'x1';
 select count(*) from t;
 count(*)
 1
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	x1
 xa commit 'x1';
 drop table t;
 # ---------- case10 ----------
@@ -128,6 +131,9 @@ xa prepare 'x1';
 select count(*) from t;
 count(*)
 1
+xa recover;
+formatID	gtrid_length	bqual_length	data
+1	2	0	x1
 xa commit 'x1';
 drop table t;
 # ---------- cleanup -----------

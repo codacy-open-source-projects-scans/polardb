@@ -190,6 +190,16 @@ enum class Explain_format_type : ulong {
    0x10000000 /* was: MODE_NO_AUTO_CREATE_USER */ \
   )
 
+
+/* Bits for different ping check modes modes*/
+#define PING_MODE_IS_READABLE               1
+#define PING_MODE_IS_LEADER                 2
+#define PING_MODE_IS_WRITEABLE              4
+#define PING_MODE_NOT_IN_LEADER_TRANSFER    8
+#define PING_MODE_NO_CLUSTER_CHANGED        16
+#define PING_MODE_IS_IN_LEADER_TRANSFER     32
+#define PING_MODE_IS_PAXOS_APPLING          64
+
 /*
   Replication uses 8 bytes to store SQL_MODE in the binary log. The day you
   use strictly more than 64 bits by adding one more define above, you should
@@ -230,6 +240,7 @@ struct System_variables {
   long optimizer_trace_limit;
   ulong optimizer_trace_max_mem_size;
   sql_mode_t sql_mode;  ///< which non-standard SQL behaviour should be enabled
+  ulonglong ping_mode;  ///check system status for ping pkg
   ulonglong option_bits;  ///< OPTION_xxx constants, e.g. OPTION_PROFILING
   ha_rows select_limit;
   ha_rows max_join_size;
@@ -391,6 +402,8 @@ struct System_variables {
       internal_tmp_mem_storage_engine;  // enum_internal_tmp_mem_storage_engine
 
   const CHARSET_INFO *default_collation_for_utf8mb4;
+  bool disable_default_collation_for_utf8mb4;
+  bool force_print_utf8mb4_implicit_collation;
 
   /** Used for controlling preparation of queries against secondary engine. */
   ulong use_secondary_engine;
@@ -413,6 +426,8 @@ struct System_variables {
   bool opt_query_via_flashback_area;
 
   bool opt_flashback_area;
+
+  bool innodb_transaction_group;
 
   /**
     @sa Sys_sql_generate_invisible_primary_key
@@ -538,6 +553,14 @@ struct System_variables {
   bool auto_savepoint;
 
   bool opt_index_format_gpp_enabled;
+
+  bool pushdown_range_limit;
+
+#ifdef HAVE_GCOV
+  bool flush_gcov_enabled;
+#endif
+
+  bool opt_index_format_panda_enabled;
 };
 
 /**
@@ -622,6 +645,7 @@ struct System_status_var {
   */
   double last_query_cost;
   ulonglong last_query_partial_plans;
+  uint64_t last_cluster_change_version;
 };
 
 /*

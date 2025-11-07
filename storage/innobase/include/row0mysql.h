@@ -319,14 +319,14 @@ kept in non-LRU list while on failure the 'table' object will be freed.
 @param[in]      create_info     HA_CREATE_INFO object
 @param[in,out]  trx             transaction
 @param[in]      heap            temp memory heap or nullptr
-@param[in]      ddl_policy      ddl policy from handler
+@param[in]      table_hint      ddl table hint from handler
 @param[in]      old_dd_tab      dd::Table from an old partition for partitioned
                                 table, NULL otherwise.
 @return error code or DB_SUCCESS */
 [[nodiscard]] dberr_t row_create_table_for_mysql(
     dict_table_t *&table, const char *compression,
     const HA_CREATE_INFO *create_info, trx_t *trx, mem_heap_t *heap,
-    const lizard::Ha_ddl_policy *ddl_policy,
+    const lizard::Ha_table_hint *table_hint,
     const dd::Table *old_dd_tab = nullptr);
 
 /** Does an index creation operation for MySQL. TODO: currently failure
@@ -334,17 +334,18 @@ kept in non-LRU list while on failure the 'table' object will be freed.
  currently as all indexes must be created at the same time as the table.
  @return error number or DB_SUCCESS */
 [[nodiscard]] dberr_t row_create_index_for_mysql(
-    dict_index_t *index,        /*!< in, own: index definition
-                                (will be freed) */
-    trx_t *trx,                 /*!< in: transaction handle */
-    const ulint *field_lengths, /*!< in: if not NULL, must contain
-                                dict_index_get_n_fields(index)
-                                actual field lengths for the
-                                index columns, which are
-                                then checked for not being too
-                                large. */
-    dict_table_t *handler,      /* ! in/out: table handler. */
-    lizard::Ha_ddl_policy *ddl_policy);
+    dict_index_t *index,                     /*!< in, own: index definition
+                                             (will be freed) */
+    trx_t *trx,                              /*!< in: transaction handle */
+    const ulint *field_lengths,              /*!< in: if not NULL, must contain
+                                             dict_index_get_n_fields(index)
+                                             actual field lengths for the
+                                             index columns, which are
+                                             then checked for not being too
+                                             large. */
+    const lizard::Ha_index_hint *index_hint, /*!< in: ddl index hints */
+    const lizard::Ha_table_hint *table_hint, /*!< in: ddl table hints */
+    dict_table_t *handler /*!< in/out: table handler. */);
 
 /** Loads foreign key constraints for the table being created. This
  function should be called after the indexes for a table have been
@@ -434,10 +435,11 @@ dberr_t row_drop_database_for_mysql(const char *name, trx_t *trx, ulint *found);
 @param[in]  max_threads         Maximum number of threads to use.
 @param[out] n_rows              Number of rows seen.
 @param[out] n_del_mark          Number of rows read with delete marked.
+@param[in]  prebuilt            Prebuilt struct in MySQL handle.
 @return DB_SUCCESS or error code. */
 dberr_t row_mysql_parallel_select_count_star(
-    trx_t *trx, std::vector<dict_index_t *> &indexes, size_t max_threads,
-    ulint *n_rows, ulonglong *n_del_mark = nullptr);
+    std::vector<dict_index_t *> &indexes, size_t max_threads,
+    ulint *n_rows, row_prebuilt_t *prebuilt , ulonglong *n_del_mark = nullptr);
 
 /** Scans an index for either COUNT(*) or CHECK TABLE.
 If CHECK TABLE; Checks that the index contains entries in an ascending order,
@@ -763,8 +765,10 @@ struct row_prebuilt_t {
                              in fetch_cache */
   mem_heap_t *blob_heap;     /*!< in SELECTS BLOB fields are copied
                              to this heap */
-  mem_heap_t *old_vers_heap; /*!< memory heap where a previous
-                             version is built in consistent read */
+  mem_heap_t *lizard_old_vers_heap; /*!< memory heap where a lizard previous
+                                    version is built in consistent read */
+  mem_heap_t *panda_old_vers_heap;  /*!< memory heap where a panda previous
+                                    version is built in consistent read */
   enum {
     LOCK_PCUR,
     LOCK_CLUST_PCUR,

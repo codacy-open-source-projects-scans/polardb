@@ -29,6 +29,8 @@
 #include "sql/rpl_rli.h"
 #include "sql/rpl_rli_pdb.h"
 #include "sql/sql_backup_lock.h"
+#include "sql/consensus_admin.h"
+#include "sql/bl_consensus_log.h"
 
 /**
    It manages a stage and the related mutex and makes the process of
@@ -170,7 +172,7 @@ Log_event *Rpl_applier_reader::read_next_event() {
   });
   DBUG_EXECUTE_IF("force_sql_thread_error", return nullptr;);
 
-  if (m_reading_active_log) {
+  if (m_rli->relay_log.is_xpaxos_log && m_reading_active_log) {
     reopen_log_reader_if_needed();
   }
 
@@ -248,8 +250,9 @@ Log_event *Rpl_applier_reader::read_next_event() {
     if (!move_to_next_log()) return read_next_event();
   }
 
-  if (m_relaylog_file_reader.get_error_type() == Binlog_read_error::READ_EOF &&
-      m_reading_active_log) {
+  if (m_rli->relay_log.is_xpaxos_log
+      && m_relaylog_file_reader.get_error_type() == Binlog_read_error::READ_EOF
+      && m_reading_active_log) {
     read_active_log_end_pos();
     return read_next_event();
   }
@@ -420,9 +423,6 @@ bool Rpl_applier_reader::purge_applied_logs() {
 
   if (!relay_log_purge) return false;
 
-  // X-Paxos log don't purge either
-  if (m_rli->relay_log.is_xpaxos_log) return false;
-
   Is_instance_backup_locked_result is_instance_locked =
       is_instance_backup_locked(m_rli->info_thd);
   if (is_instance_locked == Is_instance_backup_locked_result::OOM) {
@@ -446,11 +446,16 @@ bool Rpl_applier_reader::purge_applied_logs() {
 
   mysql_mutex_lock(&m_rli->log_space_lock);
 
-  if (m_rli->relay_log.purge_logs(
-          m_rli->get_group_relay_log_name(), false /* include */,
-          false /*need_lock_index*/, false /*need_update_threads*/,
-          &m_rli->log_space_total, true) != 0)
-    m_errmsg = "Error purging processed logs";
+  if (m_rli->relay_log.is_xpaxos_log) {
+    m_rli->relay_log.auto_purge(false);
+
+  } else {
+    if (m_rli->relay_log.purge_logs(
+            m_rli->get_group_relay_log_name(), false /* include */,
+            false /*need_lock_index*/, false /*need_update_threads*/,
+            &m_rli->log_space_total, true) != 0)
+      m_errmsg = "Error purging processed logs";
+  }
 
   // Tell the I/O thread to take the relay_log_space_limit into account
   m_rli->ignore_log_space_limit = false;
@@ -585,6 +590,8 @@ void Rpl_applier_reader::reset_seconds_behind_master() {
     Commit) of a group.  Coordinator resets SBM when notices no more groups left
     neither to read from Relay-log nor to process by Workers.
   */
-  if (!m_rli->is_parallel_exec() || m_rli->gaq->empty())
+  if (!m_rli->is_parallel_exec() || m_rli->gaq->empty()) {
     m_rli->last_master_timestamp = 0;
+    if (consensus_ptr) consensus_ptr->updateApplyDelaySeconds(0);
+  }
 }

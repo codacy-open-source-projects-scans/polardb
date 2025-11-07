@@ -36,6 +36,7 @@
     dbms_consensus.downgrade_follower
     dbms_consensus.refresh_learner_meta
     dbms_consensus.configure_follower
+    dbms_consensus.configure_followers
     dbms_consensus.configure_learner
     dbms_consensus.force_single_mode
     dbms_consensus.force_learner_node
@@ -287,7 +288,7 @@ class Consensus_proc_change_leader final : public Consensus_proc_node_param {
 
   ~Consensus_proc_change_leader() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("change_leader");
   }
@@ -316,7 +317,7 @@ class Consensus_proc_add_learner final : public Consensus_proc_node_param {
 
   ~Consensus_proc_add_learner() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override { return std::string("add_learner"); }
 };
 
@@ -341,7 +342,7 @@ class Consensus_proc_add_follower final : public Consensus_proc_node_param {
       : Consensus_proc_node_param(key) {}
   ~Consensus_proc_add_follower() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override { return std::string("add_follower"); }
 };
 
@@ -365,7 +366,7 @@ class Consensus_proc_drop_learner final : public Consensus_proc_node_param {
       : Consensus_proc_node_param(key) {}
   ~Consensus_proc_drop_learner() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override { return std::string("drop_learner"); }
 };
 
@@ -389,7 +390,7 @@ class Consensus_proc_upgrade_learner final : public Consensus_proc_node_param {
       : Consensus_proc_node_param(key) {}
   ~Consensus_proc_upgrade_learner() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("upgrade_learner");
   }
@@ -417,7 +418,7 @@ class Consensus_proc_downgrade_follower final
       : Consensus_proc_node_param(key) {}
   ~Consensus_proc_downgrade_follower() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("downgrade_follower");
   }
@@ -444,7 +445,7 @@ class Consensus_proc_refresh_learner_meta final : public Consensus_proc {
       : Consensus_proc(key) {}
   ~Consensus_proc_refresh_learner_meta() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("refresh_learner_meta");
   }
@@ -479,9 +480,58 @@ class Consensus_proc_configure_follower final : public Consensus_proc {
   }
   ~Consensus_proc_configure_follower() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("configure_follower");
+  }
+};
+
+/**
+  dbms_consensus.configure_followers(...)
+*/
+class Sql_cmd_consensus_proc_configure_followers
+    : public Sql_cmd_consensus_proc {
+ public:
+  Sql_cmd_consensus_proc_configure_followers(THD *thd,
+                                            mem_root_deque<Item *> *list,
+                                            const Consensus_proc *proc)
+      : Sql_cmd_consensus_proc(thd, list, proc) {}
+
+  bool pc_execute(THD *thd) override;
+  bool check_parameter_num() override;
+
+};
+
+class Consensus_proc_configure_followers final : public Consensus_proc {
+  using Sql_cmd_type = Sql_cmd_consensus_proc_configure_followers;
+
+ public:
+  explicit Consensus_proc_configure_followers(PSI_memory_key key)
+      : Consensus_proc(key) {
+    static constexpr auto params = {
+        Consensus_proc_type_enum::NODE,  // node1
+        Consensus_proc_type_enum::UINT,  // weight
+        Consensus_proc_type_enum::BOOL,  // force_sync
+        Consensus_proc_type_enum::NODE,  // node2
+        Consensus_proc_type_enum::UINT,  // weight
+        Consensus_proc_type_enum::BOOL,  // force_sync
+        Consensus_proc_type_enum::NODE,  // node3
+        Consensus_proc_type_enum::UINT,  // weight
+        Consensus_proc_type_enum::BOOL,  // force_sync
+        Consensus_proc_type_enum::NODE,  // node4
+        Consensus_proc_type_enum::UINT,  // weight
+        Consensus_proc_type_enum::BOOL,  // force_sync
+        Consensus_proc_type_enum::NODE,  // node5
+        Consensus_proc_type_enum::UINT,  // weight
+        Consensus_proc_type_enum::BOOL,  // force_sync
+    };
+    fill_params(params);
+  }
+  ~Consensus_proc_configure_followers() override = default;
+  static Proc *instance();
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  const std::string str() const override {
+    return std::string("configure_followers");
   }
 };
 
@@ -514,7 +564,7 @@ class Consensus_proc_configure_learner final : public Consensus_proc {
 
   ~Consensus_proc_configure_learner() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("configure_learner");
   }
@@ -540,7 +590,7 @@ class Consensus_proc_force_single_mode final : public Consensus_proc {
       : Consensus_proc(key) {}
   ~Consensus_proc_force_single_mode() override {}
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("force_single_mode");
   }
@@ -566,7 +616,7 @@ class Consensus_proc_force_learner_node final : public Consensus_proc {
       : Consensus_proc(key) {}
   ~Consensus_proc_force_learner_node() override {}
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("force_learner_node");
   }
@@ -597,7 +647,7 @@ class Consensus_proc_fix_cluster_id final : public Consensus_proc {
   }
   ~Consensus_proc_fix_cluster_id() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("fix_cluster_id");
   }
@@ -630,7 +680,7 @@ class Consensus_proc_fix_matchindex final : public Consensus_proc {
 
   ~Consensus_proc_fix_matchindex() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("fix_matchindex");
   }
@@ -662,6 +712,10 @@ class Consensus_proc_show_global final : public Consensus_proc {
     COLUMN_APPLIED_INDEX,
     COLUMN_PIPELINING,
     COLUMN_SEND_APPLIED,
+    COLUMN_INSTANCE_TYPE,
+    COLUMN_DISABLE_ELECTION,
+    COLUMN_SERVER_IP,
+    COLUMN_SERVER_PORT,
     COLUMN_LAST
   };
 
@@ -682,6 +736,10 @@ class Consensus_proc_show_global final : public Consensus_proc {
         {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("APPLIED_INDEX"), 0},
         {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("PIPELINING"), 8},
         {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("SEND_APPLIED"), 8},
+        {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("INSTANCE_TYPE"), 8},
+        {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("DISABLE_ELECTION"), 0},
+        {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("SERVER_IP"), 64},
+        {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("SERVER_PORT"), 0},
     };
 
     for (size_t i = 0; i < COLUMN_LAST; i++) {
@@ -690,7 +748,7 @@ class Consensus_proc_show_global final : public Consensus_proc {
   }
   ~Consensus_proc_show_global() override {}
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("show_cluster_global");
   }
@@ -722,6 +780,10 @@ class Consensus_proc_show_local final : public Consensus_proc {
     COLUMN_APPLIED_INDEX,
     COLUMN_SERVER_READY_FOR_RW,
     COLUMN_INSTANCE_TYPE,
+    COLUMN_DISABLE_ELECTION,
+    COLUMN_APPLY_RUNNING,
+    COLUMN_LEADER_IP,
+    COLUMN_LEADER_PORT,
     COLUMN_LAST
   };
 
@@ -741,6 +803,10 @@ class Consensus_proc_show_local final : public Consensus_proc {
         {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("APPLIED_INDEX"), 0},
         {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("SERVER_READY_FOR_RW"), 0},
         {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("INSTANCE_TYPE"), 8},
+        {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("DISABLE_ELECTION"), 0},
+        {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("APPLY_RUNNING"), 0},
+        {MYSQL_TYPE_VARCHAR, C_STRING_WITH_LEN("LEADER_IP"), 64},
+        {MYSQL_TYPE_LONGLONG, C_STRING_WITH_LEN("LEADER_PORT"), 0},
     };
 
     for (size_t i = 0; i < COLUMN_LAST; i++) {
@@ -749,7 +815,7 @@ class Consensus_proc_show_local final : public Consensus_proc {
   }
   ~Consensus_proc_show_local() override {}
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("show_cluster_local");
   }
@@ -793,7 +859,7 @@ class Consensus_proc_show_logs final : public Consensus_proc {
   }
   ~Consensus_proc_show_logs() override {}
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override { return std::string("show_logs"); }
 };
 
@@ -823,7 +889,7 @@ class Consensus_proc_purge_log final : public Consensus_proc {
   ~Consensus_proc_purge_log() override = default;
 
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override { return std::string("purge_log"); }
 };
 
@@ -853,7 +919,7 @@ class Consensus_proc_local_purge_log final : public Consensus_proc {
 
   ~Consensus_proc_local_purge_log() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("local_purge_log");
   }
@@ -885,11 +951,44 @@ class Consensus_proc_force_purge_log final : public Consensus_proc {
 
   ~Consensus_proc_force_purge_log() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("force_purge_log");
   }
 };
+
+/**
+  dbms_consensus.force_purge_cache(...)
+*/
+class Sql_cmd_consensus_proc_force_purge_cache : public Sql_cmd_consensus_proc {
+ public:
+  Sql_cmd_consensus_proc_force_purge_cache(THD *thd, mem_root_deque<Item *> *list,
+                                         const Consensus_proc *proc)
+      : Sql_cmd_consensus_proc(thd, list, proc) {}
+
+  bool pc_execute(THD *thd) override;
+};
+
+class Consensus_proc_force_purge_cache final : public Consensus_proc {
+  using Sql_cmd_type = Sql_cmd_consensus_proc_force_purge_cache;
+
+ public:
+  explicit Consensus_proc_force_purge_cache(PSI_memory_key key)
+      : Consensus_proc(key) {
+    static constexpr auto params = {
+        Consensus_proc_type_enum::UINT,  // index
+    };
+    fill_params(params);
+  }
+
+  ~Consensus_proc_force_purge_cache() override = default;
+  static Proc *instance();
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  const std::string str() const override {
+    return std::string("force_purge_cache");
+  }
+};
+
 
 /**
   dbms_consensus.drop_prefetch_channel(...)
@@ -918,7 +1017,7 @@ class Consensus_proc_drop_prefetch_channel final : public Consensus_proc {
   }
   ~Consensus_proc_drop_prefetch_channel() override = default;
   static Proc *instance();
-  Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  Sql_cmd *invoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
   const std::string str() const override {
     return std::string("drop_prefetch_channel");
   }

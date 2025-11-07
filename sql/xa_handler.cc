@@ -39,3 +39,16 @@ void register_xa_attributes(THD *thd, handlerton *ht_arg) {
     ht_arg->ext.register_xa_attributes(thd);
   }
 }
+/**
+  Register Xa_group informations into storage engine.
+
+  @param[in]      thd       connection handler
+  @param[in]      ht        handlerton
+  @return false if xa group is closed, true otherwise
+*/
+bool register_xa_group(THD *thd, handlerton *ht_arg) {
+  ut_ad(thd->get_transaction()->xid_state()->check_in_xa(false));
+  ut_ad(ht_arg->ext.register_xa_group != nullptr);
+
+  return ht_arg->ext.register_xa_group(thd);
+}

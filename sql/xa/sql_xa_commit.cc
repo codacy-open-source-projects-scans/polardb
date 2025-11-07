@@ -35,6 +35,8 @@
 #include "sql/transaction.h"  // trans_reset_one_shot_chistics, trans_track_end_trx
 #include "sql/transaction_info.h"  // Transaction_ctx
 #include "sql/mysqld.h"  // innodb_hton
+#include "sql/bl_consensus_log.h"
+#include "sql/consensus_admin.h"
 
 namespace {
 /**
@@ -64,7 +66,14 @@ enum_sql_command Sql_cmd_xa_commit::sql_command_code() const {
 enum xa_option_words Sql_cmd_xa_commit::get_xa_opt() const { return m_xa_opt; }
 
 bool Sql_cmd_xa_commit::execute(THD *thd) {
+  if (check_limit_xa(thd, m_xa_opt == XA_ONE_PHASE)) return true;
+
+  xa_finishing_count++;
+
   bool st = trans_xa_commit(thd);
+
+  xa_finishing_count--;
+  assert(xa_finishing_count >= 0);
 
   if (!st) {
     thd->mdl_context.release_transactional_locks();
@@ -90,6 +99,8 @@ bool Sql_cmd_xa_commit::trans_xa_commit(THD *thd) {
   /* Inform clone handler of XA operation. */
   Clone_handler::XA_Operation xa_guard(thd);
 
+  raii::Sentry<> cp_ctx_guard{[&]() -> void { thd->cpolicy_ctx.reset(); }};
+
   if (!xid_state->has_same_xid(this->m_xid)) {
     return this->process_detached_xa_commit(thd);
   }
@@ -112,6 +123,8 @@ bool Sql_cmd_xa_commit::process_attached_xa_commit(THD *thd) const {
     if ((res = r)) my_error(r == 1 ? ER_XA_RBROLLBACK : ER_XAER_RMERR, MYF(0));
   } else if (xid_state->has_state(XID_STATE::XA_PREPARED) &&
              m_xa_opt == XA_NONE) {
+    thd->cpolicy_ctx.activate_xa_commit(thd->variables.innodb_commit_gcn);
+
     MDL_request mdl_request;
 
     /*
@@ -198,6 +211,7 @@ bool Sql_cmd_xa_commit::process_attached_xa_commit(THD *thd) const {
 bool Sql_cmd_xa_commit::process_detached_xa_commit(THD *thd) {
   DBUG_TRACE;
 
+  thd->cpolicy_ctx.activate_xa_commit(thd->variables.innodb_commit_gcn);
   raii::Sentry<> dispose_guard{[this]() -> void { this->dispose(); }};
   if (this->find_and_initialize_xa_context(thd)) return true;
   if (this->acquire_locks(thd)) return true;

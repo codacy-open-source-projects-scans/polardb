@@ -40,88 +40,299 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "sql/sql_class.h"
 #include "sql/sql_plugin_var.h"
 
-#include "lizard0xa.h"
+#include "lizard0gcs.h"
 #include "lizard0ha_innodb.h"
 #include "lizard0read0types.h"
 #include "lizard0undo.h"
 #include "lizard0ut.h"
-#include "lizard0undo.h"
+#include "lizard0xa.h"
+#include "lizard0xa0types.h"
 
-/** Bqual format: 'xxx@nnnn' */
-static unsigned int XID_GROUP_SUFFIX_SIZE = 5;
-
-static char XID_GROUP_SPLIT_CHAR = '@';
+/** @{ */
 
 /**
-  Whether the XID group matched.
+  check if the xid match the format v1.
 
   Requirement:
-   1) formatID must be equal
-   2) gtrid must be equal
-   3) bqual length must be equal
-   4) bqual prefix must be equal
-   5) bqual suffix must be number
-*/
-bool trx_group_match_by_xid(const XID *lhs, const XID *rhs) {
-  /* Require within XA transaction */
-  if (lhs->is_null() || rhs->is_null()) return false;
+  1) Buqal length must be greater than XID_GROUP_SUFFIX_SIZE
+  2) Split char must be right.
+  3) The suffix must be a numober except split char
 
-  /* Require formatID equal */
-  if (lhs->formatID != rhs->formatID) return false;
+  @param[in]  xid   xid to be checked
+  @return true if match, otherwise false
+*/
+bool xa_desc_t::check_if_match_format_v1(const XID *xid) {
+  if (xid->is_null()) return false;
 
   int prefix_len =
-      lhs->gtrid_length + lhs->bqual_length - XID_GROUP_SUFFIX_SIZE;
+      xid->gtrid_length + xid->bqual_length - XID_GROUP_SUFFIX_SIZE_V1;
 
-  if (lhs->gtrid_length != rhs->gtrid_length ||
-      lhs->bqual_length != rhs->bqual_length ||
-      lhs->bqual_length <= XID_GROUP_SUFFIX_SIZE ||
-      lhs->data[prefix_len] != XID_GROUP_SPLIT_CHAR ||
-      memcmp(lhs->data, rhs->data, prefix_len + 1)) {
+  if (xid->bqual_length <= XID_GROUP_SUFFIX_SIZE_V1 ||
+      xid->data[prefix_len] != XID_GROUP_SPLIT_CHAR_V1) {
     return false;
   }
-
-  for (unsigned int i = 1; i < XID_GROUP_SUFFIX_SIZE; i++) {
-    if (!my_isdigit(&my_charset_latin1, lhs->data[prefix_len + i]) ||
-        !my_isdigit(&my_charset_latin1, rhs->data[prefix_len + i])) {
+  for (unsigned int i = 1; i < XID_GROUP_SUFFIX_SIZE_V1; i++) {
+    if (!my_isdigit(&my_charset_latin1, xid->data[prefix_len + i])) {
       return false;
     }
   }
+  return true;
+}
+/** @} */
+
+/**
+ * Before building the group id in format v1, we must check if the xid meet
+ * requirements (call @check_if_match_format_v1). The trxs that meet the
+ * following requirements are divided into a group in format v1:
+ *
+ * 1) gtrid must be equal
+ * 2) bqual prefix must be equal
+ * 3) formatID must be equal
+ *
+ * So we append bqual prefix and formatID to xa_desc_t::m_gid besides gtrid,
+ * which is quite different from format v2. To specify the version, format
+ * version is also appended.
+ *
+ * @return true if the group id is built successfully, otherwise false
+ */
+bool xa_desc_t::build_gid_v1() {
+  ut_ad(m_gid.empty());
+
+  /** No need to build the group id. */
+  if (!check_if_match_format_v1(&m_xid)) {
+    return false;
+  }
+
+  auto formatID = std::to_string(m_xid.get_format_id());
+
+  int length = m_xid.get_gtrid_length() + m_xid.get_bqual_length() -
+               XID_GROUP_SUFFIX_SIZE_V1 + formatID.size() + sizeof(FORMAT_V1) -
+               1;
+
+  m_gid.reserve(length);
+
+  /** 1. append gtrid and bqual prefix */
+  m_gid.append(m_xid.get_data(), length);
+
+  /** 2. append formatID */
+  m_gid.append(formatID);
+
+  /** 3. append format version */
+  m_gid.append(FORMAT_V1, sizeof(FORMAT_V1) - 1);
 
   return true;
 }
 
 /**
-  Loop all the rw trxs to find xa transaction which belonged to the same group
-  and push trx_id into group container.
+ * Build the group id in format v2. The trxs that meet the following
+ * Requirements are divided into a group in format v2:
+ *
+ * 1) gtrid must be equal
+ *
+ * So we append gtrid to xa_desc_t::m_gid. To specify the version, format
+ * version is also appended.
+ * @return true if the group id is built successfully, otherwise false
+ */
+bool xa_desc_t::build_gid_v2() {
+  ut_ad(m_gid.empty());
+  m_gid.reserve(m_xid.get_gtrid_length() + sizeof(FORMAT_V2) - 1);
 
-  @param[in]    trx       current trx handler
-  @param[in]    vision    current query view
-*/
-void vision_collect_trx_group_ids(const trx_t *my_trx, lizard::Vision *vision) {
-  /** Restrict only user client thread */
-  if (my_trx->mysql_thd == nullptr ||
-      my_trx->mysql_thd->system_thread != NON_SYSTEM_THREAD ||
-      !thd_get_transaction_group(my_trx->mysql_thd))
-    return;
+  /** 1. append gtrid */
+  m_gid.append(m_xid.get_data(), m_xid.get_gtrid_length());
 
-  trx_sys_mutex_enter();
+  /** 2. append format version */
 
-  for (auto trx = UT_LIST_GET_FIRST(trx_sys->rw_trx_list); trx != nullptr;
-       trx = UT_LIST_GET_NEXT(trx_list, trx)) {
-    trx_mutex_enter(trx);
+  m_gid.append(FORMAT_V2, sizeof(FORMAT_V2) - 1);
 
-    if (trx_group_match_by_xid(my_trx->xad.my_xid(), trx->xad.my_xid())) {
-      vision->group_ids.push(trx->id);
-    }
+  return true;
+}
 
-    trx_mutex_exit(trx);
+/**
+ * Build the group id. For 0-FORMAT_V1_RANGE, use the format v1.
+ * Otherwise, use the format v2.
+ *
+ * @return true if the group id is built successfully, otherwise false
+ */
+bool xa_desc_t::build_gid() {
+  ut_ad(!m_xid.is_null());
+  ut_ad(m_group == nullptr);
+
+  ut_ad(m_xid.get_format_id() >= 0);
+
+  if (m_xid.get_format_id() <= FORMAT_V1_RANGE) {
+    return build_gid_v1();
+  } else {
+    return build_gid_v2();
   }
-
-  trx_sys_mutex_exit();
 }
 
 namespace lizard {
-namespace xa {
+
+/**
+ * Release the reference of the Xa Group for a given trx. Remove
+ * it from trx_sys->xa_group_shards when the reference count is 0.
+ * do nothing if xa_desc.is_group_null(), cause that the xa group might
+ * have been released or even not exist(i.e. disabled).
+ * @param[in]  trx  innodb transaction
+ */
+void trx_release_xa_group_if_need(trx_t *trx) {
+  ut_ad(trx != nullptr);
+  auto &xa_desc = trx->xa_desc;
+
+  /* released or not exist(i.e diabled). */
+  if (xa_desc.is_group_null()) return;
+
+  /** If the trx is empty or read-only, the xa group can't be closed when
+  use commit one phase. Just close it here. */
+  xa_desc.group()->close();
+
+  trx_sys->xa_group_shards[trx_get_xa_group_shard_no(xa_desc.gid())]
+      .xa_groups.latch_and_execute(
+          [&](Xa_group_by_id &xa_group_by_id) {
+            /* As we own xa_group_by_id mutex, nobody can reference the
+            xa_group at now. */
+            if (xa_desc.group()->release()) {
+              xa_group_by_id.erase(xa_desc.gid());
+            }
+          },
+          UT_LOCATION_HERE);
+
+  trx->xa_desc.set_group(nullptr);
+}
+
+/**
+ * Adds the transaction to Xa group if need. If transaction group is
+ * disabled, trx->xa_desc.group() would be nullptr and this trx should not
+ * be added to any xa group.
+ * @param[in]  trx   The transaction assumed to not be in the xa_group yet
+ */
+void trx_add_to_xa_group_if_need(trx_t *trx) {
+  Xa_group *group = nullptr;
+  ut_ad(trx != nullptr);
+  group = trx->xa_desc.group();
+  if (group) {
+    group->insert(trx->id);
+  }
+}
+
+XA_specification_strategy::XA_specification_strategy(const trx_t *trx)
+    : m_trx(trx), m_xa_spec(trx->xa_spec) {}
+
+/**
+ * Judge if has gtid when recovery trx.
+ *
+ * @retval	true
+ * @retval	false
+ */
+bool XA_specification_strategy::has_gtid() const {
+  auto binlog_xa_spec =
+      dynamic_cast<binlog::Binlog_xa_specification *>(m_xa_spec);
+
+  if (binlog_xa_spec && binlog_xa_spec->has_gtid()) {
+    return true;
+  }
+
+  return false;
+}
+/**
+ * Judge storage way for gtid according to gtid source.
+ */
+trx_undo_t::Gtid_storage XA_specification_strategy::decide_gtid_storage() {
+  trx_undo_t::Gtid_storage storage = trx_undo_t::Gtid_storage::NONE;
+  auto binlog_xa_spec =
+      dynamic_cast<binlog::Binlog_xa_specification *>(m_xa_spec);
+  ut_ad(has_gtid());
+  ut_ad(binlog_xa_spec->is_legal_source());
+
+  switch (binlog_xa_spec->source()) {
+    case binlog::Binlog_xa_specification::Source::NONE:
+      ut_a(0);
+      break;
+    case binlog::Binlog_xa_specification::Source::COMMIT:
+      storage = trx_undo_t::Gtid_storage::COMMIT;
+      break;
+    case binlog::Binlog_xa_specification::Source::XA_COMMIT_ONE_PHASE:
+    case binlog::Binlog_xa_specification::Source::XA_PREPARE:
+    case binlog::Binlog_xa_specification::Source::XA_COMMIT:
+    case binlog::Binlog_xa_specification::Source::XA_ROLLBACK:
+      storage = trx_undo_t::Gtid_storage::PREPARE_AND_COMMIT;
+      break;
+  }
+  return storage;
+}
+
+/**
+ * Overwrite gtid storage type of trx_undo_t when recovery.
+ */
+void XA_specification_strategy::overwrite_gtid_storage(trx_t *trx) {
+  trx_undo_t *undo{nullptr};
+  ut_ad(trx == m_trx);
+  ut_ad(has_gtid());
+
+  if (trx->rsegs.m_redo.rseg != nullptr && trx_is_redo_rseg_updated(trx)) {
+    undo = trx->rsegs.m_redo.update_undo;
+    if (undo) {
+      undo->m_gtid_storage = decide_gtid_storage();
+    }
+  }
+}
+
+/** Fill gtid info from xa spec. */
+void XA_specification_strategy::get_gtid_info(Gtid_desc *gtid_desc) {
+  auto binlog_xa_spec =
+      dynamic_cast<binlog::Binlog_xa_specification *>(m_xa_spec);
+  ut_ad(has_gtid());
+
+  gtid_desc->m_version = GTID_VERSION;
+
+  auto &gtid = binlog_xa_spec->m_gtid;
+  auto &sid = binlog_xa_spec->m_sid;
+
+  gtid_desc->m_info.fill(0);
+  auto char_buf = reinterpret_cast<char *>(&gtid_desc->m_info[0]);
+  auto len = gtid.to_string(sid, char_buf);
+  ut_a((size_t)len <= GTID_INFO_SIZE);
+  gtid_desc->m_is_set = true;
+}
+
+/**
+ * Judge if has gcn when recovering or commiting detached xa trxs.
+ *
+ * @return true if has gcn, false otherwise
+ */
+bool XA_specification_strategy::has_gcn() const {
+  return m_xa_spec != nullptr && m_xa_spec->has_gcn();
+}
+
+/**
+ * Overwite GCN info in trx when recovery, or commit detached XA.
+ */
+void XA_specification_strategy::overwrite_xa(trx_t *trx) const {
+  if (trx_is_started(trx) && trx->rsegs.m_txn.rseg != nullptr &&
+      trx_is_txn_rseg_updated(trx)) {
+    m_xa_spec->copy_xa_to_trx(trx);
+  }
+}
+
+Guard_xa_specification::Guard_xa_specification(trx_t *trx,
+                                               XA_specification *xa_spec,
+                                               bool prepare)
+    : m_trx(trx), m_xa_spec(xa_spec) {
+  ut_ad(trx);
+
+  trx->xa_spec = m_xa_spec;
+  XA_specification_strategy xss(trx);
+
+  if (xss.has_gtid()) {
+    xss.overwrite_gtid_storage(trx);
+  }
+
+  if (xss.has_gcn()) {
+    xss.overwrite_xa(trx);
+  }
+}
+
+Guard_xa_specification::~Guard_xa_specification() { m_trx->xa_spec = nullptr; }
 
 template <class T>
 struct my_hash {};
@@ -218,36 +429,6 @@ const XID *get_external_xid_from_thd(THD *thd) {
 
   return xid;
 }
-
-static void trx_load_xa_info(trx_t *trx, MyXAInfo *info) {
-  trx_undo_t *txn_undo = nullptr;
-  slot_ptr_t slot_ptr = 0;
-  /** Only used for detached xa for now. */
-  ut_ad(info->status == XA_status::DETACHED_PREPARE);
-
-  txn_undo = txn_undo_get(trx);
-  if (txn_undo) {
-    undo_encode_slot_addr(txn_undo->slot_addr, &slot_ptr);
-    info->slot = {trx->id, slot_ptr};
-    if (!txn_undo->pmmt.is_null()) {
-      txn_undo->pmmt.copy_to_my_gcn(&info->gcn);
-    } else {
-      /* Case: prepare without ac_prepare. */
-      info->gcn.reset();
-    }
-    info->branch = txn_undo->branch;
-    info->maddr = txn_undo->maddr;
-  } else {
-    /** It seems impossible to get here for detached XA, because empty detached
-    xa trx will be rollback directly when doing "xa prepare". See
-    innodb_replace_trx_in_thd. */
-    info->slot = {trx->id, 0};
-    info->gcn.reset();
-    info->branch.reset();
-    info->maddr.reset();
-  }
-}
-
 /**
   Search detached prepare XA transaction info by XID. NOTES:
   Assume holding xid_state lock, can't happen parallel rollback or commit.
@@ -283,8 +464,7 @@ bool trx_search_detach_prepare_by_xid(const XID *xid, MyXAInfo *info) {
     ut_a(trx_is_prepared_in_tc(trx));
 
     info->status = XA_status::DETACHED_PREPARE;
-    trx_load_xa_info(trx, info);
-
+    info->init_by_txn_undo(trx->id, trx_undo_get_txn(trx));
     return true;
   }
 
@@ -357,6 +537,29 @@ bool trx_search_rollback_background_by_xid(const XID *xid, MyXAInfo *info) {
   return false;
 }
 
+static bool txn_find_slot_quick(const XID *xid, const slot_ptr_t slot_ptr_hint,
+                                txn_slot_t *txn_slot) {
+  txn_lookup_t txn_lookup;
+  Txn_slot_reuse_by_xid_checker xid_checker(xid);
+
+  bool found = txn_slot_read_guess(slot_ptr_hint, Cache_hint::KEEP_OLD,
+                                   xid_checker, &txn_lookup);
+  if (found) {
+    *txn_slot = txn_lookup.txn_slot;
+  }
+  return found;
+}
+
+static bool txn_find_slot_slow(const XID *xid, txn_slot_t *txn_slot) {
+  trx_rseg_t *rseg;
+
+  rseg = txn_rseg_assign_by_xid(xid);
+
+  ut_ad(rseg);
+
+  return txn_rseg_find_txn_slot_by_xid(rseg, xid, txn_slot);
+}
+
 /**
   Find transactions in the finalized state by XID.
 
@@ -365,16 +568,16 @@ bool trx_search_rollback_background_by_xid(const XID *xid, MyXAInfo *info) {
 
   @retval     true if the corresponding transaction is found, false otherwise.
 */
-bool trx_search_history_by_xid(const XID *xid, MyXAInfo *info) {
-  trx_rseg_t *rseg;
+bool trx_search_history_by_xid(const XID *xid, MyXAInfo *info,
+                               const slot_ptr_t slot_ptr_hint) {
   txn_slot_t txn_slot;
   bool found;
 
-  rseg = get_txn_rseg_by_xid(xid);
+  found = txn_find_slot_quick(xid, slot_ptr_hint, &txn_slot);
 
-  ut_ad(rseg);
-
-  found = txn_rseg_find_trx_info_by_xid(rseg, xid, &txn_slot);
+  if (!found) {
+    found = txn_find_slot_slow(xid, &txn_slot);
+  }
 
   if (!found) {
     return false;
@@ -383,24 +586,13 @@ bool trx_search_history_by_xid(const XID *xid, MyXAInfo *info) {
   switch (txn_slot.state) {
     case TXN_UNDO_LOG_COMMITED:
     case TXN_UNDO_LOG_PURGED:
+    case TXN_UNDO_LOG_ERASED:
       if (!txn_slot.tags_allocated()) {
         /** Found old format, not support. */
         *info = MY_XA_INFO_NOT_SUPPORT;
         break;
       }
-
-      info->status =
-          txn_slot.is_rollback() ? XA_status::ROLLBACK : XA_status::COMMIT;
-
-      info->slot = {txn_slot.trx_id, txn_slot.slot_ptr};
-
-      /** if TXN_UNDO_LOG_COMMITED or TXN_UNDO_LOG_PURGED, must be
-      non proposal. */
-      txn_slot.image.copy_to_my_gcn(&info->gcn);
-
-      info->branch = txn_slot.branch;
-      info->maddr = txn_slot.maddr;
-
+      info->init_by_txn_slot(&txn_slot);
       break;
     case TXN_UNDO_LOG_ACTIVE:
       /** Skip txn in active state. */
@@ -437,7 +629,7 @@ bool trx_slot_check_validity(const trx_t *trx) {
 
   /** 3. Check the rseg must be mapped by xid_for_hash. */
   ut_ad(trx_is_txn_rseg_updated(trx));
-  ut_a(txn_check_xid_rseg_mapping(&undo_ptr->xid_for_hash, undo_ptr->rseg));
+  ut_a(txn_rseg_check_xid_mapping(&undo_ptr->xid_for_hash, undo_ptr->rseg));
 
   /** 4. Check trx_t::xid and xid_for_hash. */
   if (!trx->xid->is_null()) {
@@ -450,124 +642,6 @@ bool trx_slot_check_validity(const trx_t *trx) {
   }
 
   return true;
-}
-
-}  // namespace xa
-
-void decide_xa_when_prepare(MyGCN *gcn) {
-  gcn_t sys_gcn;
-  gcn_tuple_t proposal;
-
-  if (gcn->decided()) {
-    goto push_up;
-  }
-
-  /** Proposal GCN of Async Commit */
-  ut_a(gcn->is_assigned());
-  ut_a(gcn->is_pmmt_gcn());
-
-  sys_gcn = lizard::gcs_load_gcn();
-  if (sys_gcn > gcn->gcn()) {
-    proposal = {sys_gcn, CSR_AUTOMATIC};
-  } else {
-    proposal = {gcn->gcn(), CSR_ASSIGNED};
-  }
-
-  gcn->decide_if_ac_prepare(proposal);
-
-push_up:
-  gcn->push_up_sys_gcn();
-}
-
-static void decide_xa_master_addr(const trx_t *trx, xa_addr_t *master_addr) {
-  if (master_addr->is_null()) {
-    return;
-  }
-
-  if (!trx) {
-    master_addr->reset();
-    return;
-  }
-
-  ut_a(trx->txn_desc.maddr.is_null());
-
-  ut_ad(master_addr->is_valid());
-  if (trx->id != master_addr->tid) {
-    ut_a(undo_ptr_get_slot(trx->txn_desc.undo_ptr) != master_addr->slot_ptr);
-  } else {
-    master_addr->reset();
-  }
-}
-
-/**
-  Decide (external/internal) XA releated status when commit, including
-  COMMIT_GCN, CSR, XA_MASTER_ADDR and others.
-
-  @params[in]       trx               releated trx
-  @params[in/out]   gcn               MyGCN that will be decided
-  @params[in/out]   master_addr       XA master address for AC
-*/
-void decide_xa_when_commit(const trx_t *trx, MyGCN *gcn,
-                           xa_addr_t *master_addr) {
-  proposal_mark_t pmmt;
-  trx_undo_t *txn_undo = nullptr;
-  csr_t csr;
-  bool external_automatic;
-
-  /** Load from SYS_GCN if no external commit GCN. */
-  if (gcn->is_null()) {
-    gcn->decide_if_null();
-    goto push_up;
-  }
-
-  /** If already decided, then just try to push up. */
-  if (gcn->decided()) {
-    goto push_up;
-  }
-
-  /**
-    Async Commit:
-    1. Decide commit GCN by external GCN and proposal GCN.
-    2. Decide master address.
-  */
-
-  if ((txn_undo = txn_undo_get(trx))) {
-    pmmt = txn_undo->pmmt;
-  }
-  /**
-    If no TXN, can not do Async Commit. Like:
-    xa start '';
-    ...update...
-    xa end '';
-    xa prepare '';
-    call ac_commit(...);
-  */
-  if (pmmt.is_null()) {
-    /** Pretend to normal XA COMMIT rather than AC COMMIT. */
-    gcn->assign_from_var(gcn->gcn());
-    goto push_up;
-  }
-
-  ut_a(gcn->csr() == CSR_ASSIGNED);
-  assert_trx_commit_mark_state(trx, SCN_STATE_INITIAL);
-
-  if (gcn->gcn() < pmmt.gcn) {
-    char err_msg[128];
-    snprintf(err_msg, sizeof(err_msg),
-             "Transaction (%s), external commit gcn (%lu) < proposal gcn (%lu) "
-             "when commit.",
-             trx->xid->key(), gcn->gcn(), pmmt.gcn);
-    lizard_warn(ER_LIZARD) << err_msg;
-  }
-
-  external_automatic = (gcn->gcn() > pmmt.gcn);
-  csr = external_automatic ? CSR_AUTOMATIC : pmmt.csr;
-  gcn->decide_if_ac_commit(csr, external_automatic);
-
-push_up:
-  gcn->push_up_sys_gcn();
-
-  decide_xa_master_addr(trx, master_addr);
 }
 
 }  // namespace lizard

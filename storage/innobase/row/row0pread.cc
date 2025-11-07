@@ -44,6 +44,8 @@ Created 2018-01-27 by Sunny Bains */
 
 #include "lizard0row.h"
 #include "lizard0undo.h"
+#include "lizard0txn0rec.h"
+#include "lizard0btr0pcur.h"
 
 #ifdef UNIV_PFS_THREAD
 mysql_pfs_key_t parallel_read_thread_key;
@@ -215,8 +217,33 @@ class PCursor {
   @param[in,out] pcur           Persistent cursor in use.
   @param[in] mtr                Mini-transaction used by the persistent cursor.
   @param[in] read_level         Read level where the block should be present. */
-  PCursor(btr_pcur_t *pcur, mtr_t *mtr, size_t read_level)
-      : m_mtr(mtr), m_pcur(pcur), m_read_level(read_level) {}
+  PCursor(btr_pcur_t *pcur, mtr_t *mtr, size_t read_level,
+          lizard::DDL_cleanout *ddl_cleanout)
+      : m_mtr(mtr),
+        m_pcur(pcur),
+        m_read_level(read_level),
+        m_ddl_cleanout(ddl_cleanout) {}
+
+  /**
+    Restore position of cursor created from Scan_ctx::Range object.
+    Adjust it if starting record of range has been purged.
+  */
+  void restore_position_for_range() noexcept {
+    /*
+      Restore position on the record or its predecessor if the record
+      was purged meanwhile. In the latter case we need to adjust position by
+      moving one step forward as predecessor belongs to another range.
+
+      We rely on return value from restore_position() to detect this scenario.
+      This can be done when saved position points to user record which is
+      always the case for saved start of Scan_ctx::Range.
+    */
+    ut_ad(m_pcur->m_rel_pos == BTR_PCUR_ON);
+
+    if (!m_pcur->restore_position(BTR_SEARCH_LEAF, m_mtr, UT_LOCATION_HERE)) {
+      page_cur_move_to_next(m_pcur->get_page_cur());
+    }
+  }
 
   /** Create a savepoint and commit the mini-transaction.*/
   void savepoint() noexcept;
@@ -228,65 +255,6 @@ class PCursor {
   @param[in]  index             Index being traversed.
   @return DB_SUCCESS or error code. */
   [[nodiscard]] dberr_t move_to_next_block(dict_index_t *index);
-
-  /** Restore the cursor position. */
-  void restore_position() noexcept {
-    constexpr auto MODE = BTR_SEARCH_LEAF;
-    const auto relative = m_pcur->m_rel_pos;
-    auto equal = m_pcur->restore_position(MODE, m_mtr, UT_LOCATION_HERE);
-
-#ifdef UNIV_DEBUG
-    if (m_pcur->m_pos_state == BTR_PCUR_IS_POSITIONED_OPTIMISTIC) {
-      ut_ad(m_pcur->m_rel_pos == BTR_PCUR_BEFORE ||
-            m_pcur->m_rel_pos == BTR_PCUR_AFTER);
-    } else {
-      ut_ad(m_pcur->m_pos_state == BTR_PCUR_IS_POSITIONED);
-      ut_ad((m_pcur->m_rel_pos == BTR_PCUR_ON) == m_pcur->is_on_user_rec());
-    }
-#endif /* UNIV_DEBUG */
-
-    switch (relative) {
-      case BTR_PCUR_ON:
-        if (!equal) {
-          page_cur_move_to_next(m_pcur->get_page_cur());
-        }
-        break;
-
-      case BTR_PCUR_UNSET:
-      case BTR_PCUR_BEFORE_FIRST_IN_TREE:
-        ut_error;
-        break;
-
-      case BTR_PCUR_AFTER:
-      case BTR_PCUR_AFTER_LAST_IN_TREE:
-        break;
-
-      case BTR_PCUR_BEFORE:
-        /* For non-optimistic restoration:
-        The position is now set to the record before pcur->old_rec.
-
-        For optimistic restoration:
-        The position also needs to take the previous search_mode into
-        consideration. */
-        switch (m_pcur->m_pos_state) {
-          case BTR_PCUR_IS_POSITIONED_OPTIMISTIC:
-            m_pcur->m_pos_state = BTR_PCUR_IS_POSITIONED;
-            /* The cursor always moves "up" ie. in ascending order. */
-            break;
-
-          case BTR_PCUR_IS_POSITIONED:
-            if (m_pcur->is_on_user_rec()) {
-              m_pcur->move_to_next(m_mtr);
-            }
-            break;
-
-          case BTR_PCUR_NOT_POSITIONED:
-          case BTR_PCUR_WAS_POSITIONED:
-            ut_error;
-        }
-        break;
-    }
-  }
 
   /** @return the current page cursor. */
   [[nodiscard]] page_cur_t *get_page_cursor() noexcept {
@@ -308,7 +276,10 @@ class PCursor {
   /** @return Level where the cursor is intended. */
   size_t read_level() const noexcept { return m_read_level; }
 
- private:
+
+  [[nodiscard]] btr_pcur_t* get_pcur() const noexcept { return m_pcur; }
+
+  private :
   /** Mini-transaction. */
   mtr_t *m_mtr{};
 
@@ -318,6 +289,8 @@ class PCursor {
   /** Level where the cursor is positioned or need to be positioned in case of
   restore. */
   size_t m_read_level{};
+
+  lizard::DDL_cleanout *m_ddl_cleanout;
 };
 
 buf_block_t *Parallel_reader::Scan_ctx::block_get_s_latched(
@@ -351,7 +324,7 @@ void PCursor::resume() noexcept {
   /* Restore position on the record, or its predecessor if the record
   was purged meanwhile. */
 
-  restore_position();
+  m_pcur->restore_position(BTR_SEARCH_LEAF, m_mtr, UT_LOCATION_HERE);
 
   if (!m_pcur->is_after_last_on_page()) {
     /* Move to the successor of the saved record. */
@@ -398,8 +371,15 @@ dberr_t PCursor::move_to_user_rec() noexcept {
 
   buf_block_dbg_add_level(block, SYNC_TREE_NODE);
 
+  /** Release the previous page S lock. */
   btr_leaf_page_release(page_cur_get_block(cur), RW_S_LATCH, m_mtr);
+  
+  if (m_ddl_cleanout != nullptr) {
+    /** Cleanout the previous page. */
+    m_ddl_cleanout->execute();
+  }
 
+  /** Here block is next page, pcur moves to next page. */
   page_cur_set_before_first(block, cur);
 
   /* Skip the infimum record. */
@@ -471,7 +451,9 @@ dberr_t PCursor::move_to_next_block(dict_index_t *index) {
 bool Parallel_reader::Scan_ctx::check_visibility(const rec_t *&rec,
                                                  ulint *&offsets,
                                                  mem_heap_t *&heap,
-                                                 mtr_t *mtr) {
+                                                 mtr_t *mtr, 
+                                                 lizard::Cleanout *cleanout, 
+                                                 btr_pcur_t *pcur) {
   const auto table_name = m_config.m_index->table->name;
 
   // ut_ad(!m_trx || m_trx->read_view == nullptr ||
@@ -483,27 +465,39 @@ bool Parallel_reader::Scan_ctx::check_visibility(const rec_t *&rec,
     auto vision = &m_trx->vision;
 
     if (m_config.m_index->is_clustered()) {
-      txn_rec_t txn_rec;
-      lizard::row_get_txn_rec(rec, m_config.m_index, offsets, &txn_rec);
-
-      {
-        if (m_trx->isolation_level > TRX_ISO_READ_UNCOMMITTED) {
-          lizard::txn_rec_real_state_by_misc(&txn_rec);
-        }
+      if (m_config.m_index->table->is_temporary()) {
+        /* Temp-tables are not shared across connections and multiple
+        transactions from different connections cannot simultaneously
+        operate on same temp-table and so read of temp-table is
+        always consistent read. */
+        goto sees;
       }
+      ut_ad(lizard::pcur_position_validate(pcur, rec, m_config.m_index));
 
-      if (m_trx->isolation_level > TRX_ISO_READ_UNCOMMITTED &&
-          !vision->modifications_visible(&txn_rec, table_name)) {
-        rec_t *old_vers;
+      const txn_layout_t layout = TL_CLOVER;
+      txn_rec_t txn_rec(rec, m_config.m_index, offsets, layout);
 
-        row_vers_build_for_consistent_read(rec, mtr, m_config.m_index, &offsets,
-                                           vision, &heap, heap, &old_vers,
-                                           nullptr, nullptr);
+      if (m_trx->isolation_level > TRX_ISO_READ_UNCOMMITTED) {
+        Cleanout_ctx_t cctx(pcur, cleanout);
+        if (lizard::txn_rec_try_see(&txn_rec, layout, vision,
+                                    cctx(MTR_LOG_NO_REDO))) {
+          goto sees;
+        }
+        lizard::txn_rec_execute_when_query(&txn_rec, layout,
+                                           vision->visible_by(), cctx);
 
-        rec = old_vers;
+        if (!vision->modifications_visible(&txn_rec, table_name)) {
+          rec_t *old_vers;
 
-        if (rec == nullptr) {
-          return (false);
+          row_vers_build_for_consistent_read(
+              rec, mtr, m_config.m_index, &offsets, vision, &heap, heap,
+              &old_vers, nullptr, nullptr, layout);
+
+          rec = old_vers;
+
+          if (rec == nullptr) {
+            return (false);
+          }
         }
       }
     } else {
@@ -512,6 +506,7 @@ bool Parallel_reader::Scan_ctx::check_visibility(const rec_t *&rec,
     }
   }
 
+sees:
   if (rec_get_deleted_flag(rec, m_config.m_is_compact)) {
     /* This record was deleted in the latest committed version, or it was
     deleted and then reinserted-by-update before purge kicked in. Skip it. */
@@ -574,7 +569,7 @@ Parallel_reader::Scan_ctx::create_persistent_cursor(
   if (page_rec_is_supremum(rec)) {
     /* Empty page, only root page can be empty. */
     ut_a(!is_infimum ||
-         page_cursor.block->page.id.page_no() == m_config.m_index->page);
+         page_cursor.block->page.id.page_no() == m_config.m_index->page_no());
     return (iter);
   }
 
@@ -630,8 +625,8 @@ dberr_t Parallel_reader::Ctx::traverse() {
 
   auto &from = m_range.first;
 
-  PCursor pcursor(from->m_pcur, &mtr, m_scan_ctx->m_config.m_read_level);
-  pcursor.restore_position();
+  PCursor pcursor(from->m_pcur, &mtr, m_scan_ctx->m_config.m_read_level, m_ddl_cleanout);
+  pcursor.restore_position_for_range();
 
   dberr_t err{DB_SUCCESS};
 
@@ -757,7 +752,8 @@ dberr_t Parallel_reader::Ctx::traverse_recs(PCursor *pcursor, mtr_t *mtr) {
     bool skip{};
 
     if (page_is_leaf(cur->block->frame)) {
-      skip = !m_scan_ctx->check_visibility(rec, offsets, heap, mtr);
+      skip = !m_scan_ctx->check_visibility(rec, offsets, heap, mtr,
+                                           m_ddl_cleanout, pcursor->get_pcur());
     }
 
     if (!skip) {
@@ -777,6 +773,10 @@ dberr_t Parallel_reader::Ctx::traverse_recs(PCursor *pcursor, mtr_t *mtr) {
     m_first_rec = false;
 
     page_cur_move_to_next(cur);
+  }
+
+  if (m_ddl_cleanout != nullptr) {
+    m_ddl_cleanout->execute();
   }
 
   if (err != DB_SUCCESS) {
@@ -1207,7 +1207,7 @@ dberr_t Parallel_reader::Scan_ctx::partition(
 
   dberr_t err{DB_SUCCESS};
 
-  err = create_ranges(scan_range, m_config.m_index->page, 0, split_level,
+  err = create_ranges(scan_range, m_config.m_index->page_no(), 0, split_level,
                       ranges, &mtr);
 
   if (err == DB_SUCCESS && scan_range.m_end != nullptr && !ranges.empty()) {

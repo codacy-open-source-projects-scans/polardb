@@ -42,8 +42,8 @@ class Paxos;
 
 struct ConsensusStateChange {
   alisql::Paxos::StateType state{alisql::Paxos::NOROLE};
-  uint64 term{0};
-  uint64 index{0};
+  uint64_t term{0};
+  uint64_t index{0};
 };
 
 class BLConsensusLog : public alisql::PaxosLog {
@@ -60,7 +60,7 @@ class BLConsensusLog : public alisql::PaxosLog {
 
   BLConsensusLog();
   ~BLConsensusLog() override;
-  void init(uint64 fake_start_index_arg,
+  void init(uint64_t fake_start_index_arg,
             ConsensusLogManager *consensus_log_manager_arg);
 
   int getEntry(uint64_t logIndex, alisql::LogEntry &entry, bool fastFail,
@@ -74,6 +74,23 @@ class BLConsensusLog : public alisql::PaxosLog {
   uint64_t getLastLogIndex() override;
   uint64_t getLastCachedLogIndex() override;
   uint64_t getSafeLastLogIndex() override;
+  uint64_t getSafeLastLogIndexNoLock() override;
+  uint64_t getWaitMilliseconds4OldTrxFinish() override;
+  void forceUpdateAppliedIndex(const uint64_t index) override;
+  void waitOldTrxFinish() override;
+  void waitOldXaFinish() override;
+  uint64_t waitOldBgcFinish() override;
+  void setLimitNone() override { consensusLogManager_->set_limit_none(); }
+  void setLimitNewTrx() override { consensusLogManager_->set_limit_new_trx(); }
+  void setLimitXaFinish() override { consensusLogManager_->set_limit_xa_finish(); }
+  void setLimitAll() override { consensusLogManager_->set_limit_all(); }
+  bool isInLeaderTransfer() override { return consensusLogManager_->is_in_leader_transfer(); }
+  bool isInLimitAll() override { return consensusLogManager_->is_in_limit_all(); }
+  uint64_t getLeaderTransferState() override { return consensusLogManager_->get_leader_transfer_state(); }
+  uint64_t getLimitNewTrxState() override { return consensusLogManager_->get_limit_new_trx_state(); }
+  uint64_t getLimitNoneState() override { return consensusLogManager_->get_limit_none_state(); }
+
+
   uint64_t appendWithCheck(const alisql::LogEntry &entry) override;
   uint64_t append(const alisql::LogEntry &entry) override;
   uint64_t append(const ::google::protobuf::RepeatedPtrField<alisql::LogEntry>
@@ -87,14 +104,15 @@ class BLConsensusLog : public alisql::PaxosLog {
   void setTerm(uint64_t term) override;
   uint64_t getLength() override;
   bool isStateMachineHealthy() override;
+  uint64_t getMockStartIndex() override { return mock_start_index; }
 
-  uint64 getCurrentTerm() const { return currentTerm_; }
-  static void packLogEntry(uchar *buffer, size_t buf_size, uint64 term,
-                           uint64 index, Consensus_Log_Op_Type entry_type,
+  uint64_t getCurrentTerm() const { return currentTerm_; }
+  static void packLogEntry(uchar *buffer, size_t buf_size, uint64_t term,
+                           uint64_t index, Consensus_Log_Op_Type entry_type,
                            alisql::LogEntry &log_entry);
 
  private:
-  uint64 mock_start_index;  // before this index, all log entry should be mocked
+  uint64_t mock_start_index;  // before this index, all log entry should be mocked
   ConsensusLogManager *consensusLogManager_;  // ConsensusLog Operation detail
 };
 

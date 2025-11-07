@@ -1548,6 +1548,7 @@ void Double_write::check_block(const buf_block_t *block) noexcept {
 
   switch (fil_page_get_type(block->frame)) {
     case FIL_PAGE_INDEX:
+    case FIL_PAGE_INDEX_PANDA:
     case FIL_PAGE_RTREE:
     case FIL_PAGE_SDI:
       if (page_is_comp(block->frame)) {
@@ -3440,7 +3441,9 @@ dberr_t dblwr::recv::load(recv::Pages *pages) noexcept {
         ids.push_back(id);
       } else {
         ib::info(ER_IB_MSG_DBLWR_1310)
-            << "Ignoring " << file << " - page size doesn't match";
+            << "Ignoring " << file << " - page size doesn't match"
+            << ", " << page_size
+            << ":" << srv_page_size;
       }
     } else {
       ib::warn(ER_IB_MSG_DBLWR_1311)
@@ -3550,7 +3553,9 @@ dberr_t dblwr::recv::reduced_load(recv::Pages *pages) noexcept {
         ids.push_back(id);
       } else {
         ib::info(ER_IB_MSG_DBLWR_1310)
-            << "Ignoring " << file << " - page size doesn't match";
+            << "Ignoring " << file << " - page size doesn't match"
+            << ", " << page_size
+            << ":" << srv_page_size;
       }
     } else {
       ib::warn(ER_IB_MSG_DBLWR_1311)

@@ -23,11 +23,15 @@
 
 #include "sys_vars_ext.h"
 #include "my_config.h"
+#include "mysql/psi/mysql_file.h"
+#include "mysqld.h"
+#include "plugin/x/src/module_mysqlx.h"
 #include "sql/auth/sql_guard.h"
 #include "sql/auth/sql_internal_account.h"
 #include "sql/ccl/ccl.h"
 #include "sql/ccl/ccl_bucket.h"
 #include "sql/ccl/ccl_interface.h"
+#include "sql/gh_slow_query_block/slow_query_block.h"
 #include "sql/log_table.h"
 #include "sql/outline/outline_interface.h"
 #include "sql/recycle_bin/recycle_scheduler.h"
@@ -36,9 +40,6 @@
 #include "sql/sys_vars.h"
 #include "sql_statistics_common.h"
 #include "sys_vars.h"
-
-#include "my_config.h"
-#include "mysqld.h"
 
 #include <assert.h>
 #include <limits.h>
@@ -63,6 +64,7 @@
 #include "sql/sql_jemalloc.h"
 #endif
 
+#include "sql/group_update.h"
 #include "sql/lizard/lizard_hb_freezer.h"
 
 /* Global scope variables */
@@ -76,9 +78,17 @@ static char *polardbx_product_version_ptr = NULL;
 
 int32 opt_rpc_port = DEFAULT_RPC_PORT;
 bool opt_enable_polarx_rpc = true;
+ulonglong opt_changeset_threads;
+bool opt_enable_binlog_wait_if_full = false;
 
 ulonglong opt_import_tablespace_iterator_interval_ms =
     DEFAULT_IMPORT_TABLESPACE_ITERATOR_INTERVAL;
+
+namespace lizard {
+SHOW_COMP_OPTION have_xa_prepare_with_trx_slot;
+SHOW_COMP_OPTION have_xa_async_commit;
+SHOW_COMP_OPTION have_xa_find_by_xid_with_hint;
+}  // namespace lizard
 
 /**
   Output the latest build info for the MYSQLD binary.
@@ -109,16 +119,24 @@ void print_build_info() {
 void customize_server_version() {
   char tmp_version[SERVER_VERSION_LENGTH];
   uint version_patch;
+  size_t size;
+  char *end;
 
   memset(tmp_version, '\0', SERVER_VERSION_LENGTH);
   version_patch =
       rds_version > MYSQL_VERSION_PATCH ? rds_version : MYSQL_VERSION_PATCH;
 
-  snprintf(tmp_version, SERVER_VERSION_LENGTH, "%d.%d.%d%s",
+  size = snprintf(tmp_version, SERVER_VERSION_LENGTH, "%d.%d.%d%s",
            MYSQL_VERSION_MAJOR, MYSQL_VERSION_MINOR, version_patch,
            MYSQL_VERSION_EXTRA);
 
   strxmov(innodb_version, tmp_version, NullS);
+
+  end = strstr(server_version, "-");
+  if (end && (size < SERVER_VERSION_LENGTH)) {
+    snprintf(tmp_version + size, (SERVER_VERSION_LENGTH - size), "%s", end);
+  }
+  strxmov(server_version, tmp_version, NullS);
 }
 
 static bool fix_server_version(sys_var *, THD *, enum_var_type) {
@@ -287,8 +305,7 @@ static bool set_owned_vision_gcn_on_update(sys_var *, THD *thd, enum_var_type) {
   if (thd->variables.innodb_snapshot_gcn == GCN_NULL) {
     thd->owned_vision_gcn.reset();
   } else {
-    thd->owned_vision_gcn = {csr_t::CSR_ASSIGNED,
-                             thd->variables.innodb_snapshot_gcn, SCN_NULL};
+    thd->owned_vision_gcn = (gcn_t)thd->variables.innodb_snapshot_gcn;
   }
   return false;
 }
@@ -300,21 +317,11 @@ static Sys_var_ulonglong Sys_innodb_snapshot_seq(
     BLOCK_SIZE(1), NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0),
     ON_UPDATE(set_owned_vision_gcn_on_update));
 
-static bool set_owned_commit_gcn_on_update(sys_var *, THD *thd, enum_var_type) {
-  if (thd->variables.innodb_commit_gcn == GCN_NULL) {
-    thd->owned_commit_gcn.reset();
-  } else {
-    thd->owned_commit_gcn.assign_from_var(thd->variables.innodb_commit_gcn);
-  }
-  return false;
-}
-
 static Sys_var_ulonglong Sys_innodb_commit_seq(
     "innodb_commit_seq", "Innodb commit sequence",
     HINT_UPDATEABLE SESSION_ONLY(innodb_commit_gcn), CMD_LINE(REQUIRED_ARG),
-    VALID_RANGE(GCN_INITIAL, GCN_NULL), DEFAULT(GCN_NULL),
-    BLOCK_SIZE(1), NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0),
-    ON_UPDATE(set_owned_commit_gcn_on_update));
+    VALID_RANGE(GCN_INITIAL, GCN_NULL), DEFAULT(GCN_NULL), BLOCK_SIZE(1),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0));
 
 static Sys_var_bool Sys_only_report_warning_when_skip(
     "only_report_warning_when_skip_sequence",
@@ -561,6 +568,10 @@ static Sys_var_charptr Sys_rds_inner_user_list(
     IN_FS_CHARSET, DEFAULT(0), &Plock_internal_account_string, NOT_IN_BINLOG,
     ON_CHECK(NULL), ON_UPDATE(update_inner_user));
 
+static Sys_var_bool Sys_mask_internal_user(
+    "mask_internal_user", "Mask the internal user",
+    GLOBAL_VAR(im::opt_mask_internal_user), CMD_LINE(OPT_ARG), DEFAULT(false),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
 
 #ifdef RDS_HAVE_JEMALLOC
 
@@ -587,9 +598,15 @@ static Sys_var_int32 Sys_rpc_port("rpc_port", "RPC port for PolarDB-X",
 static Sys_var_bool Sys_enable_polarx_rpc(
     "enable_polarx_rpc", "Use new open PolarDB-X RPC",
     READ_ONLY GLOBAL_VAR(opt_enable_polarx_rpc), CMD_LINE(OPT_ARG),
-    DEFAULT(true), NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+    DEFAULT(false), NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
 
 static Sys_var_deprecated_alias Sys_new_rpc("new_rpc", Sys_enable_polarx_rpc);
+
+static Sys_var_ulonglong Sys_changeset_threads("changeset_threads",
+    "changeset threads count",
+    READ_ONLY GLOBAL_VAR(opt_changeset_threads), CMD_LINE(OPT_ARG),
+    VALID_RANGE(0, 32), DEFAULT(2), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
 
 static Sys_var_ulonglong Sys_import_tablespace_iterator_interval_ms(
     "import_tablespace_iterator_interval_ms",
@@ -655,3 +672,223 @@ static Sys_var_bool Sys_opt_index_format_gpp_enabled(
     "it will add gpp column on secondary index if suitable.",
     SESSION_VAR(opt_index_format_gpp_enabled), CMD_LINE(OPT_ARG), DEFAULT(true),
     NO_MUTEX_GUARD, IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+
+extern bool opt_enable_writeset_tracking_for_ipk;
+static Sys_var_bool Sys_enable_writeset_tracking_for_ipk(
+       "enable_writeset_tracking_for_ipk",
+       "Whether record the IPK to writeset.",
+       GLOBAL_VAR(opt_enable_writeset_tracking_for_ipk),
+       CMD_LINE(OPT_ARG), DEFAULT(true));
+
+static Sys_var_have Sys_have_xa_prepare_with_trx_slot(
+    "have_xa_prepare_with_trx_slot", "have_xa_prepare_with_trx_slot",
+    READ_ONLY NON_PERSIST GLOBAL_VAR(lizard::have_xa_prepare_with_trx_slot),
+    NO_CMD_LINE, NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(nullptr),
+    ON_UPDATE(nullptr), DEPRECATED_VAR(""));
+
+static Sys_var_have Sys_have_xa_async_commit(
+    "have_xa_async_commit", "have_xa_async_commit",
+    READ_ONLY NON_PERSIST GLOBAL_VAR(lizard::have_xa_async_commit), NO_CMD_LINE,
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr),
+    DEPRECATED_VAR(""));
+
+static Sys_var_have Sys_have_xa_find_by_xid_with_hint(
+    "have_xa_find_by_xid_with_hint", "have_xa_find_by_xid_with_hint",
+    READ_ONLY NON_PERSIST GLOBAL_VAR(lizard::have_xa_find_by_xid_with_hint),
+    NO_CMD_LINE, NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(nullptr),
+    ON_UPDATE(nullptr), DEPRECATED_VAR(""));
+
+static Sys_var_bool Sys_opt_transaction_group(
+    "innodb_transaction_group",
+    "Enable transaction group mode when start a new xa branch, data changes "
+    "are visible to all transactions in the same group",
+    SESSION_VAR(innodb_transaction_group), CMD_LINE(OPT_ARG), DEFAULT(false),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+
+static Sys_var_bool Sys_enable_binlog_wait_if_full(
+    "enable_binlog_wait_if_full",
+    "Whether to wait for binlog to be flushed when the disk is full",
+    GLOBAL_VAR(opt_enable_binlog_wait_if_full), CMD_LINE(OPT_ARG),
+    DEFAULT(false), NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+
+#ifdef HAVE_GCOV
+static bool check_flush_gcov_enabled(sys_var *self, THD *thd, enum_var_type type) {
+    (void)self;
+    (void)thd;
+    if (!self->is_global_persist(type)) {
+        flush_gcov();
+    }
+    return false;
+}
+static Sys_var_bool Sys_flush_gcov_enabled("flush_gcov_enabled",
+                                           "Actively flush gcov data.",
+                                           SESSION_VAR(flush_gcov_enabled),
+                                           CMD_LINE(OPT_ARG), DEFAULT(0),
+                                           NO_MUTEX_GUARD, NOT_IN_BINLOG,
+                                           ON_CHECK(0),
+                                           ON_UPDATE(check_flush_gcov_enabled));
+#endif
+
+static bool check_ic_reduce_hint_enable(sys_var *self, THD *, set_var *var) {
+  if ((bool)var->save_result.ulonglong_value == true) {
+    if (opt_hotspot) {
+      /* Fail if variable 'hotspot' is enabled */
+      my_error(ER_VARIABLE_CHANGE_FAIL, MYF(0), self->name.str, "hotspot");
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static Sys_var_bool Sys_polardb_ic_reduce_hint_enable(
+    "polardb_ic_reduce_hint_enable",
+    "enable the ic_reduce strategy when using hint",
+    GLOBAL_VAR(ic_reduce_hint_enable), CMD_LINE(OPT_ARG), DEFAULT(true),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(check_ic_reduce_hint_enable),
+    ON_UPDATE(0));
+
+static Sys_var_deprecated_alias Sys_rds_ic_reduce_hint_enable(
+    "rds_ic_reduce_hint_enable", Sys_polardb_ic_reduce_hint_enable);
+
+/**
+   This function checks if the hotspot option can be changed,
+   what is possible if:
+   - bin log is enabled;
+
+   @param[IN] self   A pointer to the sys_var, i.e. Sys_log_binlog.
+   @param[IN] var    A pointer to the set_var created by the parser.
+
+   @return @c FALSE if the change is allowed, otherwise @c TRUE.
+*/
+static bool check_hotspot_opt(sys_var *self, THD *thd, set_var *var) {
+  /* Check the mutual exclusive settings when hotspot is about to be enabled. */
+  if ((bool)var->save_result.ulonglong_value == true) {
+    if (!(thd->variables.option_bits & OPTION_BIN_LOG) || !opt_bin_log) {
+      my_error(ER_VARIABLE_CHANGE_FAIL, MYF(0), self->name.str, "bin logging");
+      return true;
+    } else if (ic_reduce_hint_enable) {
+      my_error(ER_VARIABLE_CHANGE_FAIL, MYF(0), self->name.str,
+               "rds_ic_reduce_hint_enable");
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static Sys_var_bool Sys_hotspot("hotspot", "Switch on the hotspot function.",
+                                GLOBAL_VAR(opt_hotspot), CMD_LINE(OPT_ARG),
+                                DEFAULT(false), NO_MUTEX_GUARD, NOT_IN_BINLOG,
+                                ON_CHECK(check_hotspot_opt),
+                                ON_UPDATE(nullptr));
+
+static Sys_var_ulonglong Sys_hotspot_update_max_wait_time(
+    "hotspot_update_max_wait_time",
+    "The max wait time for master in group update (us).",
+    GLOBAL_VAR(hotspot_update_max_wait_time), CMD_LINE(OPT_ARG),
+    VALID_RANGE(1, ULLONG_MAX), DEFAULT(100), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0));
+
+static Sys_var_bool Sys_hotspot_lock_type(
+    "hotspot_lock_type",
+    "Use new type innodb row lock to boost the performance.",
+    GLOBAL_VAR(hotspot_lock_type), CMD_LINE(OPT_ARG), DEFAULT(false),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(nullptr));
+
+static Sys_var_bool Sys_hotspot_fast_insert_dup(
+    "hotspot_fast_insert_dup",
+    "Return insert dup error directly by judging if group update item exist.",
+    GLOBAL_VAR(hotspot_fast_insert_dup), CMD_LINE(OPT_ARG), DEFAULT(false),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(nullptr));
+
+static Sys_var_bool Sys_hotspot_for_autocommit(
+    "hotspot_for_autocommit",
+    "Update with autocommit can also use hotspot function.",
+    GLOBAL_VAR(hotspot_for_autocommit), CMD_LINE(OPT_ARG), DEFAULT(false),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(nullptr));
+
+/*----------------------------------------------------------------*/
+/* Variables used for GongHang slow query block.  */
+/*----------------------------------------------------------------*/
+
+static PolyLock_mutex plock_sys_slow_query_user_pattern(
+    &polarx::LOCK_slow_query_user_pattern);
+
+static bool check_sqb_user_pattern(sys_var *, THD *, set_var *var) {
+  if (var->save_result.string_value.str == nullptr) {
+    var->save_result.string_value.str = const_cast<char *>("");
+    var->save_result.string_value.length = 0;
+    return false;
+  };
+  const std::string user_pattern = var->save_result.string_value.str;
+  if (user_pattern == "") return false;
+  try {
+    std::regex pattern(user_pattern);
+  } catch (const std::regex_error &e) {
+    return true;
+  }
+  return false;
+}
+
+static Sys_var_charptr Sys_slow_query_user_pattern(
+    "slow_query_user_pattern", 
+    "match user pattern for slow query block.",
+    GLOBAL_VAR(sqb_user_pattern), CMD_LINE(OPT_ARG), IN_SYSTEM_CHARSET,
+    DEFAULT(""), &plock_sys_slow_query_user_pattern, NOT_IN_BINLOG,
+    ON_CHECK(check_sqb_user_pattern), ON_UPDATE(0));
+
+static Sys_var_deprecated_alias Sys_polarx_slow_query_block_user_pattern(
+    "polarx_slow_query_block_user_pattern", Sys_slow_query_user_pattern);
+
+static Sys_var_bool Sys_enable_slow_query_block(
+    "polarx_slow_query_block_enable",
+    "Whether to enable slow query block. Only set this other"
+    "variables will take effect.",
+    READ_ONLY GLOBAL_VAR(sqb_enable_slow_query_block), CMD_LINE(OPT_ARG),
+    DEFAULT(false), NO_MUTEX_GUARD, NOT_IN_BINLOG);
+
+static Sys_var_ulong Sys_polarx_slow_query_block_cpu_percent_threshold(
+    "polarx_slow_query_block_cpu_percent_threshold",
+    "cpu limit when execute statement, unit: %",
+    GLOBAL_VAR(sqb_cpu_percent_threshold), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, 100), DEFAULT(0), BLOCK_SIZE(1));
+
+static Sys_var_ulong Sys_polarx_slow_query_block_exec_timeout(
+    "polarx_slow_query_block_exec_timeout",
+    "Kill statement that takes over the specified number of "
+    "seconds",
+    GLOBAL_VAR(sqb_exec_timeout), CMD_LINE(REQUIRED_ARG), VALID_RANGE(0, 10000),
+    DEFAULT(0), BLOCK_SIZE(1));
+
+static Sys_var_ulong Sys_polarx_slow_query_block_exec_timeout_for_cpu_exceed(
+    "polarx_slow_query_block_exec_timeout_for_cpu_exceed",
+    "Kill statement that takes over the specified number of "
+    "seconds when cpu exceed",
+    GLOBAL_VAR(sqb_exec_timeout_for_cpu_exceed), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, 10000), DEFAULT(0), BLOCK_SIZE(1));
+
+static Sys_var_ulong Sys_polarx_slow_query_block_check_interval(
+    "polarx_slow_query_block_check_interval",
+    "The interval of polling the slow query block. unit: seconds",
+    GLOBAL_VAR(sqb_check_interval), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 10000), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_bool Sys_polarx_long_trans_external_check(
+    "polarx_long_trans_external_check",
+    "Inspection switch to obtain long transaction information.",
+    GLOBAL_VAR(polarx_long_trans_external_check),  CMD_LINE(OPT_ARG), 
+    DEFAULT(true), NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_ulong Sys_polarx_long_trans_external_threshold(
+    "polarx_long_trans_external_threshold",
+    "Represents the long transaction threshold. Transactions exceeding "
+    "this value are considered long transactions.",
+    GLOBAL_VAR(polarx_long_trans_external_threshold), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, ULLONG_MAX), DEFAULT(3000), BLOCK_SIZE(1));
+
+/*----------------------------------------------------------------*/
+/* Variables used for GongHang slow query block.  */
+/*----------------------------------------------------------------*/

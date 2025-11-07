@@ -38,13 +38,13 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "trx0types.h"
 
 #include "lizard0scn0types.h"
-#include "lizard0txn.h"
 #include "lizard0txn0service.h"
 
 #include "sql/lizard/lizard_service.h"
 
 struct trx_rseg_t;
 struct trx_undo_t;
+struct dict_index_t;
 
 /**
   Lizard transaction system undo format:
@@ -91,99 +91,41 @@ struct trx_undo_t;
 /*-------------------------------------------------------------*/
 
 /**
- * Transaction slot address:
- */
-struct slot_addr_t {
-  /* undo tablespace id */
-  space_id_t space_id;
-  /* undo log header page */
-  page_no_t page_no;
-  /* offset of undo log header */
-  ulint offset;
+  slot_ptr_t
+  ----------
+  1) slot_ptr_t build as [rseg_id, page_no, offset]
 
- public:
-  slot_addr_t() : space_id(0), page_no(0), offset(0) {}
+  2) There are two kinds of slot_ptr_t:
+  2.a) [rseg_id = 0,  page_no, offset].
+       It's special slot_ptr_t, and never points to an actual storage location
+  2.b) [rseg_id != 0, page_no, offset]
+       It's regular slot_ptr_t, and always points to an actual storage location
 
-  slot_addr_t(space_id_t space_id_arg, page_no_t page_no_arg, ulint offset_arg)
-      : space_id(space_id_arg), page_no(page_no_arg), offset(offset_arg) {}
+  3) slot_ptr_t only represents the meaning of a TXN physical address and is only
+     used for locating TXN.
 
-  bool is_null() const;
-  /** Normal txn undo allocated from txn undo space. */
-  bool is_redo() const;
-  /** Special fake address if didn't allocate txn undo */
-  bool is_no_redo() const;
+  4) slot_ptr_t is typically persisted onto TRX_UNDO_SLOT of undo log header.
 
-  bool equal_with(space_id_t space_id_arg, page_no_t page_no_arg,
-                  ulint offset_arg) {
-    return space_id == space_id_arg && page_no == page_no_arg &&
-           offset == offset_arg;
-  }
-};
+  undo_ptr_t
+  ----------
+  1) undo_ptr_t build as [Extra Flags, [slot_ptr_t]]
 
-typedef struct slot_addr_t slot_addr_t;
+  2) In addition to representing the physical address expressed by slot_ptr_t,
+     undo_ptr_t can also convey part of the transaction state information
+     through extra flags.
 
-/** Compare function */
-inline bool operator==(const slot_addr_t &lhs, const slot_addr_t &rhs) {
-  return (lhs.offset == rhs.offset && lhs.page_no == rhs.page_no &&
-          lhs.space_id == rhs.space_id);
-}
+  3) undo_ptr_t is typically persisted onto the index records.
 
-/**
-  Format of transaction slot address:
+  slot_addr_t
+  -----------
+  1) slot_ptr_t --(decode)--> slot_addr_t,
+     decode will change rseg_id to space_id of slot_addr_t
 
-   2  bit     has been used since of UBA.
-   7  bit     reserved unused
-   7  bit     undo space number (1-127)
-   32 bit     page no (4 bytes)
-   16 bit     Offset of undo log header (2 bytes)
+  undo_addr_t
+  -----------
+  1) undo_ptr_t --(decode)--> slot_addr_t --(decode)--> undo_addr_t
+     Extra Flags will be decoded from undo_ptr_t.
 */
-
-#define SLOT_POS_OFFSET 0
-#define SLOT_WIDTH_OFFSET 16
-
-#define SLOT_POS_PAGE_NO (SLOT_POS_OFFSET + SLOT_WIDTH_OFFSET)
-#define SLOT_WIDTH_PAGE_NO 32
-
-#define SLOT_POS_SPACE_ID (SLOT_POS_PAGE_NO + SLOT_WIDTH_PAGE_NO)
-#define SLOT_WIDTH_SPACE_ID 7
-
-#define SLOT_POS_UNUSED (SLOT_POS_SPACE_ID + SLOT_WIDTH_SPACE_ID)
-#define SLOT_WIDTH_UNUSED 7
-
-/** Undo block address (UBA) */
-struct undo_addr_t {
-  /* undo tablespace id */
-  space_id_t space_id;
-  /* undo log header page */
-  page_no_t page_no;
-  /* offset of undo log header */
-  ulint offset;
-  /* Active or Commit state */
-  bool state;
-  /** Commit number source for gcn */
-  csr_t csr;
-  /** Whether xa branch is slave */
-  bool is_slave;
-
- public:
-  undo_addr_t(const slot_addr_t &slot_addr, bool state_arg, csr_t csr_arg)
-      : space_id(slot_addr.space_id),
-        page_no(slot_addr.page_no),
-        offset(slot_addr.offset),
-        state(state_arg),
-        csr(csr_arg),
-        is_slave(false) {}
-
-  undo_addr_t()
-      : space_id(0),
-        page_no(0),
-        offset(0),
-        state(false),
-        csr(CSR_AUTOMATIC),
-        is_slave(false) {}
-};
-
-typedef struct undo_addr_t undo_addr_t;
 
 /**
   New record format will include SCN and UBA:
@@ -203,38 +145,37 @@ typedef struct undo_addr_t undo_addr_t;
    16 bit     Offset of undo log header (2 bytes)
 */
 
-#define UBA_POS_OFFSET 0
-#define UBA_WIDTH_OFFSET 16
+constexpr uint64_t UBA_POS_OFFSET = 0;
+constexpr uint64_t UBA_WIDTH_OFFSET = 16;
 
-#define UBA_POS_PAGE_NO (UBA_POS_OFFSET + UBA_WIDTH_OFFSET)
-#define UBA_WIDTH_PAGE_NO 32
+constexpr uint64_t UBA_POS_PAGE_NO = UBA_POS_OFFSET + UBA_WIDTH_OFFSET;
+constexpr uint64_t UBA_WIDTH_PAGE_NO = 32;
 
-#define UBA_POS_SPACE_ID (UBA_POS_PAGE_NO + UBA_WIDTH_PAGE_NO)
-#define UBA_WIDTH_SPACE_ID 7
+constexpr uint64_t UBA_POS_SPACE_ID = (UBA_POS_PAGE_NO + UBA_WIDTH_PAGE_NO);
+constexpr uint64_t UBA_WIDTH_SPACE_ID = 7;
 
-#define UBA_POS_UNUSED (UBA_POS_SPACE_ID + UBA_WIDTH_SPACE_ID)
-#define UBA_WIDTH_UNUSED 6
+constexpr uint64_t UBA_POS_UNUSED  = (UBA_POS_SPACE_ID + UBA_WIDTH_SPACE_ID);
+constexpr uint64_t UBA_WIDTH_UNUSED  = 6;
+constexpr uint64_t UBA_MASK_UNUSED = ((~(~0ULL << UBA_WIDTH_UNUSED)) << UBA_POS_UNUSED);
 
-#define UBA_POS_IS_SLAVE (UBA_POS_UNUSED + UBA_WIDTH_UNUSED)
-#define UBA_WIDTH_IS_SLAVE 1
+constexpr uint64_t UBA_POS_IS_SLAVE = (UBA_POS_UNUSED + UBA_WIDTH_UNUSED);
+constexpr uint64_t UBA_WIDTH_IS_SLAVE = 1;
+constexpr uint64_t UBA_MASK_IS_SLAVE = ((~(~0ULL << UBA_WIDTH_IS_SLAVE)) << UBA_POS_IS_SLAVE);
 
-#define UBA_MASK_IS_SLAVE ((~(~0ULL << UBA_WIDTH_IS_SLAVE)) << UBA_POS_IS_SLAVE)
+constexpr uint64_t UBA_POS_CSR = (UBA_POS_IS_SLAVE + UBA_WIDTH_IS_SLAVE);
+constexpr uint64_t UBA_WIDTH_CSR  = 1;
+constexpr uint64_t UBA_MASK_CSR = ((~(~0ULL << UBA_WIDTH_CSR)) << UBA_POS_CSR);
 
-#define UBA_POS_CSR (UBA_POS_IS_SLAVE + UBA_WIDTH_IS_SLAVE)
-#define UBA_WIDTH_CSR 1
-
-#define UBA_MASK_CSR ((~(~0ULL << UBA_WIDTH_CSR)) << UBA_POS_CSR)
-
-#define UBA_POS_STATE (UBA_POS_CSR + UBA_WIDTH_CSR)
-#define UBA_WIDTH_STATE 1
-
-#define UBA_MASK_STATE ((~(~0ULL << UBA_WIDTH_STATE)) << UBA_POS_STATE)
+constexpr uint64_t UBA_POS_STATE = (UBA_POS_CSR + UBA_WIDTH_CSR);
+constexpr uint64_t UBA_WIDTH_STATE = 1;
+constexpr uint64_t UBA_MASK_STATE = ((~(~0ULL << UBA_WIDTH_STATE)) << UBA_POS_STATE);
 
 /** Address, include [offset, page_no, space_id] */
-#define UBA_POS_ADDR 0
-#define UBA_WIDTH_ADDR \
-  (UBA_WIDTH_OFFSET + UBA_WIDTH_PAGE_NO + UBA_WIDTH_SPACE_ID)
-#define UBA_MASK_ADDR ((~(~0ULL << UBA_WIDTH_ADDR)) << UBA_POS_ADDR)
+constexpr uint64_t UBA_POS_ADDR = 0;
+constexpr uint64_t UBA_WIDTH_ADDR =
+    (UBA_WIDTH_OFFSET + UBA_WIDTH_PAGE_NO + UBA_WIDTH_SPACE_ID);
+constexpr uint64_t UBA_MASK_ADDR =
+    ((~(~0ULL << UBA_WIDTH_ADDR)) << UBA_POS_ADDR);
 
 static_assert((UBA_POS_STATE + UBA_WIDTH_STATE) == 64,
               "UBA length must be 8 bytes");
@@ -244,7 +185,8 @@ static_assert(UBA_POS_PAGE_NO == 16, "UBA page no from 16th bits");
 static_assert(UBA_POS_SPACE_ID == 48, "UBA space id from 48th bits");
 
 /** Undo log header address in record */
-typedef ib_id_t undo_ptr_t;
+typedef uint64_t slot_ptr_t;
+typedef uint64_t undo_ptr_t;
 
 /** NULL value of slot ptr  */
 constexpr undo_ptr_t UNDO_PTR_NULL = std::numeric_limits<undo_ptr_t>::min();
@@ -261,13 +203,23 @@ inline bool undo_ptr_is_slave(const undo_ptr_t &undo_ptr) {
   return static_cast<bool>((undo_ptr & UBA_MASK_IS_SLAVE) >> UBA_POS_IS_SLAVE);
 }
 
+inline void undo_ptr_clear_slave(undo_ptr_t *undo_ptr) {
+  *undo_ptr &= (~(((undo_ptr_t)(1)) << UBA_POS_IS_SLAVE));
+}
+
+inline void undo_ptr_clear_csr(undo_ptr_t *undo_ptr) {
+  *undo_ptr &= (~(((undo_ptr_t)(1)) << UBA_POS_CSR));
+}
+
 inline void undo_ptr_set_commit(undo_ptr_t *undo_ptr, unsigned int csr,
                                 bool is_slave) {
   *undo_ptr |= ((undo_ptr_t)1 << UBA_POS_STATE);
 
+  undo_ptr_clear_csr(undo_ptr);
   undo_ptr_t value = static_cast<undo_ptr_t>(csr);
   *undo_ptr |= (value << UBA_POS_CSR);
 
+  undo_ptr_clear_slave(undo_ptr);
   value = static_cast<undo_ptr_t>(is_slave);
   *undo_ptr |= (value << UBA_POS_IS_SLAVE);
 }
@@ -281,9 +233,175 @@ inline bool undo_ptr_is_slot(const undo_ptr_t &undo_ptr) {
   return !(undo_ptr >> UBA_WIDTH_ADDR);
 }
 
+inline void slot_ptr_decode(slot_ptr_t slot_ptr, ulint *offset,
+                            page_no_t *page_no, ulint *rseg_id) {
+  *offset = (ulint)slot_ptr & 0xFFFF;
+  slot_ptr >>= UBA_WIDTH_OFFSET;
+  *page_no = (ulint)slot_ptr & 0xFFFFFFFF;
+  slot_ptr >>= UBA_WIDTH_PAGE_NO;
+  *rseg_id = (ulint)slot_ptr & 0x7F;
+  slot_ptr >>= UBA_WIDTH_SPACE_ID;
+}
 
-/** Scn in record */
-typedef scn_t scn_id_t;
+/**
+ * Transaction slot address:
+ */
+class slot_addr_t {
+ public:
+  /* undo tablespace id */
+  space_id_t space_id;
+  /* undo log header page */
+  page_no_t page_no;
+  /* offset of undo log header */
+  ulint offset;
+
+ public:
+  slot_addr_t() : space_id(0), page_no(0), offset(0) {}
+
+  slot_addr_t(space_id_t space_id_arg, page_no_t page_no_arg, ulint offset_arg)
+      : space_id(space_id_arg), page_no(page_no_arg), offset(offset_arg) {}
+
+  explicit slot_addr_t(slot_ptr_t slot_ptr) { decode(slot_ptr); }
+
+  void reset() {
+    space_id = 0;
+    page_no = 0;
+    offset = 0;
+  }
+
+  bool is_null() const;
+  /** Normal txn undo allocated from txn undo space. */
+  bool is_redo() const;
+  /** Special fake address if didn't allocate txn undo */
+  bool is_no_redo() const;
+
+  bool equal_with(space_id_t space_id_arg, page_no_t page_no_arg,
+                  ulint offset_arg) {
+    return space_id == space_id_arg && page_no == page_no_arg &&
+           offset == offset_arg;
+  }
+
+  /**
+    Encode Slot_addr into slot_ptr
+    @return slot_ptr_t
+  */
+  slot_ptr_t encode() const;
+
+  /*
+    Decode the slot_ptr into slot address
+    @param[in]      slot ptr
+  */
+  void decode(slot_ptr_t slot_ptr);
+
+  const std::string print() const {
+    std::stringstream ss;
+    ss << "Txn Slot Address:[space_id=" << space_id << ",page_no=" << page_no
+       << ",offset=" << offset << "]";
+    return ss.str();
+  }
+};
+
+/** Compare function */
+inline bool operator==(const slot_addr_t &lhs, const slot_addr_t &rhs) {
+  return (lhs.offset == rhs.offset && lhs.page_no == rhs.page_no &&
+          lhs.space_id == rhs.space_id);
+}
+
+/** Special simulate space id for slot address. */
+constexpr ulint SLOT_SPACE_NUM_FAKE = 0;
+
+/** TXN can never asssign from TRX_SYS_SPACE. So SLOT_SPACE_ID_FAKE == 0 is
+considered as sepcial slot address. */
+constexpr ulint SLOT_SPACE_ID_FAKE = 0;
+
+/** Special simulate page no for slot address. */
+constexpr ulint SLOT_PAGE_NO_FAKE = 0;
+
+/**------------------------------------------------------------------------*/
+/** SLOT OFFSET:: Temporary table record */
+constexpr ulint SLOT_OFFSET_TEMP_TAB_REC = (ulint)0xFFFF;
+
+/** SLOT OFFSET:: Dynamic metadata table record */
+constexpr ulint SLOT_OFFSET_DYNAMIC_METADATA = (ulint)0xFFFF - 1;
+
+/** SLOT OFFSET:: Log_ddl table record */
+constexpr ulint SLOT_OFFSET_LOG_DDL = (ulint)0xFFFF - 2;
+
+/** SLOT OFFSET:: Index record */
+constexpr ulint SLOT_OFFSET_DICT_REC = (ulint)0xFFFF - 3;
+
+/** SLOT OFFSET:: UBA offset for no_redo insert/update undo. */
+constexpr ulint SLOT_OFFSET_NO_REDO = (ulint)0xFFFF - 4;
+
+/** SLOT OFFSET:: Index UBA that upgraded from old version. */
+constexpr ulint SLOT_OFFSET_INDEX_UPGRADE = (ulint)0xFFFF - 5;
+
+/** Lowest offset for all special cases. */
+constexpr ulint SLOT_OFFSET_LIMIT = SLOT_OFFSET_INDEX_UPGRADE;
+
+/** Please update limit value to minval from 0xFFFF. */
+static_assert(SLOT_OFFSET_LIMIT + 5 == SLOT_OFFSET_TEMP_TAB_REC,
+              "Please update limit.");
+
+/** Undo block address (UBA) */
+class undo_addr_t : public slot_addr_t {
+ public:
+  /* Active or Commit state */
+  bool state;
+  /** Commit number source for gcn */
+  csr_t csr;
+  /** Whether xa branch is slave */
+  bool is_slave;
+
+ public:
+  undo_addr_t() { reset(); }
+
+  explicit undo_addr_t(const slot_addr_t &slot_addr)
+      : slot_addr_t(slot_addr), state(0), csr(CSR_AUTOMATIC), is_slave(false) {}
+
+  undo_addr_t(const slot_addr_t &slot_addr, bool state_arg, csr_t csr_arg,
+              bool is_slave_arg)
+      : slot_addr_t(slot_addr),
+        state(state_arg),
+        csr(csr_arg),
+        is_slave(is_slave_arg) {}
+
+  explicit undo_addr_t(undo_ptr_t undo_ptr) { decode(undo_ptr); }
+
+  bool is_active() const { return state == 0; }
+
+  bool is_null() const {
+    return slot_addr_t::is_null() && state == 0 && csr == CSR_AUTOMATIC &&
+           is_slave == false;
+  }
+
+  void reset() {
+    slot_addr_t::reset();
+    state = 0;
+    csr = CSR_AUTOMATIC;
+    is_slave = false;
+  }
+
+  /**
+    Decode the undo_ptr into UBA
+    @param[in]      undo ptr
+  */
+  void decode(undo_ptr_t undo_ptr);
+
+  /**
+    Encode UBA into undo_ptr that need to copy into record
+    @return   undo_ptr
+  */
+  undo_ptr_t encode() const;
+
+  const std::string print() const {
+    std::stringstream ss;
+    ss << "Undo Block Address:[space_id=" << space_id << ",page_no=" << page_no
+       << ",offset=" << offset << ",state=" << state << ",csr=" << csr
+       << ",slave=" << is_slave << "]";
+    return ss.str();
+  }
+};
 
 /**
   XA branch info structure:
@@ -295,147 +413,7 @@ struct xes_tags_t {
   csr_t csr;
 };
 
-/**
-  The transaction description:
-
-  It will be inited when allocate the first txn undo log
-  header, and never change until transaction commit or rollback.
-*/
-struct txn_desc_t {
- public:
-  /** undo log header address */
-  undo_ptr_t undo_ptr;
-  /** scn number */
-  commit_mark_t cmmt;
-  /** proposal commit number. */
-  proposal_mark_t pmmt;
-  /** branch info */
-  xa_branch_t branch;
-  /** Master txn address for async commit. */
-  xa_addr_t maddr;
-
- public:
-  txn_desc_t() : undo_ptr(UNDO_PTR_NULL), cmmt(), pmmt(), branch(), maddr() {}
-
-  void reset() {
-    undo_ptr = UNDO_PTR_NULL;
-    cmmt.reset();
-    pmmt.reset();
-    branch.reset();
-    maddr.reset();
-  }
-
-
-  /** assemble cmmt and undo ptr */
-  void assemble(const commit_mark_t &mark, const slot_addr_t &slot_addr);
-
-  /** assemble undo ptr */
-  void assemble_undo_ptr(const slot_addr_t &slot_addr);
-
-  void resurrect_xa(const proposal_mark_t &pmmt, const xa_branch_t &branch,
-                    const xa_addr_t &maddr);
-
-  void copy_xa_when_prepare(const MyGCN &xa_gcn, const xa_branch_t &xa_branch);
-
-  void copy_xa_when_commit(const MyGCN &xa_gcn, const xa_addr_t &xa_maddr);
-};
-
-/**
-  Lizard transaction attributes in record (used by Vision)
-   1) trx_id
-   2) scn
-   3) undo_ptr
-*/
-struct txn_rec_t {
- public:
-  /* trx id */
-  trx_id_t trx_id;
-  /** scn number */
-  scn_id_t scn;
-  /** undo log header address */
-  undo_ptr_t undo_ptr;
-
-  /**
-    Although gcn isn't saved on record, but Global query still use gcn as
-    visible judgement, and it can be retrieved by txn undo header, so defined
-    gcn as txn record attribute.
-  */
-  /** Revision: Persist gcn into record */
-  gcn_t gcn;
-
- public:
-  txn_rec_t()
-      : trx_id(0), scn(SCN_NULL), undo_ptr(UNDO_PTR_NULL), gcn(GCN_NULL) {}
-
-  txn_rec_t(trx_id_t trx_id_arg, scn_id_t scn_arg, undo_ptr_t undo_ptr_arg,
-            gcn_t gcn_arg)
-      : trx_id(trx_id_arg),
-        scn(scn_arg),
-        undo_ptr(undo_ptr_arg),
-        gcn(gcn_arg) {}
-
-  bool is_committed() const {
-    if (!undo_ptr_is_active(undo_ptr)) {
-      ut_ad(scn != SCN_NULL && gcn != GCN_NULL && trx_id != 0);
-      return true;
-    } else {
-      /** Active trx didn't known Commit Info. */
-      ut_ad(scn == SCN_NULL && gcn == GCN_NULL &&
-            undo_ptr_get_csr(undo_ptr) == CSR_AUTOMATIC);
-      return false;
-    }
-  }
-
-  bool is_active() const { return !is_committed(); }
-
-  bool is_null() const {
-    if (trx_id == 0) {
-      ut_ad(scn == SCN_NULL && gcn == GCN_NULL && undo_ptr == UNDO_PTR_NULL);
-      return true;
-    }
-    return false;
-  }
-
-  void reset() {
-    trx_id = 0;
-    scn = SCN_NULL;
-    undo_ptr = UNDO_PTR_NULL;
-    gcn = GCN_NULL;
-  }
-
-  slot_ptr_t slot() const { return undo_ptr_get_slot(undo_ptr); }
-  csr_t csr() const { return undo_ptr_get_csr(undo_ptr); }
-};
-
-/**
-  Lizard transaction attributes in undo log record
-   1) scn
-   2) undo_ptr
-   3) gcn
-*/
-struct txn_info_t {
-  /** scn number */
-  scn_id_t scn;
-  /** undo log header address */
-  undo_ptr_t undo_ptr;
-  /** gcn number */
-  gcn_t gcn;
-};
-
-/**
-  Lizard transaction attributes in index (used by Vision)
-   1) scn
-   2) undo_ptr
-   3) gcn
-*/
-struct txn_index_t {
-  /** undo log header address */
-  std::atomic<undo_ptr_t> uba;
-  /** scn number */
-  std::atomic<scn_id_t> scn;
-  /** gcn number */
-  std::atomic<gcn_t> gcn;
-};
+extern xes_tags_t undo_decode_xes_tags(ulint tags);
 
 /** The struct of transaction undo for UBA */
 struct txn_undo_ptr_t {
@@ -517,251 +495,39 @@ struct txn_slot_t {
   bool ac_commit_allocated() const;
 };
 
-struct txn_lookup_t {
- public:
-  /**
-    Unlike normal UNDOs (insert undo / update undo), there are 5 kinds of states
-    of TXN. Among them, Status::ACTIVE, Status::COMMITTED and Status::PURGED
-    are specified by TXN_UNDO_LOG_STATE flag (respectively, TXN_UNDO_LOG_ACTIVE,
-    TXN_UNDO_LOG_COMMITED and TXN_UNDO_LOG_PURGED) in TXN header. And also, that's
-    mean these TXN headers are existing.
-
-    By contrast, Status::REUSE / Status::UNDO_CORRUPTED mean that the TXN
-    headers are non-existing.
-
-    * State::ACTIVE: A txn header is initialized as Status::ACTIVE when the
-    transaction begins.
-
-    * Status::COMMITTED: The state of txn header is set as Status::COMMITTED
-    at the moment that the transaction commits.
-
-    * Status::PURGED: At the moment that the purge sys start purging it. Notes
-    that: Access to the binding normal UNDOs (insert undo / update undo) is not
-    safe from then on.
-
-    * Status::ERASED: At the moment that the erase sys start erasing it. Notes
-    that: Access to the binding normal UNDOs (insert undo / update undo) is not
-    safe for two phase purge tables from then on.
-
-    * Status::REUSE: At the moment that the TXN headers are reused by another
-    transactions. These TXN headers are reinited as Status::ACTIVE, but for
-    those UBAs who also pointed at them, are supposed to be Status::REUSE.
-
-    * Status::UNDO_CORRUPTED: In fact, Status::REUSE also lost their TXN
-    headers, but Status::UNDO_CORRUPTED is a abnormal state for some special
-    cases, for example, page corrupt or TXN file unexpectedly removed.
-
-    So the life cycle of TXN hedaer:
-
-    Status::ACTIVE (Trx_A) ==> Status::COMMITTED (Trx_A) ==>
-      Status::PURGED (Trx_A) ==> { (Status::ERASED) (Trx_A) ==> }
-        * Status::REUSE  (from Trx_A's point of view)
-        * Status::ACTIVE (from Trx_B's point of view)
-  */
-  enum Status : char {
-    ACTIVE,
-    COMMITTED,
-    PURGED,
-    ERASED,
-    REUSE,
-    UNDO_CORRUPTED,
-  };
-
- public:
-  txn_lookup_t()
-      : txn_slot(),
-        real_image(),
-        real_status(Status::ACTIVE) {}
-  /** The raw data in txn slot. */
-  txn_slot_t txn_slot;
-  /**
-    If the txn is still existing:
-      * real_state: [Status::ACTIVE, Status::COMMITTED, Status::PURGED]
-      * real_image == txn_slot.image
-
-    If the txn is non-existing:
-      * real_state: [Status::REUSE]
-      * real_image == txn_slot.prev_image
-
-    If the txn is unexpectedly lost:
-      * real_state: [Status::UNDO_CORRUPTED]
-      * real_image == {SCN_UNDO_CORRUPTED, US_UNDO_CORRUPTED}
-  */
-  commit_mark_t real_image;
-  Status real_status;
-};
-
-typedef txn_lookup_t::Status txn_status_t;
-
-namespace lizard {
-
 /**
-  The element of minimum heap for the purge.
+  Check the slot address if is actually points at the real disk storage.
 */
-class TxnUndoRsegs {
- public:
-  explicit TxnUndoRsegs(scn_t scn) : m_scn(scn) {
-    for (auto &rseg : m_rsegs) {
-      rseg = nullptr;
-    }
-  }
+extern bool slot_addr_disk_mapped(const slot_addr_t &slot_addr);
 
-  /** Default constructor */
-  TxnUndoRsegs() : TxnUndoRsegs(0) {}
+#if defined UNIV_DEBUG || defined LIZARD_DEBUG
+/** Check the UBA validation */
+bool undo_addr_validate(const undo_addr_t *undo_addr,
+                        const dict_index_t *index);
 
-  void set_scn(scn_t scn) { m_scn = scn; }
+bool slot_addr_validate(const slot_addr_t &slot_addr);
 
-  scn_t get_scn() const { return m_scn; }
+#define undo_addr_validation(undo_addr, index)  \
+  do {                                          \
+    ut_a(undo_addr_validate(undo_addr, index)); \
+  } while (0)
 
-  /** Add rollback segment.
-  @param rseg rollback segment to add. */
-  void insert(trx_rseg_t *rseg) {
-    for (size_t i = 0; i < m_rsegs_n; ++i) {
-      if (m_rsegs[i] == rseg) {
-        return;
-      }
-    }
-    // ut_a(m_rsegs_n < 2);
-    /* Lizard: one more txn rseg. */
-    ut_a(m_rsegs_n < 2 + 1);
-    m_rsegs[m_rsegs_n++] = rseg;
-  }
+#define assert_undo_ptr_initial(undo_ptr) \
+  do {                                    \
+    ut_a((*(undo_ptr)) == UNDO_PTR_NULL); \
+  } while (0)
 
-  Rsegs_array<3>::iterator arrange_txn_first() {
-    ut_ad(m_rsegs.size() > 0);
+#define assert_undo_ptr_allocated(undo_ptr) \
+  do {                                      \
+    ut_a((undo_ptr) != UNDO_PTR_NULL);      \
+  } while (0)
 
-    auto iter = begin();
-    while (iter != end()) {
-      bool is_txn_rseg = fsp_is_txn_tablespace_by_id((*iter)->space_id);
-      if (is_txn_rseg) {
-        if (iter != begin()) {
-          /* Move txn rseg to position 0 */
-          std::swap(*iter, m_rsegs.front());
-        }
-        break;
-      }
-      ++iter;
-    }
+#else
 
-    /* If no txn rseg, then only one temp rseg */
-    ut_ad(iter != end() || size() == 1);
+#define undo_addr_validation(undo_addr, index)
+#define assert_undo_ptr_initial(undo_ptr)
+#define assert_undo_ptr_allocated(undo_ptr)
 
-    return begin();
-  }
-
-  /** Number of registered rsegs.
-  @return size of rseg list. */
-  size_t size() const { return (m_rsegs_n); }
-
-  /**
-  @return an iterator to the first element */
-  typename Rsegs_array<3>::iterator begin() { return m_rsegs.begin(); }
-
-  /**
-  @return an iterator to the end */
-  typename Rsegs_array<3>::iterator end() {
-    return m_rsegs.begin() + m_rsegs_n;
-  }
-
-  /** Append rollback segments from referred instance to current
-  instance. */
-  void insert(const TxnUndoRsegs &append_from) {
-    ut_ad(get_scn() == append_from.get_scn());
-    for (size_t i = 0; i < append_from.m_rsegs_n; ++i) {
-      insert(append_from.m_rsegs[i]);
-    }
-  }
-
-  /** Compare two TxnUndoRsegs based on scn.
-  @param lhs first element to compare
-  @param rhs second element to compare
-  @return true if elem1 > elem2 else false.*/
-  bool operator()(const TxnUndoRsegs &lhs, const TxnUndoRsegs &rhs) {
-    return (lhs.m_scn > rhs.m_scn);
-  }
-
-  /** Compiler defined copy-constructor/assignment operator
-  should be fine given that there is no reference to a memory
-  object outside scope of class object.*/
-
- private:
-  scn_t m_scn;
-
-  size_t m_rsegs_n{};
-
-  /** Rollback segments of a transaction, scheduled for purge. */
-  // Rsegs_array<2> m_rsegs;
-  /* Lizard: one more txn rseg. */
-  Rsegs_array<3> m_rsegs;
-};
-
-/**
-  Use priority_queue as the minimum heap structure
-  which is order by scn number */
-typedef std::priority_queue<
-    TxnUndoRsegs, std::vector<TxnUndoRsegs, ut::allocator<TxnUndoRsegs>>,
-    TxnUndoRsegs>
-    purge_heap_t;
-
-/**
-  The element of minimum heap for the erase sys.
-*/
-class UpdateUndoRseg {
- public:
-  explicit UpdateUndoRseg(scn_t scn, trx_rseg_t *rseg)
-      : m_scn(scn), m_rseg(rseg) {
-    ut_ad(!m_rseg || !m_rseg->is_txn);
-  }
-
-  /** Default constructor */
-  UpdateUndoRseg() : UpdateUndoRseg(0, nullptr) {}
-
-  void set_scn(scn_t scn) { m_scn = scn; }
-
-  scn_t get_scn() const { return m_scn; }
-
-  void set_rseg(trx_rseg_t *rseg) { m_rseg = rseg; }
-
-  trx_rseg_t *get_rseg() const { return m_rseg; }
-
-  /** Compare two UpdateUndoRseg based on scn.
-  @param lhs first element to compare
-  @param rhs second element to compare
-  @return true if elem1 > elem2 else false.*/
-  bool operator()(const UpdateUndoRseg &lhs, const UpdateUndoRseg &rhs) {
-    return (lhs.m_scn > rhs.m_scn);
-  }
-
- private:
-  scn_t m_scn;
-
-  /** Rollback segments of update undo. */
-  trx_rseg_t *m_rseg;
-};
-
-/**
-  Use priority_queue as the minimum heap structure
-  which is order by scn number */
-typedef std::priority_queue<
-    UpdateUndoRseg, std::vector<UpdateUndoRseg, ut::allocator<UpdateUndoRseg>>,
-    UpdateUndoRseg>
-    erase_heap_t;
-
-} /* namespace lizard */
-
-struct txn_space_rseg_slot_t {
-  ulint space_slot;
-  ulint rseg_slot;
-};
-
-struct txn_cursor_t {
-  /** trx_id that is used to check if the TXN is valid. */
-  trx_id_t trx_id;
-
-  /** TXN address */
-  slot_addr_t txn_addr;
-
-  txn_cursor_t() : trx_id(0), txn_addr() {}
-};
+#endif  //
 
 #endif  // lizard0undo0types_h

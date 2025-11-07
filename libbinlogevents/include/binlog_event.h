@@ -138,8 +138,9 @@
    2 /* type, default_collation_for_utf8mb4_number */ + 1U +                  \
    1 /* sql_require_primary_key */ + 1U +                                     \
    1 /* type, default_table_encryption */ + 1U +                              \
-   1 /* opt_flashback_area */  + 1U +                              \
-   1 /* type, opt_index_format_gpp_enabled */ )
+   1 /* opt_flashback_area */  + 1U +                                         \
+   1 /* type, opt_index_format_gpp_enabled */                                 \
+   + 1U + 1 /* type, opt_index_format_panda_enabled */)
 
 /**
    Uninitialized timestamp value (for either last committed or sequence number).
@@ -554,7 +555,9 @@ class Log_event_footer {
                                                    unsigned long len);
 
   static bool event_checksum_test(unsigned char *buf, unsigned long event_len,
-                                  enum_binlog_checksum_alg alg);
+                                  enum_binlog_checksum_alg alg,
+                                  uint32_t *crc_in_header = nullptr,
+                                  uint32_t *crc_from_calc = nullptr);
 
   /* Constructors */
   Log_event_footer() : checksum_alg(BINLOG_CHECKSUM_ALG_UNDEF) {}

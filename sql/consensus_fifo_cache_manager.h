@@ -51,12 +51,12 @@ struct ConsensusLogEntry {
 };
 
 enum ConsensusLogCacheResultCode {
-  SUCCESS = 0,
-  ALREADY_SWAP_OUT = 1,
-  OUT_OF_RANGE = 2,
-  FULL = 3,
-  INTERRUPT = 4,
-  EMPTY = 5
+  CLC_SUCCESS = 0,
+  CLC_ALREADY_SWAP_OUT = 1,
+  CLC_OUT_OF_RANGE = 2,
+  CLC_FULL = 3,
+  CLC_INTERRUPT = 4,
+  CLC_EMPTY = 5
 };
 
 #define RESERVE_LIST_SIZE (1024 * 1024)
@@ -86,8 +86,8 @@ class ConsensusFifoCacheManager {
     max_log_cache_size = max_log_cache_size_arg;
   }
   void set_lock_blob_index(uint64 lock_blob_index_arg);
-
   void clean_consensus_fifo_cache();
+  int force_purge_cache(uint64 index);
 
  private:
   bool inited;
@@ -99,6 +99,7 @@ class ConsensusFifoCacheManager {
   ConsensusLogEntry *log_cache_list;
   std::atomic<uint64> max_log_cache_size;  // FIFO CACHE MAX SIZE
   std::atomic<uint64> fifo_cache_size;     // FIFO cache status
+  std::atomic<uint64> force_purge_index;
   uint64 lock_blob_index;
   std::atomic<uint64> current_log_count;
   std::atomic<bool> is_running;

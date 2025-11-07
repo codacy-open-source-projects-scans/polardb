@@ -21,6 +21,8 @@
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 #include "sql/consensus/consensus_proc.h"
+#include <cstdint>
+#include <vector>
 #include "my_sys.h"
 #include "mysql/components/services/log_builtins.h"
 #include "sql/auth/auth_acls.h"
@@ -59,13 +61,14 @@ Proc *Consensus_proc_refresh_learner_meta::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_refresh_learner_meta::evoke_cmd(
+Sql_cmd *Consensus_proc_refresh_learner_meta::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_refresh_learner_meta::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   std::vector<std::string> info_vector;
   res = consensus_ptr->changeLearners(alisql::Paxos::CCSyncLearnerAll,
                                       info_vector);
@@ -85,15 +88,16 @@ Proc *Consensus_proc_force_single_mode::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_force_single_mode::evoke_cmd(
+Sql_cmd *Consensus_proc_force_single_mode::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_force_single_mode::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   res = consensus_ptr->forceSingleLeader();
-  LogErr(INFORMATION_LEVEL, ER_CONSENSUS_CMD_LOG,
+  LogErr(SYSTEM_LEVEL, ER_CONSENSUS_CMD_LOG,
          thd->m_main_security_ctx.user().str,
          thd->m_main_security_ctx.host_or_ip().str, thd->query().str, res);
   if (res)
@@ -109,15 +113,16 @@ Proc *Consensus_proc_force_learner_node::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_force_learner_node::evoke_cmd(
+Sql_cmd *Consensus_proc_force_learner_node::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_force_learner_node::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   res = consensus_ptr->forceSingleLearner();
-  LogErr(INFORMATION_LEVEL, ER_CONSENSUS_CMD_LOG,
+  LogErr(SYSTEM_LEVEL, ER_CONSENSUS_CMD_LOG,
          thd->m_main_security_ctx.user().str,
          thd->m_main_security_ctx.host_or_ip().str, thd->query().str, res);
   if (res)
@@ -132,7 +137,7 @@ Proc *Consensus_proc_show_global::instance() {
   static Proc *proc = new Consensus_proc_show_global(key_memory_package);
   return proc;
 }
-Sql_cmd *Consensus_proc_show_global::evoke_cmd(
+Sql_cmd *Consensus_proc_show_global::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
@@ -169,6 +174,13 @@ void Sql_cmd_consensus_proc_show_global::send_result(THD *thd, bool error) {
                            system_charset_info);
     protocol->store_string(result->send_applied.str,
                            result->send_applied.length, system_charset_info);
+    protocol->store_string(result->instance_type.str,
+                           result->instance_type.length, system_charset_info);
+    protocol->store_string(result->disable_election.str,
+                           result->disable_election.length, system_charset_info);
+    protocol->store_string(result->server_ip.str, result->server_ip.length,
+                           system_charset_info);
+    protocol->store(result->server_port);
     if (protocol->end_row()) return;
   }
 
@@ -183,7 +195,7 @@ Proc *Consensus_proc_show_local::instance() {
   static Proc *proc = new Consensus_proc_show_local(key_memory_package);
   return proc;
 }
-Sql_cmd *Consensus_proc_show_local::evoke_cmd(
+Sql_cmd *Consensus_proc_show_local::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
@@ -219,6 +231,15 @@ void Sql_cmd_consensus_proc_show_local::send_result(THD *thd, bool error) {
                          system_charset_info);
   protocol->store_string(result->instance_type.str,
                          result->instance_type.length, system_charset_info);
+  protocol->store_string(result->disable_election.str,
+                         result->disable_election.length,
+                         system_charset_info);
+  protocol->store_string(result->apply_running.str,
+                         result->apply_running.length,
+                         system_charset_info);
+  protocol->store_string(result->leader_ip.str, result->leader_ip.length,
+                          system_charset_info);
+  protocol->store(result->leader_port);
   if (protocol->end_row()) return;
 
   my_eof(thd);
@@ -232,7 +253,7 @@ Proc *Consensus_proc_show_logs::instance() {
   static Proc *proc = new Consensus_proc_show_logs(key_memory_package);
   return proc;
 }
-Sql_cmd *Consensus_proc_show_logs::evoke_cmd(
+Sql_cmd *Consensus_proc_show_logs::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
@@ -363,13 +384,14 @@ Proc *Consensus_proc_change_leader::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_change_leader::evoke_cmd(
+Sql_cmd *Consensus_proc_change_leader::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_change_leader::pc_execute(THD *thd) {
   assert(m_consensus_proc->consensus_proc_params().size() == 1);
+  if (!consensus_ptr) return false;
   int res = 0;
 
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
@@ -379,10 +401,19 @@ bool Sql_cmd_consensus_proc_change_leader::pc_execute(THD *thd) {
       consensus_proc_params[consensus_proc_params_idx++]->get_uint64_t(
           m_list->front());
 
-  res = consensus_ptr->leaderTransfer(node_id);
-  LogErr(INFORMATION_LEVEL, ER_CONSENSUS_CMD_LOG,
+  res = consensus_ptr->leaderTransferPrecheck(node_id);
+  if (res == alisql::PaxosErrorCode::PE_DEFAULT) {
+    xp::system(ER_XP_0) << "begin leaderTransfer to server " << node_id;
+    consensus_log_manager.set_limit_new_trx();
+    consensus_log_manager.wait_old_trx_finish();
+
+    res = consensus_ptr->leaderTransfer(node_id);
+  }
+
+  LogErr(SYSTEM_LEVEL, ER_CONSENSUS_CMD_LOG,
          thd->m_main_security_ctx.user().str,
          thd->m_main_security_ctx.host_or_ip().str, thd->query().str, res);
+
   if (res)
     my_error(ER_CONSENSUS_COMMAND_ERROR, MYF(0), res, alisql::pxserror(res));
   return (res != 0);
@@ -396,7 +427,7 @@ Proc *Consensus_proc_add_learner::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_add_learner::evoke_cmd(
+Sql_cmd *Consensus_proc_add_learner::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
@@ -404,6 +435,7 @@ Sql_cmd *Consensus_proc_add_learner::evoke_cmd(
 bool Sql_cmd_consensus_proc_add_learner::pc_execute(THD *thd) {
   assert(m_consensus_proc->consensus_proc_params().size() == 1);
   int res = 0;
+  if (!consensus_ptr) return false;
 
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   int consensus_proc_params_idx = 0;
@@ -425,6 +457,7 @@ bool Sql_cmd_consensus_proc_add_learner::pc_execute(THD *thd) {
 }
 
 bool Sql_cmd_consensus_proc_add_learner::prepare(THD *thd) {
+  if (!consensus_ptr) return false;
   if (Sql_cmd_proc::prepare(thd)) return true;
   /* check max node number */
   if (consensus_ptr->getClusterSize() > CONSENSUS_MAX_NODE_NUMBER) {
@@ -442,13 +475,14 @@ Proc *Consensus_proc_add_follower::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_add_follower::evoke_cmd(
+Sql_cmd *Consensus_proc_add_follower::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_add_follower::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   int consensus_proc_params_idx = 0;
 
@@ -466,6 +500,7 @@ bool Sql_cmd_consensus_proc_add_follower::pc_execute(THD *thd) {
 }
 
 bool Sql_cmd_consensus_proc_add_follower::prepare(THD *thd) {
+  if (!consensus_ptr) return false;
   if (Sql_cmd_proc::prepare(thd)) return true;
   /* check max node number */
   if (consensus_ptr->getClusterSize() > CONSENSUS_MAX_NODE_NUMBER) {
@@ -483,13 +518,14 @@ Proc *Consensus_proc_drop_learner::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_drop_learner::evoke_cmd(
+Sql_cmd *Consensus_proc_drop_learner::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_drop_learner::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   int consensus_proc_params_idx = 0;
 
@@ -517,13 +553,14 @@ Proc *Consensus_proc_upgrade_learner::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_upgrade_learner::evoke_cmd(
+Sql_cmd *Consensus_proc_upgrade_learner::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_upgrade_learner::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   int consensus_proc_params_idx = 0;
 
@@ -547,13 +584,14 @@ Proc *Consensus_proc_downgrade_follower::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_downgrade_follower::evoke_cmd(
+Sql_cmd *Consensus_proc_downgrade_follower::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_downgrade_follower::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   int consensus_proc_params_idx = 0;
 
@@ -578,13 +616,14 @@ Proc *Consensus_proc_configure_follower::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_configure_follower::evoke_cmd(
+Sql_cmd *Consensus_proc_configure_follower::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_configure_follower::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   auto it = m_list->begin();
 
@@ -610,6 +649,65 @@ bool Sql_cmd_consensus_proc_configure_follower::pc_execute(THD *thd) {
 }
 
 /**
+  dbms_consensus.configure_followers(...)
+*/
+Proc *Consensus_proc_configure_followers::instance() {
+  static Proc *proc = new Consensus_proc_configure_followers(key_memory_package);
+  return proc;
+}
+
+Sql_cmd *Consensus_proc_configure_followers::invoke_cmd(
+    THD *thd, mem_root_deque<Item *> *list) const {
+  return new (thd->mem_root) Sql_cmd_type(thd, list, this);
+}
+
+bool Sql_cmd_consensus_proc_configure_followers::check_parameter_num() {
+  std::size_t actual_size = (m_list == nullptr ? 0 : m_list->size());
+  std::size_t define_size = m_proc->get_parameters()->size();
+  std::size_t consensus_define_size =
+      m_consensus_proc->consensus_proc_params().size();
+
+  if (actual_size < 3
+      || actual_size > 15
+      || (actual_size % 3 != 0)
+      || define_size != consensus_define_size) {
+    my_error(ER_SP_WRONG_NO_OF_ARGS, MYF(0), "PROCEDURE",
+             m_proc->qname().c_str(), define_size, actual_size);
+    return true;
+  }
+  return false;
+}
+
+
+bool Sql_cmd_consensus_proc_configure_followers::pc_execute(THD *thd) {
+  int res = 0;
+  if (!consensus_ptr) return false;
+  const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
+
+  size_t consensus_proc_params_idx = 0;
+
+  std::vector<uint64_t> node_ids;
+  std::vector<uint> election_weights;
+  std::vector<bool> force_syncs;
+  for (auto it = m_list->begin(); consensus_proc_params_idx < m_list->size();) {
+    if (consensus_proc_params_idx < m_list->size())
+      node_ids.push_back(consensus_proc_params[consensus_proc_params_idx++]->get_uint64_t(*it++));
+    if (consensus_proc_params_idx < m_list->size())
+      election_weights.push_back(consensus_proc_params[consensus_proc_params_idx++]->get_uint64_t(*it++));
+    if (consensus_proc_params_idx < m_list->size())
+      force_syncs.push_back(consensus_proc_params[consensus_proc_params_idx++]->get_bool(*it++));
+  }
+
+  res = consensus_ptr->configureMembers(node_ids, force_syncs, election_weights);
+  LogErr(INFORMATION_LEVEL, ER_CONSENSUS_CMD_LOG,
+         thd->m_main_security_ctx.user().str,
+         thd->m_main_security_ctx.host_or_ip().str, thd->query().str, res);
+  if (res != 0 && res != 1)
+    my_error(ER_CONSENSUS_COMMAND_ERROR, MYF(0), res, alisql::pxserror(res));
+  return (res != 0 && res != 1);
+}
+
+/**
   dbms_consensus.configure_learner(...)
 */
 Proc *Consensus_proc_configure_learner::instance() {
@@ -617,13 +715,14 @@ Proc *Consensus_proc_configure_learner::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_configure_learner::evoke_cmd(
+Sql_cmd *Consensus_proc_configure_learner::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_configure_learner::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   auto it = m_list->begin();
   int consensus_proc_params_idx = 0;
@@ -656,13 +755,14 @@ Proc *Consensus_proc_fix_cluster_id::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_fix_cluster_id::evoke_cmd(
+Sql_cmd *Consensus_proc_fix_cluster_id::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_fix_cluster_id::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   int consensus_proc_params_idx = 0;
 
@@ -688,13 +788,14 @@ Proc *Consensus_proc_fix_matchindex::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_fix_matchindex::evoke_cmd(
+Sql_cmd *Consensus_proc_fix_matchindex::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_fix_matchindex::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   auto it = m_list->begin();
   int consensus_proc_params_idx = 0;
@@ -721,13 +822,14 @@ Proc *Consensus_proc_purge_log::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_purge_log::evoke_cmd(
+Sql_cmd *Consensus_proc_purge_log::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_purge_log::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   int consensus_proc_params_idx = 0;
 
@@ -753,13 +855,14 @@ Proc *Consensus_proc_local_purge_log::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_local_purge_log::evoke_cmd(
+Sql_cmd *Consensus_proc_local_purge_log::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_local_purge_log::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   int consensus_proc_params_idx = 0;
 
@@ -768,7 +871,7 @@ bool Sql_cmd_consensus_proc_local_purge_log::pc_execute(THD *thd) {
           m_list->front());
 
   res = consensus_ptr->forcePurgeLog(true /* local */, index);
-  LogErr(INFORMATION_LEVEL, ER_CONSENSUS_CMD_LOG,
+  LogErr(SYSTEM_LEVEL, ER_CONSENSUS_CMD_LOG,
          thd->m_main_security_ctx.user().str,
          thd->m_main_security_ctx.host_or_ip().str, thd->query().str, res);
   if (res)
@@ -785,13 +888,14 @@ Proc *Consensus_proc_force_purge_log::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_force_purge_log::evoke_cmd(
+Sql_cmd *Consensus_proc_force_purge_log::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_force_purge_log::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   int consensus_proc_params_idx = 0;
 
@@ -800,6 +904,41 @@ bool Sql_cmd_consensus_proc_force_purge_log::pc_execute(THD *thd) {
           m_list->front());
 
   res = consensus_log_manager.purge_log(index);
+  LogErr(SYSTEM_LEVEL, ER_CONSENSUS_CMD_LOG,
+         thd->m_main_security_ctx.user().str,
+         thd->m_main_security_ctx.host_or_ip().str, thd->query().str, res);
+  if (res)
+    my_error(ER_CONSENSUS_COMMAND_ERROR, MYF(0), res,
+             alisql::pxserror(alisql::PaxosErrorCode::PE_DEFAULT));
+  return (res != 0);
+}
+
+
+/**
+  dbms_consensus.force_purge_cache(...)
+*/
+Proc *Consensus_proc_force_purge_cache::instance() {
+  static Proc *proc = new Consensus_proc_force_purge_cache(key_memory_package);
+  return proc;
+}
+
+Sql_cmd *Consensus_proc_force_purge_cache::invoke_cmd(
+    THD *thd, mem_root_deque<Item *> *list) const {
+  return new (thd->mem_root) Sql_cmd_type(thd, list, this);
+}
+
+bool Sql_cmd_consensus_proc_force_purge_cache::pc_execute(THD *thd) {
+  int res = 0;
+  if (!consensus_ptr) return false;
+  const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
+  int consensus_proc_params_idx = 0;
+
+  uint64 index =
+      consensus_proc_params[consensus_proc_params_idx++]->get_uint64_t(
+          m_list->front());
+
+  res = consensus_log_manager.get_fifo_cache_manager()->force_purge_cache(index);
+
   LogErr(INFORMATION_LEVEL, ER_CONSENSUS_CMD_LOG,
          thd->m_main_security_ctx.user().str,
          thd->m_main_security_ctx.host_or_ip().str, thd->query().str, res);
@@ -818,13 +957,14 @@ Proc *Consensus_proc_drop_prefetch_channel::instance() {
   return proc;
 }
 
-Sql_cmd *Consensus_proc_drop_prefetch_channel::evoke_cmd(
+Sql_cmd *Consensus_proc_drop_prefetch_channel::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_consensus_proc_drop_prefetch_channel::pc_execute(THD *thd) {
   int res = 0;
+  if (!consensus_ptr) return false;
   const auto &consensus_proc_params = m_consensus_proc->consensus_proc_params();
   int consensus_proc_params_idx = 0;
 

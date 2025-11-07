@@ -53,8 +53,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "trx0trx.h"
 #include "trx0undo.h"
 
-#include "lizard0read0types.h"
 #include "lizard0erase.h"
+#include "lizard0read0types.h"
 
 /** The transaction system */
 trx_sys_t *trx_sys = nullptr;
@@ -151,7 +151,7 @@ void trx_sys_persist_gtid_scn(scn_t gtid_trx_scn) {
   mtr.commit();
 }
 
-void trx_sys_get_binlog_prepared(std::vector<trx_id_t> &trx_ids) {
+void trx_sys_get_binlog_prepared(std::vector<txn_id_t> &txn_ids) {
   trx_sys_mutex_enter();
   /* Exit fast if no prepared transaction. */
   if (trx_sys->n_prepared_trx == 0) {
@@ -161,9 +161,14 @@ void trx_sys_get_binlog_prepared(std::vector<trx_id_t> &trx_ids) {
   /* Check and find binary log prepared transaction. */
   for (auto trx : trx_sys->rw_trx_list) {
     assert_trx_in_rw_list(trx);
-    if (trx_state_eq(trx, TRX_STATE_PREPARED) && trx_is_mysql_xa(trx)) {
-      trx_ids.push_back(trx->id);
+    trx_mutex_enter(trx);
+    if (trx_state_eq(trx, TRX_STATE_PREPARED) && trx_is_mysql_xa(trx) &&
+        /** Temporary table modification maybe didn't allocate txn slot,
+         * we also didn't care of those data modification. */
+        trx->txn_desc.alloced()) {
+      txn_ids.push_back({trx->id, trx->txn_desc.undo_ptr});
     }
+    trx_mutex_exit(trx);
   }
   trx_sys_mutex_exit();
 }
@@ -562,6 +567,10 @@ void trx_sys_create(void) {
     new (&shard) Trx_shard{};
   }
 
+  for (auto &xa_group_shard : trx_sys->xa_group_shards) {
+    new (&xa_group_shard) Xa_group_shard{};
+  }
+
   new (&trx_sys->rsegs) Rsegs();
   trx_sys->rsegs.set_empty();
 
@@ -624,6 +633,10 @@ void trx_sys_close(void) {
 
   for (auto &shard : trx_sys->shards) {
     shard.~Trx_shard();
+  }
+
+  for (auto &xa_group_shard : trx_sys->xa_group_shards) {
+    xa_group_shard.~Xa_group_shard();
   }
 
   /* We used placement new to create this mutex. Call the destructor. */
@@ -708,6 +721,21 @@ size_t trx_sys_recovered_active_trxs_count() {
   }
   trx_sys_mutex_exit();
   return (total_trx);
+}
+
+bool has_started_mysql_trx() {
+  bool ret = false;
+
+  trx_sys_mutex_enter();
+  for (auto trx : trx_sys->mysql_trx_list) {
+    if (trx_was_started(trx)) {
+      trx_sys_mutex_exit();
+      return true;
+    }
+  }
+  trx_sys_mutex_exit();
+
+  return ret;
 }
 
 #ifdef UNIV_DEBUG

@@ -28,6 +28,7 @@
 #include "sql/xa.h"
 
 class THD;
+class TC_LOG;
 struct LEX;
 
 namespace lizard {
@@ -51,6 +52,21 @@ extern bool apply_trx_for_xa(THD *thd, const XID *xid, slot_ptr_t *slot_ptr,
                              trx_id_t *trx_id);
 
 /**
+  To prepare xa group for an external xa transaction, innodb must be
+  registered as a participant. After one xa branch has been prepared
+  (also including commited), the xa group would be closed. Then other
+  xa branches can not participate in the xa group. We do the check
+  here.
+  1. start trx in transaction slot storage engine.[ttse]
+  2. register ttse as a participant
+  3. register xa group and check if it has been closed.
+  @param[in]	Thread handler
+  @param[in]	XID
+  @return true if error, otherwise false.
+ */
+extern bool prepare_xa_group_and_check(THD *thd, const XID *xid);
+
+/**
   Decide proposal GCN through pre_commit_gcn and sys GCN,
   and set THD::owned_commit_gcn.
 */
@@ -61,8 +77,14 @@ extern void ac_proposal_gcn(THD *thd);
   @param[in]    xid     XID
   @param[out]   info    XA info
 */
-extern void search_trx_info(xid_t *xid, MyXAInfo *info);
+extern void search_trx_info(xid_t *xid, MyXAInfo *info,
+                            const slot_ptr_t slot_ptr_hint);
 }  // namespace xa
+
+/** init server_start_time_for_txn, so the TXN can be kept for a while after
+restart instance. */
+extern void init_server_start_time_for_txn();
+
 }  // namespace lizard
 
 #endif  // XA_TRX_INCUDED

@@ -65,7 +65,7 @@ void XPaxos_relay_log_info::overwrite_log_name(const char **ln,
   *ln = opt_bin_logname;
   *log_index_name = opt_binlog_index_name;
 
-  relay_log.is_xpaxos_log = true;
+  relay_log.is_xpaxos_log = ConsensusLogManager::enable_consensus();
   return;
 }
 
@@ -94,7 +94,7 @@ int XPaxos_relay_log_info::get_log_position(LOG_INFO *linfo,
   uint64 log_pos = 0;
   char log_name[FN_REFLEN];
   uint64 next_index =
-      consensus_log_manager.get_next_trx_index(get_consensus_apply_index());
+      consensus_log_manager.get_next_trx_index(get_consensus_apply_index(), false);
   if (consensus_log_manager.get_log_position(next_index, false, log_name,
                                              &log_pos)) {
     sql_print_error("Mts recover cannot find start index %llu.", next_index);
@@ -112,18 +112,9 @@ void XPaxos_relay_log_info::set_xpaxos_relay_log_info() {
   consensus_log_manager.set_relay_log_info(this);
 }
 
-void XPaxos_relay_log_info::set_xpaxos_apply_ev_sequence() {
-  consensus_log_manager.set_apply_ev_sequence(1);
-}
-
 void XPaxos_relay_log_info::update_xpaxos_applied_index() {
-  ulonglong rli_appliedindex = 0;
   set_consensus_apply_index(gaq->lwm.consensus_index);
-  rli_appliedindex = get_consensus_apply_index();
-  rli_appliedindex = opt_appliedindex_force_delay >= rli_appliedindex
-                         ? 0
-                         : rli_appliedindex - opt_appliedindex_force_delay;
-  mts_force_consensus_apply_index(this, rli_appliedindex);
+  mts_force_consensus_apply_index(this, get_consensus_apply_index());
 }
 
 /**

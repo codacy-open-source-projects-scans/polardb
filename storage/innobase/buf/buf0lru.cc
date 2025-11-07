@@ -81,10 +81,6 @@ are not blocked for extended period of time when using very large
 buffer pools. */
 static const ulint BUF_LRU_DROP_SEARCH_SIZE = 1024;
 
-/** We scan these many blocks when looking for a clean page to evict
-during LRU eviction. */
-static const ulint BUF_LRU_SEARCH_SCAN_THRESHOLD = 100;
-
 /** If we switch on the InnoDB monitor because there are too few available
 frames in the buffer pool, we set this to true */
 static std::atomic_bool buf_lru_switched_on_innodb_mon = false;
@@ -1098,10 +1094,11 @@ static bool buf_LRU_free_from_common_LRU_list(buf_pool_t *buf_pool,
 
   bool freed{};
   ulint scanned{};
+  ulint min_scan = srv_LRU_get_free_scan_depth;
 
   for (buf_page_t *bpage = buf_pool->lru_scan_itr.start();
        bpage != nullptr && !freed &&
-       (scan_all || scanned < BUF_LRU_SEARCH_SCAN_THRESHOLD);
+       (scan_all || scanned < min_scan);
        ++scanned, bpage = buf_pool->lru_scan_itr.get()) {
     ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
     auto prev = UT_LIST_GET_PREV(LRU, bpage);
@@ -1837,8 +1834,6 @@ bool buf_LRU_free_page(buf_page_t *bpage, bool zip) {
 
   ut_ad(rw_lock_own(hash_lock, RW_LOCK_X));
   ut_ad(buf_page_can_relocate(bpage));
-
-  lizard::page_evit_stat(bpage);
 
   if (!buf_LRU_block_remove_hashed(bpage, zip, false)) {
     mutex_exit(&buf_pool->LRU_list_mutex);

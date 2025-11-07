@@ -58,6 +58,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ut0mem.h"
 
 #include "lizard0data0data.h"
+#include "lizard0row0gpp.h"
 
 dtuple_t *row_build_index_entry_low(const dtuple_t *row, const row_ext_t *ext,
                                     const dict_index_t *index, mem_heap_t *heap,
@@ -622,6 +623,8 @@ dtuple_t *row_rec_to_index_entry_low(
   }
 
   ut_ad(dtuple_check_typed(entry));
+
+  lizard::row_search_entry_adjust_cmp_fields(index, entry);
 
   return (entry);
 }

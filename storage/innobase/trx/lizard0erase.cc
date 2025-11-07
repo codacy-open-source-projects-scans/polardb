@@ -38,6 +38,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "lizard0undo.h"
 #include "lizard0erase.h"
+#include "lizard0undo0types.h"
+#include "lizard0undo0retent.h"
 
 /** A sentinel undo record used as a return value when we have a whole
 undo log which can be skipped by purge */
@@ -210,7 +212,7 @@ static inline void trx_erase_remove_log_hdr_sp(trx_rsegf_t *rseg_hdr,
 @param[in,out]  mtr             Mini-transaction
 @return undo log record, the page latched, NULL if none */
 static trx_undo_rec_t *trx_erase_undo_get_first_rec(
-    trx_id_t *modifier_trx_id, bool *del_marks, slot_addr_t *txn_addr,
+    trx_id_t *modifier_trx_id, bool *del_marks, slot_addr_t *slot_addr,
     bool *is_2pp_log, space_id_t space, const page_size_t &page_size,
     page_no_t hdr_page_no, ulint hdr_offset, mtr_t *mtr) {
   page_t *undo_page;
@@ -230,7 +232,7 @@ static trx_undo_rec_t *trx_erase_undo_get_first_rec(
 
   *is_2pp_log = trx_undo_log_is_2pp(undo_header, mtr);
 
-  trx_undo_hdr_read_slot(undo_header, txn_addr, mtr);
+  *slot_addr = trx_undo_hdr_read_slot(undo_header, mtr);
 
   rec = trx_undo_page_get_first_rec(undo_page, hdr_page_no, hdr_offset);
 
@@ -327,6 +329,8 @@ commit_mark_t trx_erase_get_last_log(trx_rseg_t *rseg, fil_addr_t &addr,
   commit_mark_t cmmt;
 
   ut_a(!fsp_is_system_temporary(rseg->space_id));
+  ut_a(!rseg->is_txn);
+
   mtr_start(&mtr);
   rseg->latch();
 
@@ -344,7 +348,7 @@ commit_mark_t trx_erase_get_last_log(trx_rseg_t *rseg, fil_addr_t &addr,
       flst_get_last(rseg_hdr + TRX_RSEG_SEMI_PURGE_LIST, &mtr));
 
   if (addr.page == FIL_NULL) {
-    rseg->unlatch(false);
+    rseg->unlatch();
     mtr_commit(&mtr);
     return cmmt;
   }
@@ -358,7 +362,7 @@ commit_mark_t trx_erase_get_last_log(trx_rseg_t *rseg, fil_addr_t &addr,
 
   cmmt = lizard::trx_undo_hdr_read_cmmt(log_hdr, &mtr);
 
-  rseg->unlatch(false);
+  rseg->unlatch();
   mtr_commit(&mtr);
   return cmmt;
 }
@@ -1069,11 +1073,8 @@ ulint trx_erase(ulint n_purge_threads, /*!< in: number of purge tasks
 
   @retval       bool        true if the corresponding txn has been purged
 */
-bool precheck_if_txn_is_erased(const txn_rec_t *txn_rec) {
-  if (!undo_ptr_is_active(txn_rec->undo_ptr)) {
-    /** scn must allocated */
-    lizard_ut_ad(txn_rec->scn > 0 && txn_rec->scn < SCN_MAX);
-
+bool txn_rec_is_erased_by_precheck(const txn_rec_t *txn_rec) {
+  if (txn_rec->is_committed()) {
     return (txn_rec->scn <= erase_sys->erased_scn);
   }
   return false;

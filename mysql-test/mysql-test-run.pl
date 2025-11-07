@@ -282,6 +282,7 @@ our @DEFAULT_SUITES = qw(
   perfschema
   query_rewrite_plugins
   rpl_gtid
+  rpl_gtid_no_xpaxos
   secondary_engine
   service_status_var_registration
   service_sys_var_registration
@@ -299,6 +300,8 @@ our @DEFAULT_SUITES = qw(
   xcluster
   changeset
   polarx_rpc
+  proxy
+  panda
 );
 
 our $DEFAULT_SUITES = join ',', @DEFAULT_SUITES;
@@ -325,7 +328,7 @@ our $opt_resfile                   = $ENV{'MTR_RESULT_FILE'} || 0;
 our $opt_test_progress             = 1;
 our $opt_sanitize                  = 0;
 our $opt_shutdown_timeout          = $ENV{MTR_SHUTDOWN_TIMEOUT} || 20; # seconds
-our $opt_start_timeout             = $ENV{MTR_START_TIMEOUT} || 180;   # seconds
+our $opt_start_timeout             = $ENV{MTR_START_TIMEOUT} || 600;   # seconds
 our $opt_user                      = "root";
 our $opt_valgrind                  = 0;
 our $opt_valgrind_secondary_engine = 0;
@@ -5158,7 +5161,7 @@ sub run_testcase ($) {
       $ret = run_query($mysqld_leader, $query, "run_query.log", "run_query.error");
       last if ($ret == 0);
       $err_cnt++;
-      if ($err_cnt >= 10) {
+      if ($err_cnt >= 20) {
         mtr_warning("Fail to change consensus_leader after $err_cnt times trying!!!");
         report_failure_and_restart($tinfo);
         return 1;
@@ -5542,7 +5545,7 @@ sub run_testcase ($) {
     }
 
     # It's not mysqltest that has exited, kill it
-    mtr_report("Killing mysqltest pid $test");
+    mtr_report("Killing mysqltest pid2 $test");
     $test->kill();
 
     # Check if testcase timer expired
@@ -6208,7 +6211,7 @@ sub check_expected_crash_and_restart($$) {
               $ret = run_query($mysqld_leader, $query, "run_query.log", "run_query.error");
               last if ($ret == 0);
               $err_cnt++;
-              if ($err_cnt >= 10) {
+              if ($err_cnt >= 20) {
                 mtr_warning("Fail to change consensus_leader after $err_cnt times trying!!!");
                 report_failure_and_restart($tinfo);
                 return 1;
@@ -7343,6 +7346,13 @@ sub start_check_testcase ($$$) {
   my $mode   = shift;
   my $mysqld = shift;
 
+  #only xcluster. case use check-testcase_xcluster
+  mtr_report("start_check_testcase case $tinfo->{name}");
+  our $check_testcase_name = "include/check-testcase.test"; 
+  if (index($tinfo->{name}, 'xcluster.') != -1) {
+    $check_testcase_name = "include/check-testcase_xcluster.test";
+  }
+
   my $name = "check-" . $mysqld->name();
   # Replace dots in name with underscore to avoid that mysqltest
   # misinterpret's what the filename extension is :(
@@ -7354,7 +7364,7 @@ sub start_check_testcase ($$$) {
   mtr_add_arg($args, "--defaults-file=%s",         $path_config_file);
   mtr_add_arg($args, "--defaults-group-suffix=%s", $mysqld->after('mysqld'));
   mtr_add_arg($args, "--result-file=%s", "$opt_vardir/tmp/$name.result");
-  mtr_add_arg($args, "--test-file=%s",   "include/check-testcase.test");
+  mtr_add_arg($args, "--test-file=%s",   "$check_testcase_name");
   mtr_add_arg($args, "--verbose");
   mtr_add_arg($args, "--logdir=%s/tmp",  $opt_vardir);
 

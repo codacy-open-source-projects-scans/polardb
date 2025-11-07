@@ -349,17 +349,17 @@ class CmtEpoll final {
 
         std::lock_guard<std::mutex> plugin_lck(plugin_info.mutex);
         if (plugin_info.plugin_info != nullptr) {
-          if (0 == iret)
-            my_plugin_log_message(
-                &plugin_info.plugin_info, MY_WARNING_LEVEL,
-                "MtEpoll bind worker thread(tid:%lu) %u:%u(%u,%u) to CPU %d.",
-                tid, group_id_, thread_id, base_thread, epoll_wait, affinity);
-          else
+          if (0 != iret)
             my_plugin_log_message(&plugin_info.plugin_info, MY_WARNING_LEVEL,
                                   "MtEpoll bind worker thread(tid:%lu) "
                                   "%u:%u(%u,%u) to CPU %d failed. %d",
                                   tid, group_id_, thread_id, base_thread,
                                   epoll_wait, affinity, iret);
+          // else
+          //   my_plugin_log_message(
+          //       &plugin_info.plugin_info, MY_INFORMATION_LEVEL,
+          //       "MtEpoll bind worker thread(tid:%lu) %u:%u(%u,%u) to CPU %d.",
+          //       tid, group_id_, thread_id, base_thread, epoll_wait, affinity);
         }
       }
     } else {
@@ -369,19 +369,19 @@ class CmtEpoll final {
 
       std::lock_guard<std::mutex> plugin_lck(plugin_info.mutex);
       if (plugin_info.plugin_info != nullptr) {
-        if (0 == iret)
-          my_plugin_log_message(
-              &plugin_info.plugin_info, MY_WARNING_LEVEL,
-              "MtEpoll bind%s worker thread(tid:%lu) %u:%u(%u,%u) to CPUs %s.",
-              base_thread ? "" : " dynamic", tid, group_id_, thread_id,
-              base_thread, epoll_wait, cores_str_.c_str());
-        else
+        if (0 != iret)
           my_plugin_log_message(&plugin_info.plugin_info, MY_WARNING_LEVEL,
                                 "MtEpoll bind%s worker thread(tid:%lu) "
                                 "%u:%u(%u,%u) to CPUs %s failed. %d",
                                 base_thread ? "" : " dynamic", tid, group_id_,
                                 thread_id, base_thread, epoll_wait,
                                 cores_str_.c_str(), iret);
+        // else
+        //   my_plugin_log_message(
+        //       &plugin_info.plugin_info, MY_INFORMATION_LEVEL,
+        //       "MtEpoll bind%s worker thread(tid:%lu) %u:%u(%u,%u) to CPUs %s.",
+        //       base_thread ? "" : " dynamic", tid, group_id_, thread_id,
+        //       base_thread, epoll_wait, cores_str_.c_str());
       }
     }
   }
@@ -410,7 +410,7 @@ class CmtEpoll final {
         if (start_time != 0) {
           auto task_end_time = Ctime::steady_ns();
           auto work_queue_time = task_end_time - start_time;
-          g_work_queue_hist.update(static_cast<double>(work_queue_time) / 1e9);
+          g_work_queue_hist->update(static_cast<double>(work_queue_time) / 1e9);
         }
 
         if (!t) break;
@@ -559,7 +559,7 @@ class CmtEpoll final {
         if (timer_start_time != 0) {
           auto timer_end_time = Ctime::steady_ns();
           auto timer_time = timer_end_time - timer_start_time;
-          g_timer_hist.update(static_cast<double>(timer_time) / 1e9);
+          g_timer_hist->update(static_cast<double>(timer_time) / 1e9);
         }
       }
 
@@ -595,7 +595,7 @@ class CmtEpoll final {
           if (cleanup_start_time != 0) {
             auto cleanup_end_time = Ctime::steady_ns();
             auto cleanup_time = cleanup_end_time - cleanup_start_time;
-            g_cleanup_hist.update(static_cast<double>(cleanup_time) / 1e9);
+            g_cleanup_hist->update(static_cast<double>(cleanup_time) / 1e9);
           }
         }
       }

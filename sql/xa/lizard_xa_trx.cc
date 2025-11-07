@@ -36,6 +36,7 @@
 
 #include "mysql/components/services/log_builtins.h"
 
+#include "sql/xa_handler.h"
 namespace lizard {
 namespace xa {
 
@@ -102,7 +103,7 @@ bool apply_trx_for_xa(THD *thd, const XID *xid, slot_ptr_t *slot_ptr,
   }
 
   /** 2. alloc transaction slot in ttse, will also write xid into TXN. */
-  if (ttse->ext.assign_slot_for_xa(thd, slot_ptr, trx_id)) {
+  if (ttse->ext.assign_trans_slot(thd, slot_ptr, trx_id)) {
     my_error(ER_XA_PROC_BLANK_XA_TRX, MYF(0));
     return true;
   }
@@ -119,24 +120,64 @@ bool apply_trx_for_xa(THD *thd, const XID *xid, slot_ptr_t *slot_ptr,
 }
 
 /**
+  To prepare xa group for an external xa transaction, innodb must be
+  registered as a participant. After one xa branch has been prepared
+  (also including commited), the xa group would be closed. Then other
+  xa branches can not participate in the xa group. We do the check
+  here.
+  1. start trx in transaction slot storage engine.[ttse]
+  2. register ttse as a participant
+  3. register xa group and check if it has been closed.
+  @param[in]	Thread handler
+  @param[in]	XID
+  @return true if error, false otherwise.
+ */
+bool prepare_xa_group_and_check(THD *thd, const XID *xid) {
+  /* Restrict only user client thread */
+  if (thd->system_thread != NON_SYSTEM_THREAD || thd->is_binlog_applier() ||
+      !thd->variables.innodb_transaction_group) {
+    return false;
+  }
+
+  /** Take innodb as transaction slot storage engine. */
+  handlerton *ttse = innodb_hton;
+
+#ifndef NDEBUG
+  XID_STATE *xid_state = thd->get_transaction()->xid_state();
+  assert(xid_state->has_state(XID_STATE::XA_ACTIVE));
+  assert(xid_state->get_xid()->eq(xid));
+  assert(ttse);
+#endif
+  (void)xid;
+
+  /** 1. Start trx within transaction slot storage engine, and register it
+  as a participant. */
+  if (ttse->ext.start_trx_for_xa(ttse, thd, false)) {
+    my_error(ER_XA_GROUP_TRX_SLOT_ALLOC_ERROR, MYF(0));
+    return true;
+  }
+  /** 2. register xa group and check if the xa group has been closed. */
+  if (!register_xa_group(thd, ttse)) {
+    my_error(ER_XA_GROUP_CLOSE_ERROR, MYF(0));
+    return true;
+  }
+  return false;
+}
+
+/**
   Find Transaction_ctx in Transaction_cache by XID
+
+  @return pair, the first shows xid exists in cache or not, the second is the
+  transaction_ptr if exists and detached. So if an attached transaction_ptr
+  exists in cache, the function will return (true, nullptr).
 */
-static std::shared_ptr<Transaction_ctx> find_trn_for_search_and_get_its_state(
-    xid_t *xid_for_trn, bool *is_detached) {
-  *is_detached = false;
-
-  auto foundit = ::xa::Transaction_cache::find(
-      xid_for_trn, [&](std::shared_ptr<Transaction_ctx> const &item) -> bool {
-        *is_detached = item->xid_state()->is_detached();
-        return true;
-      });
-
-  return foundit;
+static std::pair<bool /* exists or not */, std::shared_ptr<Transaction_ctx>>
+find_detached_trn_and_get_its_state(xid_t *xid_for_trn) {
+  return ::xa::Transaction_cache::find_detached(xid_for_trn);
 }
 
 static bool search_detach_prepare_trx(std::shared_ptr<Transaction_ctx> &trx_ctx,
                                       xid_t *xid, MyXAInfo *info) {
-  bool is_detached;
   bool found;
   auto detached_xs = trx_ctx->xid_state();
   handlerton_ext &ibh_ext = innodb_hton->ext;
@@ -152,8 +193,9 @@ static bool search_detach_prepare_trx(std::shared_ptr<Transaction_ctx> &trx_ctx,
       [detached_xs]() -> void { detached_xs->get_xa_lock().unlock(); }};
 
   /** 2. Detached prepared XA transaction. */
-  if (find_trn_for_search_and_get_its_state(xid, &is_detached) != nullptr) {
-    assert(is_detached);
+  auto [exists, trx_ctx2] = find_detached_trn_and_get_its_state(xid);
+  if (exists) {
+    assert(trx_ctx2);
 
     found = ibh_ext.search_detach_prepare_trx_by_xid(xid, info);
     assert(!found || info->status == XA_status::DETACHED_PREPARE);
@@ -182,15 +224,15 @@ static bool search_detach_prepare_trx(std::shared_ptr<Transaction_ctx> &trx_ctx,
   @param[in]    xid     XID
   @param[out]   info    XA info
 */
-void search_trx_info(xid_t *xid, MyXAInfo *info) {
-  bool is_detached;
+void search_trx_info(xid_t *xid, MyXAInfo *info,
+                     const slot_ptr_t slot_ptr_hint) {
   handlerton_ext &ibh_ext = innodb_hton->ext;
 
-  std::shared_ptr<Transaction_ctx> trx_ctx =
-      find_trn_for_search_and_get_its_state(xid, &is_detached);
+  auto [exists, trx_ctx] = find_detached_trn_and_get_its_state(xid);
+  DEBUG_SYNC_C("after_find_detached_trn_and_get_its_state");
 
-  if (trx_ctx != nullptr) {
-    if (!is_detached) {
+  if (exists) {
+    if (!trx_ctx) {
       /** Attached XA transaction. */
       *info = MY_XA_INFO_ATTACH;
       return;
@@ -209,7 +251,7 @@ void search_trx_info(xid_t *xid, MyXAInfo *info) {
   }
 
   /** XA transaction in history, must committed or rollbacked. */
-  if (ibh_ext.search_history_trx_by_xid(xid, info)) {
+  if (ibh_ext.search_history_trx_by_xid(xid, info, slot_ptr_hint)) {
     return;
   }
 

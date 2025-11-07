@@ -135,7 +135,8 @@ ELSE ()
             "sql_query/query_string_builder.cc"
             "sql_query/sql_statement_builder.cc"
             "secure/account_verification_handler.cc"
-            "secure/native_verification.cc")
+            "secure/native_verification.cc"
+            "secure/sha2_verification.cc")
 
     ADD_COMPILE_FLAGS(${polarx_rpc_SRC} COMPILE_FLAGS "-Wno-shadow-field")
     ADD_COMPILE_FLAGS(${polarx_rpc_SRC} COMPILE_FLAGS "-Wno-unused-const-variable")
@@ -229,6 +230,9 @@ ELSE ()
 
     ADD_COMPILE_FLAGS(${XTEST_SRC} COMPILE_FLAGS)
     MYSQL_ADD_EXECUTABLE(polarx_rpc_test ${XTEST_SRC})
+    IF(UNIX_INSTALL_RPATH_ORIGIN_PRIV_LIBDIR)
+      ADD_INSTALL_RPATH_FOR_PROTOBUF(polarx_rpc_test)
+    ENDIF()
     ADD_DEPENDENCIES(polarx_rpc_test GenError)
     TARGET_LINK_LIBRARIES(polarx_rpc_test
             mysys strings mysqlclient polarx_rpc_client polarx_rpc_protobuf_full ${PROTOBUF_LIBRARY})

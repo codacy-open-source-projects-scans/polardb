@@ -40,11 +40,12 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "lizard0scn.h"
 #include "lizard0scn0types.h"
 #include "lizard0undo0types.h"
+#include "lizard0txn0rec0types.h"
 
 #include "dict0mem.h"
 #include "trx0types.h"
 
-#include "lizard0xa0types.h"
+#include "lizard0read0xa.h"
 
 struct row_prebuilt_t;
 
@@ -62,6 +63,7 @@ typedef ib_mutex_t VisionListMutex;
 class Vision {
  public:
   Vision();
+  Vision(Snapshot_vision *);
   virtual ~Vision() {}
 
  private:
@@ -131,6 +133,37 @@ class Vision {
     m_creator_trx_id = id;
   }
 
+  /** What kind of commit number that was used to check visible . */
+  ccr_t visible_by() const {
+    if (m_snapshot_vision) return m_snapshot_vision->visible_by();
+
+    return CCR_SCN;
+  }
+
+  bool valid_txn_rec_check(txn_rec_t *txn_rec) const {
+    if (txn_rec->is_committed()) {
+      switch (visible_by()) {
+        case CCR_SCN:
+          ut_ad(txn_rec->scn > 0 && txn_rec->scn <= SCN_MAX);
+          break;
+        case CCR_GCN:
+          ut_ad(txn_rec->gcn > 0 && txn_rec->gcn <= GCN_MAX);
+          break;
+        case CCR_ALL:
+          ut_ad(txn_rec->scn > 0 && txn_rec->scn <= SCN_MAX);
+          ut_ad(txn_rec->gcn > 0 && txn_rec->gcn <= GCN_MAX);
+          break;
+        case CCR_NONE:
+        default:
+          ut_ad(0);
+          break;
+      }
+      return true;
+    } else {
+      return false;
+    }
+  }
+
   /**
     Return active state of the vision
     @retval   active state of the vision
@@ -149,9 +182,10 @@ class Vision {
 
   const Snapshot_vision *snapshot_vision() const { return m_snapshot_vision; }
 
+  void xa_refresh(trx_t *trx);
+
   bool is_asof_gcn() const {
-    return m_snapshot_vision &&
-           m_snapshot_vision->type() == Snapshot_type::AS_OF_GCN;
+    return m_snapshot_vision && m_snapshot_vision->is_gcn();
   }
 
   bool is_asof() const { return m_snapshot_vision != nullptr; }
@@ -194,13 +228,12 @@ class Vision {
   /** Snapshot vision used for asof query. */
   const Snapshot_vision *m_snapshot_vision;
 
+  /** Xa vision used for transaction group. */
+  Xa_vision m_xa_vision;
+
   UT_LIST_NODE_T(Vision) list;
 
   friend class VisionContainer;
-
- public:
-  /** The trx id container that belong to the same trx group */
-  trx_group_ids group_ids;
 };
 
 /**

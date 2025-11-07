@@ -31,6 +31,8 @@
 #include "sql/tc_log.h"              // tc_log
 #include "sql/transaction.h"  // trans_reset_one_shot_chistics, trans_track_end_trx
 #include "sql/transaction_info.h"  // Transaction_ctx
+#include "sql/bl_consensus_log.h"
+#include "sql/consensus_admin.h"
 
 Sql_cmd_xa_rollback::Sql_cmd_xa_rollback(xid_t *xid_arg)
     : Sql_cmd_xa_second_phase{xid_arg} {}
@@ -40,7 +42,14 @@ enum_sql_command Sql_cmd_xa_rollback::sql_command_code() const {
 }
 
 bool Sql_cmd_xa_rollback::execute(THD *thd) {
+  if (check_limit_xa(thd, false)) return true;
+
+  xa_finishing_count++;
+
   bool st = trans_xa_rollback(thd);
+
+  xa_finishing_count--;
+  assert(xa_finishing_count >= 0);
 
   if (!st) {
     thd->mdl_context.release_transactional_locks();
@@ -62,6 +71,10 @@ bool Sql_cmd_xa_rollback::trans_xa_rollback(THD *thd) {
 
   /* Inform clone handler of XA operation. */
   Clone_handler::XA_Operation xa_guard(thd);
+
+  thd->cpolicy_ctx.activate_xa_commit(thd->variables.innodb_commit_gcn);
+  raii::Sentry<> cp_ctx_guard{[&]() -> void { thd->cpolicy_ctx.reset(); }};
+
   if (!xid_state->has_same_xid(this->m_xid)) {
     return this->process_detached_xa_rollback(thd);
   }
@@ -134,6 +147,7 @@ bool Sql_cmd_xa_rollback::process_detached_xa_rollback(THD *thd) {
 
   CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("before_rollback_xa_trx");
   this->assign_xid_to_thd(thd);
+
   if (tc_log == nullptr) {
     this->m_result =
         trx_coordinator::rollback_detached_by_xid(thd) || this->m_result;

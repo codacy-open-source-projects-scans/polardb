@@ -36,6 +36,7 @@ namespace im {
 extern bool opt_rds_active_memory_profiling;
 
 extern void jemalloc_profiling_state();
+extern void jemalloc_malloc_stats_print();
 
 extern const LEX_CSTRING JEMALLOC_PROC_SCHEMA;
 
@@ -83,9 +84,10 @@ class Jemalloc_profile_proc : public Proc, public Disable_copy_base {
   static Proc *instance();
 
   /**
-    Evoke the sql_cmd object for proc.
+    Invoke the sql_cmd object for proc.
   */
-  virtual Sql_cmd *evoke_cmd(THD *thd, mem_root_deque<Item *> *list) const override;
+  virtual Sql_cmd *invoke_cmd(THD *thd,
+                              mem_root_deque<Item *> *list) const override;
 
   virtual ~Jemalloc_profile_proc() {}
 

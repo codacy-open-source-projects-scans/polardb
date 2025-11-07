@@ -45,15 +45,10 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "sql/system_variables.h"
 
 namespace xp {
-
-bool Recovery_manager::is_xpaxos_instance_recovering() const {
-  return !opt_initialize && is_xpaxos_instance();
-}
-
 std::unique_ptr<binlog::Binlog_recovery> Recovery_manager::create_recovery(
     Binlog_file_reader &binlog_file_reader) {
   binlog::Binlog_recovery *recovery = nullptr;
-  if (is_xpaxos_instance()) {
+  if (ConsensusLogManager::enable_consensus()) {
     recovery = new Consensus_binlog_recovery(binlog_file_reader);
   } else {
     recovery = new binlog::Binlog_recovery(binlog_file_reader);
@@ -226,7 +221,7 @@ binlog::Binlog_recovery &Consensus_binlog_recovery::recover() {
       LogErr(WARNING_LEVEL, ER_XA_SPEC_VERSION_NOT_MATCH, m_server_version,
              binlog::XA_SPEC_RECOVERY_SERVER_VERSION_REQUIRED);
     } else {
-      spec_list = m_xa_spec_recovery->xa_spec_list();
+      spec_list = m_xa_spec_recovery.xa_spec_list();
     }
 
     this->m_no_engine_recovery =
@@ -272,7 +267,7 @@ void Consensus_binlog_recovery::process_internal_xid(ulong unmasked_server_id, m
       m_internal_xids.clear();
       m_external_xids.clear();
       m_recover_term = m_current_term;
-      m_xa_spec_recovery->clear();
+      m_xa_spec_recovery.clear();
     }
     if (!m_internal_xids.insert(xid).second) {
       this->m_is_malformed = true;
@@ -294,9 +289,15 @@ void Consensus_binlog_recovery::process_external_xid(ulong unmasked_server_id,
       m_internal_xids.clear();
       m_external_xids.clear();
       m_recover_term = m_current_term;
-      m_xa_spec_recovery->clear();
+      m_xa_spec_recovery.clear();
     }
     auto found = this->m_external_xids.find(xid);
+    xp::info(ER_XP_RECOVERY) << "Consensus_binlog_recovery::process_external_xid  "
+                          << ", XID " << xid
+                          << ", m_current_index " << m_current_index
+                          << ", state " << (int)state
+                          << ", found " << (int)found->second;
+
     if (found != this->m_external_xids.end()) {
       assert(found->second != enum_ha_recover_xa_state::PREPARED_IN_SE);
       if (state == enum_ha_recover_xa_state::PREPARED_IN_TC ||

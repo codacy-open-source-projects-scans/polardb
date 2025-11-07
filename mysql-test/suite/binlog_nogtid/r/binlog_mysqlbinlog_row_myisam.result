@@ -2402,7 +2402,7 @@ ROLLBACK/*!*/;
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -2429,6 +2429,7 @@ SET @@session.explicit_defaults_for_timestamp=1/*!*/;
 /*!80013 SET @@session.sql_require_primary_key=0*//*!*/;
 /*!80032 SET @@session.opt_flashback_area=0*//*!*/;
 /*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
+/*!80032 SET @@session.opt_index_format_panda_enabled=1*//*!*/;
 CREATE TABLE t1 (
 c01 BIT,
 c02 BIT(64),
@@ -4250,7 +4251,7 @@ ROLLBACK/*!*/;
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -4276,6 +4277,7 @@ SET @@session.collation_database=DEFAULT/*!*/;
 /*!80013 SET @@session.sql_require_primary_key=0*//*!*/;
 /*!80032 SET @@session.opt_flashback_area=0*//*!*/;
 /*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
+/*!80032 SET @@session.opt_index_format_panda_enabled=1*//*!*/;
 CREATE TABLE t1 (
 c28 DATE,
 c47 VARCHAR(24),
@@ -4711,7 +4713,7 @@ ROLLBACK/*!*/;
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -4737,6 +4739,7 @@ SET @@session.collation_database=DEFAULT/*!*/;
 /*!80013 SET @@session.sql_require_primary_key=0*//*!*/;
 /*!80032 SET @@session.opt_flashback_area=0*//*!*/;
 /*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
+/*!80032 SET @@session.opt_index_format_panda_enabled=1*//*!*/;
 CREATE TABLE t1 (
 c_1_1 DATE,
 c_1_2 VARCHAR(255),
@@ -4747,7 +4750,7 @@ c_1_n INT -- row number
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -4763,6 +4766,7 @@ SET TIMESTAMP=#/*!*/;
 /*!80013 SET @@session.sql_require_primary_key=0*//*!*/;
 /*!80032 SET @@session.opt_flashback_area=0*//*!*/;
 /*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
+/*!80032 SET @@session.opt_index_format_panda_enabled=1*//*!*/;
 CREATE TABLE t2 (
 c_2_1 DATE,
 c_2_2 VARCHAR(255),
@@ -4773,7 +4777,7 @@ c_2_n INT -- row number
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -4789,6 +4793,7 @@ SET TIMESTAMP=#/*!*/;
 /*!80013 SET @@session.sql_require_primary_key=0*//*!*/;
 /*!80032 SET @@session.opt_flashback_area=0*//*!*/;
 /*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
+/*!80032 SET @@session.opt_index_format_panda_enabled=1*//*!*/;
 CREATE TABLE t3 (
 c_3_1 DATE,
 c_3_2 VARCHAR(255),
@@ -5039,6 +5044,7 @@ SET @@SESSION.GTID_NEXT= '#'/*!*/;
 SET TIMESTAMP=#/*!*/;
 /*!80032 SET @@session.opt_flashback_area=0*//*!*/;
 /*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
+/*!80032 SET @@session.opt_index_format_panda_enabled=1*//*!*/;
 ANALYZE TABLE t1
 /*!*/;
 # at #
@@ -5060,6 +5066,7 @@ SET @@SESSION.GTID_NEXT= '#'/*!*/;
 SET TIMESTAMP=#/*!*/;
 /*!80032 SET @@session.opt_flashback_area=0*//*!*/;
 /*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
+/*!80032 SET @@session.opt_index_format_panda_enabled=1*//*!*/;
 ANALYZE TABLE t2
 /*!*/;
 # at #
@@ -5081,6 +5088,7 @@ SET @@SESSION.GTID_NEXT= '#'/*!*/;
 SET TIMESTAMP=#/*!*/;
 /*!80032 SET @@session.opt_flashback_area=0*//*!*/;
 /*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
+/*!80032 SET @@session.opt_index_format_panda_enabled=1*//*!*/;
 ANALYZE TABLE t3
 /*!*/;
 # at #
@@ -5491,7 +5499,7 @@ ROLLBACK/*!*/;
 # # server id #  end_log_pos # CRC32 # 	Consensus flag=#	term=#	index=#	length=#
 ##CONSENSUS FLAG: # TERM: # INDEX: # LENGTH: # RESERVE: 0'/*!*/;
 # at #
-# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=true	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
+# # server id #  end_log_pos # CRC32 # 	Gcn	have_snapshot_seq=false	have_commit_seq=false	GCN_ASSIGNED=false	AC_PROPOSAL=false	N_GLOBAL=0	N_LOCAL=0
 SET @@session.innodb_commit_seq=###/*!*/;
 # at #
 # # server id #  end_log_pos # CRC32 # 	Anonymous_GTID	last_committed=#	sequence_number=#	rbr_only=no	original_committed_timestamp=#   immediate_commit_timestamp=#	transaction_length=##
@@ -5517,6 +5525,7 @@ SET @@session.collation_database=DEFAULT/*!*/;
 /*!80013 SET @@session.sql_require_primary_key=0*//*!*/;
 /*!80032 SET @@session.opt_flashback_area=0*//*!*/;
 /*!80032 SET @@session.opt_index_format_gpp_enabled=1*//*!*/;
+/*!80032 SET @@session.opt_index_format_panda_enabled=1*//*!*/;
 CREATE TABLE t1 (
 c1 INT DEFAULT 100,
 c2 INT,

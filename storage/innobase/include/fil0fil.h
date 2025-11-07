@@ -532,9 +532,11 @@ struct fil_space_t {
 
   /** Copy the encryption info from this object to the provided
   Encryption object.
-  @param[in]    en   Encryption object to which info is copied. */
+  @param[in,out]    en   Encryption object to which info is copied. */
   void get_encryption_info(Encryption &en) noexcept {
-    en.set_type(m_encryption_metadata.m_type);
+    if (can_encrypt()) {
+      en.set_type(encrypt_type());
+    }
     en.set_key(m_encryption_metadata.m_key);
     en.set_key_length(m_encryption_metadata.m_key_len);
     en.set_initial_vector(m_encryption_metadata.m_iv);
@@ -1295,26 +1297,17 @@ constexpr page_type_t FIL_PAGE_TYPE_ZLOB_FRAG = 28;
 /** Index pages of fragment pages (compressed LOB). */
 constexpr page_type_t FIL_PAGE_TYPE_ZLOB_FRAG_ENTRY = 29;
 
+/** See lizard0fil0fil.h */
+constexpr page_type_t FIL_PAGE_INDEX_PANDA = 40;
+
 /** Note the highest valid non-index page_type_t. */
-constexpr page_type_t FIL_PAGE_TYPE_LAST = FIL_PAGE_TYPE_ZLOB_FRAG_ENTRY;
+constexpr page_type_t FIL_PAGE_TYPE_LAST = FIL_PAGE_INDEX_PANDA;
 
 /** Check whether the page type is sys */
 #define fil_page_type_is_sys(page_type) \
   (page_type == FIL_PAGE_TYPE_SYS || page_type == FIL_PAGE_TYPE_TRX_SYS)
 
-/** Check whether the page type is index (Btree or Rtree or SDI) type */
-inline bool fil_page_type_is_index(page_type_t page_type) {
-  return page_type == FIL_PAGE_INDEX || page_type == FIL_PAGE_SDI ||
-         page_type == FIL_PAGE_RTREE;
-}
-
 page_type_t fil_page_get_type(const byte *page);
-
-/** Check whether the page is index page (either regular Btree index or Rtree
-index */
-inline bool fil_page_index_page_check(const byte *page) {
-  return fil_page_type_is_index(fil_page_get_type(page));
-}
 
 /** @} */
 

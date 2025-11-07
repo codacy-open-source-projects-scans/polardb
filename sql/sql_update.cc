@@ -59,7 +59,9 @@
 #include "sql/derror.h"      // ER_THD
 #include "sql/field.h"       // Field
 #include "sql/filesort.h"    // Filesort
+#include "sql/group_update.h"  // GroupUpdate
 #include "sql/handler.h"
+#include "sql/inventory/inventory_hint.h"
 #include "sql/item.h"            // Item
 #include "sql/item_json_func.h"  // Item_json_func
 #include "sql/item_subselect.h"  // Item_subselect
@@ -299,6 +301,55 @@ bool compare_records(const TABLE *table) {
   return false;
 }
 
+bool compare_records_for_backfill(const TABLE *table) {
+  assert(records_are_comparable(table));
+
+  if ((table->file->ha_table_flags() & HA_PARTIAL_COLUMN_READ) != 0) {
+    /*
+      Storage engine may not have read all columns of the record.  Fields
+      (including NULL bits) not in the write_set may not have been read and
+      can therefore not be compared.
+    */
+    for (Field **ptr = table->field; *ptr != nullptr; ptr++) {
+      Field *field = *ptr;
+      if (bitmap_is_set(table->write_set, field->field_index())) {
+        if (field->is_nullable()) {
+          uchar null_byte_index = field->null_offset();
+
+          if (((table->record[0][null_byte_index]) & field->null_bit) !=
+              ((table->record[1][null_byte_index]) & field->null_bit)) {
+            return true;
+          } else if (((table->record[0][null_byte_index]) & field->null_bit)) {
+            continue;
+          }
+        }
+        if (field->cmp_binary_offset(table->s->rec_buff_length)) return true;
+      }
+    }
+    return false;
+  }
+
+  /*
+     The storage engine has read all columns, so it's safe to compare all bits
+     including those not in the write_set. This is cheaper than the
+     field-by-field comparison done above.
+  */
+  if (table->s->blob_fields + table->s->varchar_fields == 0)
+    // Fixed-size record: do bitwise comparison of the records
+    return cmp_record(table, record[1]);
+  /* Compare null bits */
+  if (memcmp(table->null_flags, table->null_flags + table->s->rec_buff_length,
+             table->s->null_bytes))
+    return true;  // Diff in NULL value
+  /* Compare updated fields */
+  for (Field **ptr = table->field; *ptr; ptr++) {
+    if (bitmap_is_set(table->write_set, (*ptr)->field_index()) &&
+        (*ptr)->cmp_binary_offset(table->s->rec_buff_length))
+      return true;
+  }
+  return false;
+}
+
 /**
   Check that all fields are base table columns.
   Replace columns from views with base table columns.
@@ -412,6 +463,11 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
   bool no_rows = limit == 0;
 
   THD::killed_state killed_status = THD::NOT_KILLED;
+  GroupUpdate *gu = nullptr;
+  bool end_by_gu = false;
+  bool gu_locked = false;
+  bool view_check_fail = false;
+
   assert(CountHiddenFields(query_block->fields) == 0);
   COPY_INFO update(COPY_INFO::UPDATE_OPERATION, &query_block->fields,
                    update_value_list);
@@ -873,10 +929,21 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
     // If the update is batched, we cannot do partial update, so turn it off.
     if (will_batch) table->cleanup_partial_update(); /* purecov: inspected */
 
-    uint dup_key_found;
+    if ((gu = gu_try_start_hotspot(thd, range_scan, table))) {
+      gu_locked = true;
+    }
 
+    uint dup_key_found;
     while (true) {
-      error = iterator->Read();
+      if (thd->gu_ctx.is_follower()) {
+        if (end_by_gu) {
+          break;
+        }
+      } else if (thd->gu_ctx.is_leader()) {
+        error = iterator->Read();
+      } else {
+        error = iterator->Read();
+      }
       if (error || thd->killed) break;
       thd->inc_examined_row_count(1);
       if (conds != nullptr) {
@@ -886,9 +953,16 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
           break;
         }
         if (skip_record) {
+          if (thd->gu_ctx.is_follower()) {
+            error = 1;
+            break;
+          }
+
           table->file
               ->unlock_row();  // Row failed condition check, release lock
           thd->get_stmt_da()->inc_current_row_for_condition();
+
+          gu_locked = false;
           continue;
         }
       }
@@ -913,6 +987,16 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
       table->clear_partial_update_diffs();
 
       store_record(table, record[1]);
+      if (returning_stmt.is_full_image()) {
+        if (table->triggers) {
+          error = 1;
+          break;
+        }
+        if (!error && returning_stmt.send_data(thd, true)) {
+          error = 1;
+          break;
+        }
+      }
       bool is_row_changed = false;
       if (fill_record_n_invoke_before_triggers(
               thd, &update, query_block->fields, *update_value_list, table,
@@ -921,6 +1005,40 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
         break;
       }
       found_rows++;
+
+      if (thd->gu_ctx.is_leader()) {
+        gu->store_row(table->record[0]);
+        gu->set_leader(thd, gu->get_idx());
+        gu->set_status(GroupUpdate::GS_COLLECT);
+        gu->unlock();
+        gu_locked = false;
+
+        THD_STAGE_INFO(thd, stage_updating_hotspot_collecting);
+        if (gu->enter_update()) {
+          my_error(ER_ERROR_DURING_COMMIT, MYF(0), 111, "");
+          error = 1;
+        }
+        /* This group end. */
+        THD_STAGE_INFO(thd, stage_updating);
+        gu->lock();
+
+        if (error != 0) {
+          /* Lock is released here */
+          gu->leader_update_error();
+          break;
+        }
+        gu_locked = true;
+      }
+
+      if (thd->gu_ctx.is_follower()) {
+        gu->store_row(table->record[0]);
+        gu->push_follower(thd);
+        gu->unlock();
+
+        handlerton *ttse = innodb_hton;
+        ttse->ext.start_trx_for_gu(ttse, thd);
+        ttse->ext.assign_trans_slot(thd, nullptr, nullptr);
+      }
 
       if (is_row_changed) {
         /*
@@ -934,6 +1052,14 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
         */
         int check_result = table_list->view_check_option(thd);
         if (check_result != VIEW_CHECK_OK) {
+
+          /*
+            Since variable found is decreased, later we cannot distinguish this
+            case from the one that found is never increased, group update needs
+            to know this to do cleanup properly, so mark this case here.
+          */
+          view_check_fail = true;
+
           if (check_result == VIEW_CHECK_SKIP)
             continue;
           else if (check_result == VIEW_CHECK_ERROR) {
@@ -1000,8 +1126,16 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
           updated_rows -= dup_key_found;
         } else {
           /* Non-batched update */
-          error =
-              table->file->ha_update_row(table->record[1], table->record[0]);
+          if (likely(thd->gu_ctx.is_not_gu())) {
+            error =
+                table->file->ha_update_row(table->record[1], table->record[0]);
+          } else if (thd->gu_ctx.is_follower()) {
+            error = table->file->ha_update_row_for_gu_follower(
+                table->record[1], table->record[0]);
+          } else {
+            error = table->file->ha_update_row_for_gu_leader(
+                table->record[1], gu->get_record(), table->record[0]);
+          }
         }
         if (error == 0)
           updated_rows++;
@@ -1016,6 +1150,14 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
           if (thd->is_error()) break;
         }
       }
+
+      DEBUG_SYNC_C("update_unlock_before");
+      if (!error && thd->gu_ctx.is_leader()) {
+        // table->file->unlock_row(true);
+        gu->enter_prepare_and_unlock(thd);
+        gu_locked = false;
+      }
+      DEBUG_SYNC_C("update_unlock_after");
 
       /* Send data if it is returning clause */
       if (!error && returning_stmt.send_data(thd)) {
@@ -1084,7 +1226,20 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
         error = 1;
         break;
       }
+
+      /* End the while. */
+      if (thd->gu_ctx.is_follower()) {
+        end_by_gu = true;
+        error = -1;
+      }
+
+      /* Now gu is not locked neither by leader nor follower, reset the value */
+      gu_locked = false;
     }
+
+    gu_handle_fail_or_error(thd, gu, found_rows, view_check_fail, error,
+                            gu_locked);
+
     end_semi_consistent_read.rollback();
 
     dup_key_found = 0;
@@ -1185,11 +1340,15 @@ bool Sql_cmd_update::update_single_table(THD *thd) {
               ? found_rows
               : updated_rows);
     }
-    else
-      my_ok(thd, thd->get_protocol()->has_client_capability(CLIENT_FOUND_ROWS)
-                     ? found_rows
-                     : updated_rows,
-            id, buff);
+    else {
+      bool has_err = set_my_ok(thd,
+          thd->get_protocol()->has_client_capability(CLIENT_FOUND_ROWS)
+              ? found_rows
+              : updated_rows,
+          id, buff);
+      if (has_err) error = 1;
+    }
+      
     DBUG_PRINT("info", ("%ld records updated", (long)updated_rows));
   }
   thd->check_for_truncated_fields = CHECK_FIELD_IGNORE;
@@ -2979,12 +3138,11 @@ bool Query_result_update::send_eof(THD *thd) {
   snprintf(buff, sizeof(buff), ER_THD(thd, ER_UPDATE_INFO), (long)found_rows,
            (long)updated_rows,
            (long)thd->get_stmt_da()->current_statement_cond_count());
-  ::my_ok(thd,
+  return ::set_my_ok(thd,
           thd->get_protocol()->has_client_capability(CLIENT_FOUND_ROWS)
               ? found_rows
               : updated_rows,
           id, buff);
-  return false;
 }
 
 bool Sql_cmd_update::accept(THD *thd, Select_lex_visitor *visitor) {

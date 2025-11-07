@@ -112,8 +112,6 @@ typedef struct xid_t XID;
 typedef struct st_xarecover_txn XA_recover_txn;
 struct MDL_key;
 
-typedef struct xa_desc_t XAD;
-
 namespace dd {
 enum class enum_column_types;
 class Table;
@@ -121,7 +119,7 @@ class Tablespace;
 }  // namespace dd
 
 namespace lizard {
-class Ha_ddl_policy;
+class Ha_var_hint;
 }
 
 constexpr const ha_rows EXTRA_RECORDS{10};
@@ -162,6 +160,7 @@ constexpr const char mysql_implicit_savepoint[] =
     "__MySQL_Implicit_Savepoint__";
 
 extern ulong savepoint_alloc_size;
+extern bool opt_disable_binlog_savepoint;
 
 /// Maps from slot to plugin. May return NULL if plugin has been unloaded.
 st_plugin_int *hton2plugin(uint slot);
@@ -3528,7 +3527,7 @@ class Alter_inplace_info {
   */
   const char *unsupported_reason;
 
-  lizard::Ha_ddl_policy *ddl_policy;
+  lizard::Ha_var_hint *var_hint;
 
   Alter_inplace_info(HA_CREATE_INFO *create_info_arg,
                      Alter_info *alter_info_arg, bool error_if_not_empty_arg,
@@ -3555,7 +3554,7 @@ class Alter_inplace_info {
         online(false),
         handler_trivial_ctx(0),
         unsupported_reason(nullptr),
-        ddl_policy(nullptr) {}
+        var_hint(nullptr) {}
 
   ~Alter_inplace_info() { destroy(handler_ctx); }
 
@@ -4475,6 +4474,7 @@ class handler {
     index conditions.
   */
   key_range *end_range;
+  ha_rows range_read_rows = 0;
   /**
     Flag which tells if #end_range contains a virtual generated column.
     The content is invalid when #end_range is @c nullptr.
@@ -4768,6 +4768,10 @@ class handler {
     @return error status (zero on success, HA_ERR_* error code on error)
   */
   int ha_update_row(const uchar *old_data, uchar *new_data);
+  int ha_update_row_for_gu_leader(const uchar *old_data, uchar *new_data,
+                                  const uchar *binlog_new_data);
+  int ha_update_row_for_gu_follower(const uchar *old_data,
+                                    const uchar *new_data);
   int ha_delete_row(const uchar *buf);
   void ha_release_auto_increment();
 

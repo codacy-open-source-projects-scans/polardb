@@ -63,6 +63,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "lizard0read0read.h"
 #include "lizard0scn.h"
 #include "lizard0undo.h"
+#include "lizard0undo0retent.h"
 
 #include "srv0file.h"
 
@@ -500,6 +501,8 @@ LatchDebug::LatchDebug() {
   LEVEL_MAP_INSERT(SYNC_THREADS);
   LEVEL_MAP_INSERT(SYNC_TRX);
   LEVEL_MAP_INSERT(SYNC_TRX_SYS);
+  LEVEL_MAP_INSERT(SYNC_TRX_SYS_GROUP);
+  LEVEL_MAP_INSERT(SYNC_TRX_SYS_GROUP_SHARD);
   LEVEL_MAP_INSERT(SYNC_TRX_SYS_SHARD);
   LEVEL_MAP_INSERT(SYNC_TRX_SYS_GTIDS_MEM);
   LEVEL_MAP_INSERT(SYNC_LOCK_SYS_GLOBAL);
@@ -747,6 +750,8 @@ Latches *LatchDebug::check_order(const latch_t *latch,
     case SYNC_LOCK_WAIT_SYS:
     case SYNC_TRX_SYS:
     case SYNC_TRX_SYS_SHARD:
+    case SYNC_TRX_SYS_GROUP:
+    case SYNC_TRX_SYS_GROUP_SHARD:
     case SYNC_TRX_SYS_GTIDS_MEM:
     case SYNC_IBUF_BITMAP_MUTEX:
     case SYNC_TEMP_SPACE_RSEG:
@@ -1390,6 +1395,11 @@ static void sync_latch_meta_init() UNIV_NOTHROW {
   LATCH_ADD_MUTEX(TRX_SYS, SYNC_TRX_SYS, trx_sys_mutex_key);
 
   LATCH_ADD_MUTEX(TRX_SYS_SHARD, SYNC_TRX_SYS_SHARD, trx_sys_shard_mutex_key);
+
+  LATCH_ADD_MUTEX(TRX_SYS_GROUP, SYNC_TRX_SYS_GROUP, trx_sys_group_mutex_key);
+
+  LATCH_ADD_MUTEX(TRX_SYS_GROUP_SHARD, SYNC_TRX_SYS_GROUP_SHARD,
+                  trx_sys_group_shard_mutex_key);
 
   LATCH_ADD_MUTEX(TRX_SYS_GTIDS_MEM, SYNC_TRX_SYS_GTIDS_MEM,
                   trx_sys_serialisation_mutex_key);

@@ -202,6 +202,7 @@ INSERT INTO global_suppressions VALUES
  by increasing the innodb_redo_log_capacity. */
  ("Consider increasing innodb_redo_log_capacity."),
  ("Redo log reclaimed some free space"),
+ ("Enter startElectionCallback"),
 
  /*
     innodb_dedicated_server warning which raised if innodb_buffer_pool_size,
@@ -355,6 +356,7 @@ INSERT INTO global_suppressions VALUES
  ("Plugin polarx_rpc reported: 'Plugin polarx_rpc get shutdown notify.'"),
  ("Plugin polarx_rpc reported: 'Plugin polarx_rpc watch dog exit.'"),
  ("Plugin polarx_rpc reported: 'Plugin polarx_rpc exiting still .* threads running.'"),
+ ("Plugin polarx_rpc reported: 'PolarX RPC disabled.'"),
 
  /*
    Missing Private/Public key files

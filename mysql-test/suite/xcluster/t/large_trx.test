@@ -1,6 +1,6 @@
 # large trx crash cases:
 # 1. leader, large trx write half, crash
-# 2. leader, large trx write all, waitting to commit, crash
+# 2. leader, large trx write all, waiting to commit, crash
 # 3. follower, large trx apply half, crash
 #
 # leader large trx commit, crash
@@ -594,6 +594,6 @@ SET debug_sync = "now SIGNAL continue";
 --connection conn1
 drop table t1;
 
-set global debug="";
+--source include/wait_follower_catchup.inc
 
---sleep 30
+set global debug="";

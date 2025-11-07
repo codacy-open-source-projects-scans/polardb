@@ -80,11 +80,12 @@ std::atomic<uint64_t> Service::running(0);
 uint64_t Service::workThreadCnt = 0;
 
 int Service::init(uint64_t ioThreadCnt, uint64_t workThreadCntArg,
-                  uint64_t ConnectTimeout, bool memory_usage_count,
+                  uint64_t sendTimeout, uint64_t connectTimeout,
+                  bool memory_usage_count,
                   uint64_t heartbeatThreadCnt, ThreadHook *threadHook) {
   /* TODO here we should use factory. */
 
-  net_ = std::make_shared<EasyNet>(ioThreadCnt, ConnectTimeout,
+  net_ = std::make_shared<EasyNet>(ioThreadCnt, sendTimeout, connectTimeout,
                                    memory_usage_count);
 
   pool_eio_ = easy_eio_create(nullptr, 1);
@@ -143,9 +144,13 @@ int Service::stop() {
   return 0;
 }
 
-void Service::setSendPacketTimeout(uint64_t t) {
+void Service::setSendTimeout(uint64_t t) {
   /* will apply to all sendPacket */
-  net_->setSessionTimeout(t);
+  net_->setSendTimeout(t);
+}
+
+void Service::setConnectTimeout(uint64_t t) {
+  net_->setConnectTimeout(t);
 }
 
 int Service::sendPacket(easy_addr_t addr, const std::string &buf, uint64_t id) {
@@ -238,7 +243,7 @@ int Service::process(easy_request_t *r, void *args) {
   }
 
   if (updateRunning && ++Service::running >= Service::workThreadCnt)
-    easy_warn_log("Almost out of workers total:%ld, running:%ld\n",
+    easy_info_log("Almost out of workers total:%ld, running:%ld\n",
                   Service::workThreadCnt, Service::running.load());
 
   /* Deal with send fail or Async Event */

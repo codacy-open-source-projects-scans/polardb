@@ -94,8 +94,10 @@ void CsessionManager::execute(CtcpConnection &tcp, const uint64_t &sid,
           tcp.msg_enc().encode_error(PolarXRPC::Error::FATAL, err.error,
                                      err.message, err.sql_state);
         else {
+          const auto thd = s->get_thd();
+          const auto conn_id = nullptr == thd ? -1 : thd->thread_id();
           s->detach();  /// detach and clear TLS thd anyway
-          tcp.msg_enc().encode_ok();
+          tcp.msg_enc().encode_ok(conn_id);
         }
         tcp.encoder().flush(tcp);
       }
@@ -251,7 +253,15 @@ err_t CsessionManager::get_shared_session_and_attach(
     CmtEpoll &epoll, std::unique_ptr<reusable_session_t> &ptr) {
   /// take one session from pool
   std::unique_ptr<reusable_session_t> s;
-  epoll.get_extra_ctx().reusable_sessions.pop(s);
+  while (true) {
+    epoll.get_extra_ctx().reusable_sessions.pop(s);
+    if (!s) break;
+    const auto thd = s->session.get_thd();
+    if (thd != nullptr && thd->killed != THD::NOT_KILLED)
+      s.reset();  /// bad session, free and retry
+    else
+      break;
+  }
   if (!s) {
     /// generate new one
     s.reset(new reusable_session_t);

@@ -188,7 +188,6 @@ The following options may be given as the first argument:
  Issue internal commit calls in the same order as
  transactions are written to the binary log. Default is to
  order commits.
- (Defaults to on; use --skip-binlog-order-commits to disable.)
  --binlog-rotate-encryption-master-key-at-startup 
  Force binlog encryption master key rotation at startup
  --binlog-row-event-max-size=# 
@@ -262,6 +261,8 @@ The following options may be given as the first argument:
  The max concurrency allowed when use ccl queue
  --ccl-wait-timeout=# 
  Timeout in seconds to wait when concurrency control.
+ --changeset-threads[=#] 
+ changeset threads count
  --character-set-client-handshake 
  Don't ignore client side character set value sent during
  handshake.
@@ -310,7 +311,6 @@ The following options may be given as the first argument:
  --commit-pos-watcher 
  background thread checking and updating binlog commit
  position
- (Defaults to on; use --skip-commit-pos-watcher to disable.)
  --commit-pos-watcher-interval[=#] 
  interval(us) for background thread commit_pos_watcher
  --completion-type=name 
@@ -345,9 +345,17 @@ The following options may be given as the first argument:
  Checksum when consensus receive log. Disabled by default.
  --consensus-configure-change-timeout=# 
  Consensus configure change timeout (ms). Default 1 min
+ --consensus-connect-timeout=# 
+ Consensus connect timeout, zero means use
+ @@consensus_heartbeat_interval/4
+ --consensus-disable-commit-before-change-leader 
+ disable commit before change leader
+ (Defaults to on; use --skip-consensus-disable-commit-before-change-leader to disable.)
  --consensus-disable-election 
  Disable consensus election and stepdown. Disabled by
  default.
+ --consensus-disable-empty-xa 
+ disable empty xa for debug
  --consensus-disable-fifo-cache 
  disable consensus fifo cache (run with weak consensus
  mode)
@@ -360,12 +368,17 @@ The following options may be given as the first argument:
  consensus flow control (<-1: no log send, -1: only send
  log during heartbeat, 0: no flow control, >0: [TODO] flow
  control).
+ --consensus-force-leader-transfer 
+ Try to force leader_transfer to other
  --consensus-force-promote 
  Try to force promote a follower to leader
  --consensus-force-recovery 
  for innodb_force_recovery
  --consensus-force-sync-epoch-diff[=#] 
  consensus forceSync epoch diff
+ --consensus-heartbeat-interval[=#] 
+ Consensus heartbeat max interval, zero means use
+ @@consensus_election_timeout/5
  --consensus-heartbeat-thread-cnt[=#] 
  Number of consensus heartbeat thread
  --consensus-index-buf-enabled 
@@ -401,9 +414,10 @@ The following options may be given as the first argument:
  --consensus-learner-pipelining 
  enable pipelining send msg to learner
  --consensus-learner-timeout=# 
- Consensus learner connection timeout
+ This option is deprecated. Use consensus_connect_timeout
+ instead.
  --consensus-log-cache-size[=#] 
- Max cached logs size
+ Max fifo cached logs size
  --consensus-log-level[=name] 
  consensus log level
  --consensus-max-delay-index[=#] 
@@ -412,6 +426,8 @@ The following options may be given as the first argument:
  Max one log size. (default: 20M)
  --consensus-max-packet-size[=#] 
  Max package size the consensus server send at once
+ --consensus-max-wait-seconds-for-next-trx-index=# 
+ wait timeout for get_next_trx_index
  --consensus-min-delay-index[=#] 
  Min index delay for pipeline log delivery
  --consensus-msg-compress-option[=name] 
@@ -424,6 +440,9 @@ The following options may be given as the first argument:
  Update consensus_apply_index in slave_relay_log_info
  --consensus-new-follower-threshold[=#] 
  Max delay index to allow a learner becomes a follower
+ --consensus-new-leader-max-apply-delay-seconds[=#] 
+ Max apply delay seconds to allow a follower becomes a
+ leader
  --consensus-old-compact-mode 
  set server to old compact mode to use to be compactible
  with version before 1.2.0.2
@@ -449,12 +468,35 @@ The following options may be given as the first argument:
  insert Consensus_empty event into binblog after reset
  master
  --consensus-send-timeout=# 
- Consensus send packet timeout
+ Consensus send packet timeout, zero means use
+ @@consensus_heartbeat_interval
+ --consensus-server-ip[=name] 
+ client connect ipv4 or ipv6 string for current node,
+ ipv4/ipv6
+ --consensus-server-port[=#] 
+ client connect port for current node
  --consensus-stop-apply-index[=#] 
  member stop apply index
  --consensus-sync-follower-meta-interva[=#] 
  Interval of leader sync follower's meta for learner
  source
+ --consensus-vote-backoff-timeout=# 
+ consensus vote backoff timeout(milliseconds) for election
+ timer
+ --consensus-wait-milliseconds-before-change-leader[=#] 
+ the waiting time before change leader
+ --consensus-wait-unfinished-bgc-timeout[=#] 
+ the max waiting time for unfinished bgc before change
+ leader
+ --consensus-wait-unfinished-trx-timeout[=#] 
+ the max waiting time for unfinished trx before change
+ leader
+ --consensus-wait-unfinished-xa-timeout[=#] 
+ the max waiting time for unfinished xa before change
+ leader
+ --consensus-weak-read-refresh-timeout[=#] 
+ Consensus weak read(follower read) refresh timeout(ms),
+ -1 means disabled, 0 means realtime
  --consensus-worker-thread-cnt[=#] 
  Number of consensus worker thread
  --consensuslog-revise 
@@ -507,6 +549,15 @@ The following options may be given as the first argument:
  client that does INSERT DELAYED will wait until there is
  room in the queue again. This variable is deprecated
  along with INSERT DELAYED.
+ --diagnose-excluded-vars-list[=name] 
+ excluded sys vars list for diagnose log, split by ','
+ --disable-binlog-savepoint 
+ Determine whether to disable the binary log
+ checkpointing.Default is True.
+ (Defaults to on; use --skip-disable-binlog-savepoint to disable.)
+ --disable-default-collation-for-utf8mb4 
+ When this option is ON, disable use
+ default_collation_for_utf8mb4.
  --disable-wait-commitindex 
  Whether to wait commitdex when applying binlog in
  follower, it may detory the cluster data if some crash
@@ -532,15 +583,22 @@ The following options may be given as the first argument:
  name and library is the plugin library in plugin_dir.
  --enable-appliedindex-checker 
  enable applied index checker during ordered_commit
+ --enable-binlog-wait-if-full 
+ Whether to wait for binlog to be flushed when the disk is
+ full
  --enable-changeset  Whether open the polarx changeset proc
  (Defaults to on; use --skip-enable-changeset to disable.)
+ --enable-consensus  enable consensus for xcluster node
+ (Defaults to on; use --skip-enable-consensus to disable.)
  --enable-implicit-primary-key 
  MySQL add the primary key for every tables that haven't
  any unique indexes automaticly
  --enable-polarx-rpc Use new open PolarDB-X RPC
- (Defaults to on; use --skip-enable-polarx-rpc to disable.)
  --enable-show-ipk-info 
  Show everything about implicit key info
+ --enable-writeset-tracking-for-ipk 
+ Whether record the IPK to writeset.
+ (Defaults to on; use --skip-enable-writeset-tracking-for-ipk to disable.)
  --end-markers-in-json 
  In JSON output ("EXPLAIN FORMAT=JSON" and optimizer
  trace), if variable is set to 1, repeats the structure's
@@ -556,6 +614,8 @@ The following options may be given as the first argument:
  of doing index dives for equality ranges if the number of
  equality ranges for the index is larger than or equal to
  this number. If set to 0, index dives are always used.
+ --error-log-ring-buffer-size=# 
+ Default startup value for the size of the ring buffer.
  --event-scheduler[=name] 
  Enable the event scheduler. Possible values are ON, OFF,
  and DISABLED (keep the event scheduler completely
@@ -590,6 +650,9 @@ The following options may be given as the first argument:
  --flush             Flush MyISAM tables to disk between SQL commands
  --flush-time=#      A dedicated thread is created to flush all tables at the
  given interval
+ --force-print-utf8mb4-implicit-collation 
+ When this option is on, force print explicit charset and
+ collation.
  --force-revise      force revise or not
  --ft-boolean-syntax=name 
  List of operators for MATCH ... AGAINST ( ... IN BOOLEAN
@@ -667,6 +730,15 @@ The following options may be given as the first argument:
  Maximum amount of memory available for generating
  histograms
  --host-cache-size=# How many host names should be cached to avoid resolving.
+ --hotspot           Switch on the hotspot function.
+ --hotspot-fast-insert-dup 
+ Return insert dup error directly by judging if group
+ update item exist.
+ --hotspot-for-autocommit 
+ Update with autocommit can also use hotspot function.
+ --hotspot-lock-type Use new type innodb row lock to boost the performance.
+ --hotspot-update-max-wait-time[=#] 
+ The max wait time for master in group update (us).
  --implicit-primary-key 
  This option is deprecated. Use
  enable_implicit_primary_key instead.
@@ -938,6 +1010,9 @@ The following options may be given as the first argument:
  bytes of each value are used; the rest are ignored)
  --max-sp-recursion-depth[=#] 
  Maximum stored procedure recursion depth
+ --max-trx-affected-rows=# 
+ A transaction that affects more than the specified number
+ of rows will report error.
  --max-user-connections=# 
  The maximum number of active connections for a single
  user (0 = no limit)
@@ -990,7 +1065,6 @@ The following options may be given as the first argument:
  connection before aborting the write
  -n, --new           Use very new possible "unsafe" functions
  --new-rpc           This option is deprecated. Use enable_polarx_rpc instead.
- (Defaults to on; use --skip-new-rpc to disable.)
  --no-dd-upgrade     Abort restart if automatic upgrade or downgrade of the
  data dictionary is needed. Deprecated option. Use
  --upgrade=NONE instead.
@@ -1024,6 +1098,8 @@ The following options may be given as the first argument:
  When this option is enabled,it will add gpp column on
  secondary index if suitable.
  (Defaults to on; use --skip-opt-index-format-gpp-enabled to disable.)
+ --opt-index-format-panda-enabled 
+ try to use panda format on unique key 
  --opt-indexstat     When this option is enabled,it will accumulate the index
  statistics
  (Defaults to on; use --skip-opt-indexstat to disable.)
@@ -1317,6 +1393,8 @@ The following options may be given as the first argument:
  even if present.
  (Defaults to on; use --skip-persisted-globals-load to disable.)
  --pid-file=name     Pid file used by safe_mysqld
+ --ping-mode=name    Syntax: ping_mode='mode[,mode[,mode...]]'. See the manual
+ for the complete list of valid ping check modes
  --plugin-dir=name   Directory for plugins
  --plugin-load=name  Optional semicolon-separated list of plugins to load,
  where each plugin is identified as name=library, where
@@ -1329,6 +1407,9 @@ The following options may be given as the first argument:
  in plugin_dir. This option adds to the list specified by
  --plugin-load in an incremental way. Multiple
  --plugin-load-add are supported.
+ --polardb-ic-reduce-hint-enable 
+ enable the ic_reduce strategy when using hint
+ (Defaults to on; use --skip-polardb-ic-reduce-hint-enable to disable.)
  --polarx-rpc[=name] Enable or disable polarx_rpc plugin. Possible values are
  ON, OFF, FORCE (don't start if the plugin fails to load).
  --polarx-rpc-auto-cpu-affinity 
@@ -1422,6 +1503,23 @@ The following options may be given as the first argument:
  TCP receive buffer size(not change if set to 0)(RW)
  --polarx-rpc-tcp-send-buf[=#] 
  TCP send buffer size(not change if set to 0)(RW)
+ --polarx-slow-query-block-check-interval=# 
+ The interval of polling the slow query block. unit:
+ seconds
+ --polarx-slow-query-block-cpu-percent-threshold=# 
+ cpu limit when execute statement, unit: %
+ --polarx-slow-query-block-enable 
+ Whether to enable slow query block. Only set this
+ othervariables will take effect.
+ --polarx-slow-query-block-exec-timeout=# 
+ Kill statement that takes over the specified number of
+ seconds
+ --polarx-slow-query-block-exec-timeout-for-cpu-exceed=# 
+ Kill statement that takes over the specified number of
+ seconds when cpu exceed
+ --polarx-slow-query-block-user-pattern[=name] 
+ This option is deprecated. Use slow_query_user_pattern
+ instead.
  --polarx-udf[=name] Enable or disable polarx_udf plugin. Possible values are
  ON, OFF, FORCE (don't start if the plugin fails to load).
  -P, --port=#        Port number to use for connection or 0 to default to,
@@ -1436,6 +1534,8 @@ The following options may be given as the first argument:
  --print-identified-with-as-hex 
  SHOW CREATE USER will print the AS clause as HEX if it
  contains non-prinable characters
+ --print-malloc-stats 
+ print sys mem
  --profiling-history-size=# 
  Limit of query profiling memory
  --protocol-compression-algorithms=name 
@@ -1448,6 +1548,8 @@ The following options may be given as the first argument:
  both client and server support it; otherwise it picks
  zstd if both support it; otherwise it picks uncompressed
  if both support it; otherwise it fails.
+ --pushdown-range-limit 
+ Push down limit to range scan.
  --query-alloc-block-size=# 
  Allocation block size for query parsing and execution
  --query-prealloc-size=# 
@@ -1466,6 +1568,9 @@ The following options may be given as the first argument:
  optimization of a query, index range scan will not be
  considered for this query. A value of 0 means range
  optimizer does not have any cap on memory. 
+ --rds-audit-flush-thread-enabled 
+ Enable the audit thread create.
+ (Defaults to on; use --skip-rds-audit-flush-thread-enabled to disable.)
  --rds-audit-log-buffer-size=# 
  Buffer size for log buffer.
  --rds-audit-log-connection-policy=name 
@@ -1504,8 +1609,12 @@ The following options may be given as the first argument:
  The audit log strategy, currently support ASYNCHRONOUS,
  PERFORMANCE, SEMISYNCHRONOUS and SYNCHRONOUS.
  --rds-audit-log-version=name 
- The version of audit log, currently support MYSQL_V1 and
- MYSQL_V3.
+ The version of audit log, currently support MYSQL_V1,
+ MYSQL_V3 and MYSQL_V4.
+ --rds-ic-reduce-hint-enable 
+ This option is deprecated. Use
+ polardb_ic_reduce_hint_enable instead.
+ (Defaults to on; use --skip-rds-ic-reduce-hint-enable to disable.)
  --rds-kill-connections=# 
  Max conenction count for rds kill user
  --rds-kill-user-list=name 
@@ -1782,6 +1891,8 @@ The following options may be given as the first argument:
  --server-id=#       Uniquely identifies the server instance in the community
  of replication partners
  --server-id-bits=#  Set number of significant bits in server-id
+ --server-max-threads=# 
+ Variable to set the value for the number of threads.
  --session-track-gtids=name 
  Controls the amount of global transaction ids to be
  included in the response packet sent by the
@@ -1916,6 +2027,8 @@ The following options may be given as the first argument:
  Log slow queries to given log file. Defaults logging to
  hostname-slow.log. Must be enabled to activate other slow
  log options
+ --slow-query-user-pattern[=name] 
+ match user pattern match user pattern
  --socket=name       Socket file to use for connection
  --sort-buffer-size=# 
  Each thread that needs to do a sort allocates a buffer of
@@ -2081,7 +2194,6 @@ The following options may be given as the first argument:
  When disabled, XA transactions are associated with the
  same connection until the session disconnects. ON is the
  only safe choice for replication.
- (Defaults to on; use --skip-xa-detach-on-prepare to disable.)
 
 Variables (--variable-name=value)
 abort-slave-event-count 0
@@ -2120,7 +2232,7 @@ binlog-group-commit-sync-delay 0
 binlog-group-commit-sync-no-delay-count 0
 binlog-gtid-simple-recovery TRUE
 binlog-max-flush-queue-time 0
-binlog-order-commits TRUE
+binlog-order-commits FALSE
 binlog-rotate-encryption-master-key-at-startup FALSE
 binlog-row-event-max-size 8192
 binlog-row-image FULL
@@ -2130,7 +2242,7 @@ binlog-rows-query-log-events FALSE
 binlog-stmt-cache-size 32768
 binlog-transaction-compression FALSE
 binlog-transaction-compression-level-zstd 3
-binlog-transaction-dependency-history-size 25000
+binlog-transaction-dependency-history-size 200000
 binlog-transaction-dependency-tracking COMMIT_ORDER
 block-encryption-mode aes-128-ecb
 bulk-insert-buffer-size 8388608
@@ -2141,6 +2253,7 @@ ccl-max-waiting-count 0
 ccl-queue-bucket-count 4
 ccl-queue-bucket-size 64
 ccl-wait-timeout 86400
+changeset-threads 2
 character-set-client-handshake TRUE
 character-set-filesystem binary
 character-set-server utf8mb4
@@ -2162,7 +2275,7 @@ cluster-mts-recover-use-index TRUE
 cluster-purged-gtid (No default value)
 cluster-start-index 1
 collation-server utf8mb4_0900_ai_ci
-commit-pos-watcher TRUE
+commit-pos-watcher FALSE
 commit-pos-watcher-interval 1000000
 completion-type NO_CHAIN
 concurrent-insert AUTO
@@ -2176,14 +2289,19 @@ consensus-check-commit-index-interval 1000
 consensus-check-large-event TRUE
 consensus-checksum FALSE
 consensus-configure-change-timeout 60000
+consensus-connect-timeout 0
+consensus-disable-commit-before-change-leader TRUE
 consensus-disable-election FALSE
+consensus-disable-empty-xa FALSE
 consensus-disable-fifo-cache FALSE
 consensus-dynamic-easyindex TRUE
 consensus-election-timeout 5000
 consensus-flow-control (No default value)
+consensus-force-leader-transfer FALSE
 consensus-force-promote FALSE
 consensus-force-recovery FALSE
 consensus-force-sync-epoch-diff 0
+consensus-heartbeat-interval 0
 consensus-heartbeat-thread-cnt 0
 consensus-index-buf-enabled TRUE
 consensus-io-thread-cnt 3
@@ -2200,14 +2318,16 @@ consensus-learner-heartbeat TRUE
 consensus-learner-pipelining FALSE
 consensus-learner-timeout 0
 consensus-log-cache-size 67108864
-consensus-log-level LOG_ERROR
+consensus-log-level LOG_WARN
 consensus-max-delay-index 50000
 consensus-max-log-size 20971520
 consensus-max-packet-size 131072
+consensus-max-wait-seconds-for-next-trx-index 10
 consensus-min-delay-index 5000
 consensus-msg-compress-option (No default value)
 consensus-mts-force-apply-index 0
 consensus-new-follower-threshold 10000
+consensus-new-leader-max-apply-delay-seconds 30
 consensus-old-compact-mode TRUE
 consensus-optimistic-heartbeat FALSE
 consensus-pipelining-timeout 1
@@ -2219,8 +2339,16 @@ consensus-replicate-with-cache-log FALSE
 consensus-reset-mts-info FALSE
 consensus-safe-for-reset-master FALSE
 consensus-send-timeout 0
+consensus-server-ip (No default value)
+consensus-server-port 0
 consensus-stop-apply-index 0
 consensus-sync-follower-meta-interva 1
+consensus-vote-backoff-timeout 1000
+consensus-wait-milliseconds-before-change-leader 120
+consensus-wait-unfinished-bgc-timeout 3000
+consensus-wait-unfinished-trx-timeout 5000
+consensus-wait-unfinished-xa-timeout 3000
+consensus-weak-read-refresh-timeout -1
 consensus-worker-thread-cnt 3
 consensuslog-revise TRUE
 console FALSE
@@ -2238,19 +2366,26 @@ delay-key-write ON
 delayed-insert-limit 100
 delayed-insert-timeout 300
 delayed-queue-size 1000
+diagnose-excluded-vars-list rds_audit_log_flush
+disable-binlog-savepoint TRUE
+disable-default-collation-for-utf8mb4 FALSE
 disable-wait-commitindex FALSE
 disabled-storage-engines 
 disconnect-on-expired-password TRUE
 disconnect-slave-event-count 0
 div-precision-increment 4
 enable-appliedindex-checker FALSE
+enable-binlog-wait-if-full FALSE
 enable-changeset TRUE
+enable-consensus TRUE
 enable-implicit-primary-key FALSE
-enable-polarx-rpc TRUE
+enable-polarx-rpc FALSE
 enable-show-ipk-info FALSE
+enable-writeset-tracking-for-ipk TRUE
 end-markers-in-json FALSE
-enforce-gtid-consistency false
+enforce-gtid-consistency ON
 eq-range-index-dive-limit 200
+error-log-ring-buffer-size 5242880
 event-scheduler ON
 expire-logs-days 0
 explain-format TRADITIONAL
@@ -2258,6 +2393,7 @@ explicit-defaults-for-timestamp TRUE
 external-locking FALSE
 flush FALSE
 flush-time 0
+force-print-utf8mb4-implicit-collation FALSE
 force-revise FALSE
 ft-boolean-syntax + -><()~*:""&|
 ft-max-word-len 84
@@ -2273,10 +2409,15 @@ global-connection-memory-tracking FALSE
 group-concat-max-len 1024
 group-replication-consistency EVENTUAL
 gtid-executed-compression-period 0
-gtid-mode OFF
+gtid-mode ON
 help TRUE
 histogram-generation-max-mem-size 20000000
 host-cache-size 279
+hotspot FALSE
+hotspot-fast-insert-dup FALSE
+hotspot-for-autocommit FALSE
+hotspot-lock-type FALSE
+hotspot-update-max-wait-time 100
 implicit-primary-key FALSE
 import-tablespace-iterator-interval 10
 import-tablespace-iterator-interval-ms 10
@@ -2364,6 +2505,7 @@ max-relay-log-size 0
 max-seeks-for-key 18446744073709551615
 max-sort-length 1024
 max-sp-recursion-depth 0
+max-trx-affected-rows 0
 max-user-connections 0
 max-write-lock-count 18446744073709551615
 memlock FALSE
@@ -2382,7 +2524,7 @@ net-read-timeout 30
 net-retry-count 10
 net-write-timeout 60
 new FALSE
-new-rpc TRUE
+new-rpc FALSE
 no-dd-upgrade FALSE
 offline-mode FALSE
 old FALSE
@@ -2393,6 +2535,7 @@ opt-enable-rds-priv-strategy FALSE
 opt-flashback-area FALSE
 opt-force-index-pct-cached FALSE
 opt-index-format-gpp-enabled TRUE
+opt-index-format-panda-enabled FALSE
 opt-indexstat TRUE
 opt-outline-enabled TRUE
 opt-tablestat TRUE
@@ -2482,6 +2625,8 @@ performance-schema-users-size -1
 persist-only-admin-x509-subject 
 persist-sensitive-variables-in-plaintext TRUE
 persisted-globals-load TRUE
+ping-mode 
+polardb-ic-reduce-hint-enable TRUE
 polarx-rpc ON
 polarx-rpc-auto-cpu-affinity TRUE
 polarx-rpc-enable-epoll-in-tasker TRUE
@@ -2523,18 +2668,27 @@ polarx-rpc-tcp-keep-alive 30
 polarx-rpc-tcp-listen-queue 128
 polarx-rpc-tcp-recv-buf 0
 polarx-rpc-tcp-send-buf 0
+polarx-slow-query-block-check-interval 1
+polarx-slow-query-block-cpu-percent-threshold 0
+polarx-slow-query-block-enable FALSE
+polarx-slow-query-block-exec-timeout 0
+polarx-slow-query-block-exec-timeout-for-cpu-exceed 0
+polarx-slow-query-block-user-pattern 
 polarx-udf ON
 port ####
 port-open-timeout 0
 preload-buffer-size 32768
 print-identified-with-as-hex FALSE
+print-malloc-stats FALSE
 profiling-history-size 15
 protocol-compression-algorithms zlib,zstd,uncompressed
+pushdown-range-limit FALSE
 query-alloc-block-size 8192
 query-prealloc-size 8192
 query-via-flashback-area FALSE
 range-alloc-block-size 4096
 range-optimizer-max-mem-size 8388608
+rds-audit-flush-thread-enabled TRUE
 rds-audit-log-buffer-size 8388608
 rds-audit-log-connection-policy ALL
 rds-audit-log-dir (No default value)
@@ -2548,6 +2702,7 @@ rds-audit-log-skip FALSE
 rds-audit-log-statement-policy ALL
 rds-audit-log-strategy ASYNCHRONOUS
 rds-audit-log-version MYSQL_V1
+rds-ic-reduce-hint-enable TRUE
 rds-kill-connections 0
 rds-kill-user-list (No default value)
 rds-version 32
@@ -2609,6 +2764,7 @@ select-into-disk-sync FALSE
 select-into-disk-sync-delay 0
 server-id 1
 server-id-bits 32
+server-max-threads 102400
 session-track-gtids OFF
 session-track-index FALSE
 session-track-schema TRUE
@@ -2646,6 +2802,7 @@ slave-transaction-retries 10
 slave-type-conversions 
 slow-launch-time 2
 slow-query-log FALSE
+slow-query-user-pattern 
 sort-buffer-size 262144
 source-verify-checksum FALSE
 sporadic-binlog-dump-fail FALSE
@@ -2689,7 +2846,7 @@ verbose TRUE
 wait-timeout 28800
 weak-consensus-mode FALSE
 windowing-use-high-precision TRUE
-xa-detach-on-prepare TRUE
+xa-detach-on-prepare FALSE
 
 To see what values a running MySQL server is using, type
 'mysqladmin variables' instead of 'mysqld --verbose --help'.

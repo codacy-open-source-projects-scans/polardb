@@ -166,7 +166,7 @@ class MYSQL_BIN_LOG : public TC_LOG {
   /** The PFS instrumentation key for @ LOCK_commit_queue. */
   PSI_mutex_key m_key_LOCK_commit_queue;
   /** The PFS instrumentation key for @ LOCK_done. */
-  PSI_mutex_key m_key_LOCK_done;
+  /* PSI_mutex_key m_key_LOCK_done; */
   /** The PFS instrumentation key for @ LOCK_flush_queue. */
   PSI_mutex_key m_key_LOCK_flush_queue;
   /** The PFS instrumentation key for @ LOCK_sync_queue. */
@@ -174,7 +174,7 @@ class MYSQL_BIN_LOG : public TC_LOG {
   /** The PFS instrumentation key for @ LOCK_wait_for_group_turn. */
   PSI_mutex_key m_key_LOCK_wait_for_group_turn;
   /** The PFS instrumentation key for @ COND_done. */
-  PSI_mutex_key m_key_COND_done;
+  /* PSI_mutex_key m_key_COND_done; */
   /** The PFS instrumentation key for @ COND_flush_queue. */
   PSI_mutex_key m_key_COND_flush_queue;
   /** The instrumentation key to use for @ LOCK_commit. */
@@ -360,21 +360,21 @@ class MYSQL_BIN_LOG : public TC_LOG {
 
   void set_psi_keys(
       PSI_mutex_key key_LOCK_index, PSI_mutex_key key_LOCK_commit,
-      PSI_mutex_key key_LOCK_commit_queue, PSI_mutex_key key_LOCK_done,
+      PSI_mutex_key key_LOCK_commit_queue, /* PSI_mutex_key key_LOCK_done, */
       PSI_mutex_key key_LOCK_flush_queue, PSI_mutex_key key_LOCK_log,
       PSI_mutex_key key_LOCK_binlog_end_pos, PSI_mutex_key key_LOCK_sync,
       PSI_mutex_key key_LOCK_sync_queue, PSI_mutex_key key_LOCK_xids,
       PSI_mutex_key key_LOCK_rotate, PSI_mutex_key key_LOCK_wait_for_group_turn,
-      PSI_cond_key key_COND_done, PSI_cond_key key_COND_flush_queue,
+      /* PSI_cond_key key_COND_done, */ PSI_cond_key key_COND_flush_queue,
       PSI_cond_key key_update_cond, PSI_cond_key key_prep_xids_cond,
       PSI_cond_key key_COND_wait_for_group_turn, PSI_file_key key_file_log,
       PSI_file_key key_file_log_index, PSI_file_key key_file_log_cache,
       PSI_file_key key_file_log_index_cache) {
-    m_key_COND_done = key_COND_done;
+    /* m_key_COND_done = key_COND_done; */
     m_key_COND_flush_queue = key_COND_flush_queue;
 
     m_key_LOCK_commit_queue = key_LOCK_commit_queue;
-    m_key_LOCK_done = key_LOCK_done;
+    /* m_key_LOCK_done = key_LOCK_done; */
     m_key_LOCK_flush_queue = key_LOCK_flush_queue;
     m_key_LOCK_sync_queue = key_LOCK_sync_queue;
 
@@ -585,8 +585,7 @@ class MYSQL_BIN_LOG : public TC_LOG {
 
     @return Pointer to the first session of the BINLOG_FLUSH_STAGE stage queue.
   */
-  THD *fetch_and_process_flush_stage_queue(
-      const bool no_process, const bool check_and_skip_flush_logs);
+  THD *fetch_and_process_flush_stage_queue(const bool check_and_skip_flush_logs);
 
   /**
     Execute the flush stage.
@@ -847,7 +846,8 @@ class MYSQL_BIN_LOG : public TC_LOG {
                          const char *new_name);
   int truncate_logs_from_index(std::vector<std::string> &files_list,
                                std::string last_file);
-  static void consensus_before_commit(THD *thd);
+  static void consensus_rollback_with_flush_nothing(THD *thd, bool is_my_thd);
+  static void consensus_wait_commit(THD *thd);
   int recover_intergrity_for_normandy(Binlog_file_reader *binlog_file_reader,
                                       Format_description_log_event *fdle,
                                       my_off_t *valid_pos);
@@ -860,7 +860,7 @@ class MYSQL_BIN_LOG : public TC_LOG {
     If all conditions are met, purge is done according to the configuration
     of the purge window.
    */
-  void auto_purge();
+  void auto_purge(bool need_lock = true);
 
   /**
     @brief This member function is to be called at server startup. It checks if
@@ -888,7 +888,7 @@ class MYSQL_BIN_LOG : public TC_LOG {
   int purge_logs(const char *to_log, bool included, bool need_lock_index,
                  bool need_update_threads, ulonglong *decrease_log_space,
                  bool auto_purge);
-  int purge_logs_before_date(time_t purge_time, bool auto_purge);
+  int purge_logs_before_date(time_t purge_time, bool auto_purge, bool need_lock = true);
   int set_crash_safe_index_file_name(const char *base_file_name);
   int open_crash_safe_index_file();
   int close_crash_safe_index_file();
@@ -921,7 +921,7 @@ class MYSQL_BIN_LOG : public TC_LOG {
       std::vector<std::string> &consensuslog_file_name_vector);
   int find_log_by_consensus_index(uint64 consensus_index,
                                   std::string &file_name);
-  uint64 get_trx_end_index(uint64 firstIndex);
+  int get_trx_end_index(uint64 firstIndex, uint64 &nextIndex);
 
   uint64 wait_xid_disappear();
   int read_log_by_consensus_index(const char *file_name, uint64 consensus_index,
@@ -1062,6 +1062,8 @@ class MYSQL_BIN_LOG : public TC_LOG {
                          bool need_lock_index, bool need_sid_lock,
                          Format_description_log_event *extra_description_event);
 
+  bool is_in_leader_transfer();
+
   std::unique_ptr<Gcn_manager> gcn_mgr;
 };
 
@@ -1106,6 +1108,7 @@ int check_trx_rw_engines(THD *thd, Transaction_ctx::enum_trx_scope trx_scope);
   @retval false Otherwise.
 */
 bool is_empty_transaction_in_binlog_cache(const THD *thd);
+bool is_empty_xa_prepare(const THD *thd);
 bool trans_has_updated_trans_table(const THD *thd);
 bool stmt_has_updated_trans_table(Ha_trx_info_list const &ha_list);
 bool ending_trans(THD *thd, const bool all);
@@ -1166,5 +1169,4 @@ int fetch_binlog_by_offset(Binlog_file_reader &binlog_file_reader,
                            uint64 start_pos, uint64 end_pos,
                            Consensus_cluster_info_log_event *rci_ev,
                            std::string &log_content);
-
 #endif /* BINLOG_H_INCLUDED */

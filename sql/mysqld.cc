@@ -686,6 +686,7 @@ MySQL clients support the protocol:
 */
 /* clang-format on */
 
+#include <malloc.h>
 #include <memory>
 #include "consensus_admin.h"
 #define LOG_SUBSYSTEM_TAG "Server"
@@ -790,6 +791,7 @@ MySQL clients support the protocol:
 #include "sql/derror.h"
 #include "sql/event_data_objects.h"  // init_scheduler_psi_keys
 #include "sql/events.h"              // Events
+#include "sql/group_update.h"        // GroupUpdate
 #include "sql/handler.h"
 #include "sql/hostname_cache.h"  // hostname_cache_init
 #include "sql/init.h"            // unireg_init
@@ -821,6 +823,8 @@ MySQL clients support the protocol:
 #ifdef _WIN32
 #include "sql/restart_monitor_win.h"
 #endif
+#include "my_openssl_fips.h"  // OPENSSL_ERROR_LENGTH, set_fips_mode
+#include "pli/pli.h"
 #include "sql/rpl_async_conn_failover_configuration_propagation.h"
 #include "sql/rpl_filter.h"
 #include "sql/rpl_gtid.h"
@@ -831,11 +835,11 @@ MySQL clients support the protocol:
 #include "sql/rpl_injector.h"  // injector
 #include "sql/rpl_io_monitor.h"
 #include "sql/rpl_log_encryption.h"
-#include "sql/rpl_source.h"  // max_binlog_dump_events
 #include "sql/rpl_mi.h"
 #include "sql/rpl_msr.h"      // Multisource_info
-#include "sql/rpl_rli.h"      // Relay_log_info
 #include "sql/rpl_replica.h"  // replica_load_tmpdir
+#include "sql/rpl_rli.h"      // Relay_log_info
+#include "sql/rpl_source.h"   // max_binlog_dump_events
 #include "sql/rpl_trx_tracking.h"
 #include "sql/sd_notify.h"  // sd_notify_connect
 #include "sql/session_tracker.h"
@@ -885,7 +889,6 @@ MySQL clients support the protocol:
 #include "thr_mutex.h"
 #include "typelib.h"
 #include "violite.h"
-#include "my_openssl_fips.h"  // OPENSSL_ERROR_LENGTH, set_fips_mode
 
 #include "plugin/performance_point/pps_server.h"
 #include "sql/ccl/ccl_interface.h"
@@ -1000,11 +1003,14 @@ MySQL clients support the protocol:
 #include "sql/recycle_bin/recycle_scheduler.h"
 #include "sql/recycle_bin/recycle_table.h"
 
+#include "sql/gh_slow_query_block/slow_query_block.h"
+
 #ifdef RDS_HAVE_JEMALLOC
 #include "sql/sql_jemalloc.h"
 #endif
 
 #include "sql/lizard/lizard_hb_freezer.h"
+#include "sql/xa/lizard_xa_trx.h"
 
 using std::max;
 using std::min;
@@ -1054,6 +1060,7 @@ inline void setup_fpu() {
 extern "C" void handle_fatal_signal(int sig);
 void my_server_abort();
 void UninitChangesetThreadPool();
+void InitChangesetThreadPool(uint64_t thread_count);
 
 /* Constants */
 
@@ -1114,7 +1121,7 @@ static PSI_mutex_key key_LOCK_compress_gtid_table;
 static PSI_mutex_key key_LOCK_collect_instance_log;
 static PSI_mutex_key key_BINLOG_LOCK_commit;
 static PSI_mutex_key key_BINLOG_LOCK_commit_queue;
-static PSI_mutex_key key_BINLOG_LOCK_done;
+/* static PSI_mutex_key key_BINLOG_LOCK_done; */
 static PSI_mutex_key key_BINLOG_LOCK_flush_queue;
 static PSI_mutex_key key_BINLOG_LOCK_index;
 static PSI_mutex_key key_BINLOG_LOCK_log;
@@ -1162,6 +1169,7 @@ static PSI_mutex_key key_LOCK_admin_tls_ctx_options;
 static PSI_mutex_key key_LOCK_rotate_binlog_master_key;
 static PSI_mutex_key key_LOCK_partial_revokes;
 static PSI_mutex_key key_LOCK_authentication_policy;
+static PSI_mutex_key key_LOCK_diagnose_excluded_vars_list;
 static PSI_mutex_key key_LOCK_global_conn_mem_limit;
 #endif /* HAVE_PSI_INTERFACE */
 
@@ -1171,6 +1179,8 @@ static PSI_mutex_key key_LOCK_global_conn_mem_limit;
 #ifdef HAVE_PSI_STATEMENT_INTERFACE
 PSI_statement_info stmt_info_rpl;
 #endif
+
+bool opt_rds_audit_flush_thread_enabled = true;
 
 /* the default log output is log tables */
 static bool lower_case_table_names_used = false;
@@ -1380,6 +1390,8 @@ uint replica_rows_last_search_algorithm_used;
 #endif
 ulong mts_parallel_option;
 ulong binlog_cache_size = 0;
+ulong opt_server_max_threads;
+ulong opt_error_log_ring_buffer_size;
 ulonglong max_binlog_cache_size = 0;
 ulong replica_max_allowed_packet = 0;
 ulong binlog_stmt_cache_size = 0;
@@ -1403,9 +1415,43 @@ bool thread_cache_size_specified = false;
 bool host_cache_size_specified = false;
 bool table_definition_cache_specified = false;
 ulong locked_account_connection_count = 0;
+ulonglong sqb_max_trx_affected_rows=0;
+char *sqb_user_pattern = nullptr;
+ulong sqb_exec_timeout = 0;
+ulong sqb_exec_timeout_for_cpu_exceed = 0;
+ulong sqb_cpu_percent_threshold = 0;
+bool sqb_enable_slow_query_block = false;
+ulong sqb_check_interval = 0;
+bool polarx_long_trans_external_check = true;
+ulonglong polarx_long_trans_external_threshold = 3000;
+
+/* RDS Variables */
+bool ic_reduce_hint_enable = 0;
+
+std::atomic<ulonglong> group_update_leader_count{0};
+std::atomic<ulonglong> group_update_follower_count{0};
+std::atomic<ulonglong> group_update_free_count{0};
+std::atomic<ulonglong> group_update_reuse_count{0};
+std::atomic<ulonglong> group_update_insert_dup{0};
+std::atomic<ulonglong> group_update_fail_count{0};
+std::atomic<ulonglong> group_update_assert_count{0};
+std::atomic<ulonglong> group_update_total_count{0};
+std::atomic<ulonglong> group_update_ignore_count{0};
+std::atomic<ulonglong> group_update_group_same_count{0};
+/* RDS Variables End */
 
 ulonglong global_conn_mem_limit = 0;
 ulonglong global_conn_mem_counter = 0;
+
+ulong writeset_current_history_size = 0;
+ulong writeset_history_clear_count = 0;
+ulong writeset_cannot_use_count = 0;
+ulong writeset_exceeds_max_size_count = 0;
+ulong writeset_has_missing_keys_count = 0;
+ulong writeset_has_related_foreign_keys_count = 0;
+ulong writeset_was_write_set_limit_reached_count = 0;
+ulong writeset_max_size_in_history = 0;
+ulong writeset_max_size_in_trx = 0;
 
 /**
   This variable holds handle to the object that's responsible
@@ -1660,6 +1706,12 @@ mysql_mutex_t LOCK_rotate_binlog_master_key;
   'SET @@GLOBAL.authentication_policy...' in parallel.
 */
 mysql_mutex_t LOCK_authentication_policy;
+
+/*
+  The below lock protects to
+  'SET @@GLOBAL.diagnose_excluded_vars_list...' in parallel.
+*/
+mysql_mutex_t LOCK_diagnose_excluded_vars_list;
 
 mysql_mutex_t LOCK_global_conn_mem_limit;
 
@@ -2778,6 +2830,7 @@ static void clean_up(bool print_message) {
 
   // exit changeset thread pool
   UninitChangesetThreadPool();
+  polarx::destory_background_poller();
 
   /*
     The following lines may never be executed as the main thread may have
@@ -2832,8 +2885,10 @@ static void clean_up_mutexes() {
   mysql_mutex_destroy(&LOCK_admin_tls_ctx_options);
   mysql_mutex_destroy(&LOCK_partial_revokes);
   mysql_mutex_destroy(&LOCK_authentication_policy);
+  mysql_mutex_destroy(&LOCK_diagnose_excluded_vars_list);
   mysql_mutex_destroy(&LOCK_global_conn_mem_limit);
   mysql_mutex_destroy(&im::LOCK_internal_account_string);
+  mysql_mutex_destroy(&polarx::LOCK_slow_query_user_pattern);
 }
 
 /****************************************************************************
@@ -3664,6 +3719,22 @@ static void start_signal_handler() {
 /** This thread handles SIGTERM, SIGQUIT, SIGHUP, SIGUSR1 and SIGUSR2 signals.
  */
 /* ARGSUSED */
+#ifdef HAVE_GCOV
+#if defined(__GNUC__) && __GNUC__ >= 11
+extern "C" void __gcov_dump();
+void dump_gcov_data() { __gcov_dump(); }
+#else
+extern "C" void __gcov_flush();
+void dump_gcov_data() { __gcov_flush(); }
+#endif
+#endif
+void flush_gcov() {
+#ifdef HAVE_GCOV
+  // Gcov will assert() if we try to flush in parallel.
+  dump_gcov_data();
+#endif
+}
+
 extern "C" void *signal_hand(void *arg [[maybe_unused]]) {
   my_thread_init();
 
@@ -3702,6 +3773,11 @@ extern "C" void *signal_hand(void *arg [[maybe_unused]]) {
     siginfo_t sig_info;
     while ((rc = sigwaitinfo(&set, &sig_info)) == -1 && errno == EINTR) {
     }
+    /*
+      For all signals received, flush_gcov is called to output statistics,
+      thus avoiding the loss of coverage statistics when exiting due to signals.
+    */
+    flush_gcov();
     error = rc == -1;
     if (!error) sig = sig_info.si_signo;
 #endif             // __APPLE__
@@ -3735,9 +3811,11 @@ extern "C" void *signal_hand(void *arg [[maybe_unused]]) {
 #ifndef __APPLE__  // Mac OS doesn't have sigwaitinfo.
         if (sig_info.si_pid != getpid())
           LogErr(SYSTEM_LEVEL, ER_SERVER_SHUTDOWN_INFO, "<via user signal>",
+                 "",
                  server_version, MYSQL_COMPILATION_COMMENT_SERVER);
 #else
         LogErr(SYSTEM_LEVEL, ER_SERVER_SHUTDOWN_INFO, "<via user signal>",
+               "",
                server_version, MYSQL_COMPILATION_COMMENT_SERVER);
 #endif  // __APPLE__
         // Switch to the file log message processing.
@@ -4883,11 +4961,11 @@ int init_common_variables() {
   */
   mysql_bin_log.set_psi_keys(
       key_BINLOG_LOCK_index, key_BINLOG_LOCK_commit,
-      key_BINLOG_LOCK_commit_queue, key_BINLOG_LOCK_done,
+      key_BINLOG_LOCK_commit_queue, /* key_BINLOG_LOCK_done, */
       key_BINLOG_LOCK_flush_queue, key_BINLOG_LOCK_log,
       key_BINLOG_LOCK_binlog_end_pos, key_BINLOG_LOCK_sync,
       key_BINLOG_LOCK_sync_queue, key_BINLOG_LOCK_xids, key_BINLOG_LOCK_rotate,
-      key_BINLOG_LOCK_wait_for_group_turn, key_BINLOG_COND_done,
+      key_BINLOG_LOCK_wait_for_group_turn, /* key_BINLOG_COND_done, */
       key_BINLOG_COND_flush_queue, key_BINLOG_update_cond,
       key_BINLOG_prep_xids_cond, key_BINLOG_COND_wait_for_group_turn,
       key_file_binlog, key_file_binlog_index, key_file_binlog_cache,
@@ -5441,10 +5519,14 @@ static int init_thread_environment() {
                    MY_MUTEX_INIT_FAST);
   mysql_mutex_init(key_LOCK_authentication_policy, &LOCK_authentication_policy,
                    MY_MUTEX_INIT_FAST);
+  mysql_mutex_init(key_LOCK_diagnose_excluded_vars_list, &LOCK_diagnose_excluded_vars_list,
+                   MY_MUTEX_INIT_FAST);
   mysql_mutex_init(key_LOCK_global_conn_mem_limit, &LOCK_global_conn_mem_limit,
                    MY_MUTEX_INIT_FAST);
   mysql_mutex_init(im::key_LOCK_internal_account_string,
                    &im::LOCK_internal_account_string, MY_MUTEX_INIT_FAST);
+  mysql_mutex_init(polarx::key_LOCK_slow_query_user_pattern,
+                   &polarx::LOCK_slow_query_user_pattern, MY_MUTEX_INIT_FAST);
   return 0;
 }
 
@@ -6308,8 +6390,11 @@ static int init_server_components() {
 
   /* need to configure logging for xpaxos */
   if (!opt_bin_log &&
-      xp::Recovery_manager::instance().is_xpaxos_instance_recovering()) {
+      !opt_initialize &&
+      ConsensusLogManager::enable_consensus()) {
+    xp::error(ER_XP_0) << "PolarDB-X Engine log_bin must be set to ON";
     LogErr(WARNING_LEVEL, ER_NEED_LOG_BIN, "--log-bin");
+    unireg_abort(MYSQLD_ABORT_EXIT);
   }
 
   /* need to configure logging before initializing storage engines */
@@ -6419,18 +6504,20 @@ static int init_server_components() {
       file name would be used in following call path,
         Relay_log_info::rli_init_info() -> MYSQL_BIN_LOG::open_index_file()
     */
-    // if ((!opt_binlog_index_name || !opt_binlog_index_name[0]) &&
-    //     log_bin_index) {
-    //   strmake(default_binlog_index_name,
-    //           log_bin_index + dirname_length(log_bin_index),
-    //           FN_REFLEN + index_ext_length - 1);
-    //   opt_binlog_index_name = default_binlog_index_name;
-    // }
+    if (!ConsensusLogManager::enable_consensus()) {
+      if ((!opt_binlog_index_name || !opt_binlog_index_name[0]) &&
+          log_bin_index) {
+        strmake(default_binlog_index_name,
+                log_bin_index + dirname_length(log_bin_index),
+                FN_REFLEN + index_ext_length - 1);
+        opt_binlog_index_name = default_binlog_index_name;
+      }
 
-    // if (log_bin_basename == nullptr || log_bin_index == nullptr) {
-    //   LogErr(ERROR_LEVEL, ER_RPL_CANT_MAKE_PATHS, (int)FN_REFLEN,
-    //   (int)FN_LEN); unireg_abort(MYSQLD_ABORT_EXIT);
-    // }
+      if (log_bin_basename == nullptr || log_bin_index == nullptr) {
+        LogErr(ERROR_LEVEL, ER_RPL_CANT_MAKE_PATHS, (int)FN_REFLEN,
+        (int)FN_LEN); unireg_abort(MYSQLD_ABORT_EXIT);
+      }
+    }
   }
 
   DBUG_PRINT("debug",
@@ -6965,7 +7052,7 @@ static int init_server_components() {
                                  opt_consensus_start_index))
     unireg_abort(MYSQLD_ABORT_EXIT);
   consensus_log_manager.set_binlog(&mysql_bin_log);
-  mysql_bin_log.is_xpaxos_log = true;
+  mysql_bin_log.is_xpaxos_log = ConsensusLogManager::enable_consensus();
 
   if (Recovered_xa_transactions::init()) {
     LogErr(ERROR_LEVEL, ER_OOM);
@@ -6978,62 +7065,58 @@ static int init_server_components() {
     unireg_abort(MYSQLD_ABORT_EXIT);
   }
 
-  if (opt_bin_log) {
-    if (!opt_consensus_force_recovery) {
-      std::vector<std::string> binlog_file_list;
-      mysql_bin_log.get_consensus_log_file_list(binlog_file_list);
+  if (ConsensusLogManager::enable_consensus()) {
+    if (opt_bin_log) {
+      if (!opt_consensus_force_recovery) {
+        std::vector<std::string> binlog_file_list;
+        mysql_bin_log.get_consensus_log_file_list(binlog_file_list);
 
-      if (binlog_file_list.empty()) {
-        /*
-          Configures what object is used by the current log to store processed
-          gtid(s). This is necessary in the MYSQL_BIN_LOG::MYSQL_BIN_LOG to
-          correctly compute the set of previous gtids.
-        */
-        assert(!mysql_bin_log.is_relay_log);
-        mysql_mutex_t *log_lock = mysql_bin_log.get_log_lock();
-        mysql_mutex_lock(log_lock);
+        if (binlog_file_list.empty()) {
+          /*
+            Configures what object is used by the current log to store processed
+            gtid(s). This is necessary in the MYSQL_BIN_LOG::MYSQL_BIN_LOG to
+            correctly compute the set of previous gtids.
+          */
+          assert(!mysql_bin_log.is_relay_log);
+          mysql_mutex_t *log_lock = mysql_bin_log.get_log_lock();
+          mysql_mutex_lock(log_lock);
 
-        if (mysql_bin_log.open_binlog(opt_bin_logname, nullptr, max_binlog_size,
-                                      false, true /*need_lock_index=true*/,
-                                      true /*need_sid_lock=true*/, nullptr)) {
+          if (mysql_bin_log.open_binlog(opt_bin_logname, nullptr, max_binlog_size,
+                                        false, true /*need_lock_index=true*/,
+                                        true /*need_sid_lock=true*/, nullptr)) {
+            mysql_mutex_unlock(log_lock);
+            unireg_abort(MYSQLD_ABORT_EXIT);
+          }
           mysql_mutex_unlock(log_lock);
+        } else if (opt_initialize) {
+          // in boostrap case but binlog_file_list is not empty
+          xp::error(ER_XP_0)
+              << "--initialize specified but the binlog index file '"
+              << mysql_bin_log.get_index_fname() << "' is not empty.";
           unireg_abort(MYSQLD_ABORT_EXIT);
         }
-        mysql_mutex_unlock(log_lock);
-      } else if (opt_initialize) {
-        // in boostrap case but binlog_file_list is not empty
-        xp::error(ER_XP_0)
-            << "--initialize specified but the binlog index file '"
-            << mysql_bin_log.get_index_fname() << "' is not empty.";
-        unireg_abort(MYSQLD_ABORT_EXIT);
       }
     }
-  }
 
-  ReplicaInitializer replica_initializer(
-      opt_initialize, /*opt_skip_replica_start*/ true, rpl_channel_filters,
-      &opt_replica_skip_errors);
+    ReplicaInitializer replica_initializer(
+        opt_initialize, /*opt_skip_replica_start*/ true, rpl_channel_filters,
+        &opt_replica_skip_errors);
 
-  /* If running with --initialize, do not start replication. */
-  if (!opt_initialize && !opt_consensus_force_recovery &&
-      consensus_log_manager.init_consensus_info())
-    unireg_abort(MYSQLD_ABORT_EXIT);
+    /* If running with --initialize, do not start replication. */
+    if (!opt_initialize && !opt_consensus_force_recovery &&
+        consensus_log_manager.init_consensus_info())
+      unireg_abort(MYSQLD_ABORT_EXIT);
 
-  /* Save pid of this process in a file, because init_service maybe wait long time*/
-  if (!opt_initialize && create_pid_file()) {
-    unireg_abort(MYSQLD_ABORT_EXIT);
-  }
-
-  int consensus_error = consensus_log_manager.init_service();
-  if (consensus_error < 0)
-    unireg_abort(MYSQLD_ABORT_EXIT);
-  else if (consensus_error > 0)
-    unireg_abort(MYSQLD_SUCCESS_EXIT);
-
-  if (!xp::Recovery_manager::instance().is_xpaxos_instance_recovering()) {
-    if (ha_recover(0)) {
+    /* Save pid of this process in a file, because init_service maybe wait long time*/
+    if (!opt_initialize && create_pid_file()) {
       unireg_abort(MYSQLD_ABORT_EXIT);
     }
+
+    int consensus_error = consensus_log_manager.init_service();
+    if (consensus_error < 0)
+      unireg_abort(MYSQLD_ABORT_EXIT);
+    else if (consensus_error > 0)
+      unireg_abort(MYSQLD_SUCCESS_EXIT);
   }
 
   if (dd::reset_tables_and_tablespaces()) {
@@ -7064,6 +7147,26 @@ static int init_server_components() {
     unireg_abort(MYSQLD_ABORT_EXIT);
   }
 
+  if (!ConsensusLogManager::enable_consensus() && opt_bin_log) {
+    /*
+      Configures what object is used by the current log to store processed
+      gtid(s). This is necessary in the MYSQL_BIN_LOG::MYSQL_BIN_LOG to
+      correctly compute the set of previous gtids.
+    */
+    assert(!mysql_bin_log.is_relay_log);
+    mysql_mutex_t *log_lock = mysql_bin_log.get_log_lock();
+    mysql_mutex_lock(log_lock);
+
+    if (mysql_bin_log.open_binlog(opt_bin_logname, nullptr, max_binlog_size,
+                                  false, true /*need_lock_index=true*/,
+                                  true /*need_sid_lock=true*/, nullptr)) {
+      mysql_mutex_unlock(log_lock);
+      unireg_abort(MYSQLD_ABORT_EXIT);
+    }
+    mysql_mutex_unlock(log_lock);
+  }
+
+
   /*
     When we pass non-zero values for both expire_logs_days and
     binlog_expire_logs_seconds at the server start-up, the value of
@@ -7086,7 +7189,7 @@ static int init_server_components() {
       LogErr(WARNING_LEVEL, ER_NEED_LOG_BIN, "--expire_logs_days");
   }
 
-  if (opt_bin_log && !opt_initialize) {
+  if (opt_bin_log && !opt_initialize && ConsensusLogManager::enable_consensus()) {
     mysql_bin_log.close(LOG_CLOSE_INDEX | LOG_CLOSE_TO_BE_OPENED, true, true);
   }
 
@@ -7483,8 +7586,6 @@ int mysqld_main(int argc, char **argv)
 
   init_variable_default_paths();
 
-  xp::system(ER_XP_0) << "XPaxos server start.";
-
   int heo_error;
 
 #ifdef WITH_PERFSCHEMA_STORAGE_ENGINE
@@ -7493,6 +7594,8 @@ int mysqld_main(int argc, char **argv)
   */
   init_pfs_instrument_array();
 #endif /* WITH_PERFSCHEMA_STORAGE_ENGINE */
+
+  xp::system(ER_XP_0) << "XPaxos server start, pid:" << getpid();
 
   heo_error = handle_early_options();
 
@@ -7758,7 +7861,7 @@ int mysqld_main(int argc, char **argv)
     be added again.
   */
   if (persisted_variables_cache.append_read_only_variables(
-          &remaining_argc, &remaining_argv, arg_separator_added, false)) {
+      &remaining_argc, &remaining_argv, arg_separator_added, false)) {
     flush_error_log_messages();
     return 1;
   }
@@ -8023,16 +8126,10 @@ int mysqld_main(int argc, char **argv)
 
   if (init_server_components()) unireg_abort(MYSQLD_ABORT_EXIT);
 
+  GroupUpdatePool::init_instance();
+
   if (!server_id_supplied)
     LogErr(INFORMATION_LEVEL, ER_WARN_NO_SERVERID_SPECIFIED);
-
-  /*
-    For GalaxyEngine:
-    bin_log must be set to ON
-  */
-  if (!opt_initialize && consensus_log_manager.option_invalid(opt_bin_log)) {
-    unireg_abort(MYSQLD_SUCCESS_EXIT);
-  }
 
   /*
     Add server_uuid to the sid_map.  This must be done after
@@ -8064,7 +8161,8 @@ int mysqld_main(int argc, char **argv)
   }
 
   if (opt_bin_log &&
-      !xp::Recovery_manager::instance().is_xpaxos_instance_recovering()) {
+      !opt_initialize &&
+      !ConsensusLogManager::enable_consensus()) {
     /*
       Initialize GLOBAL.GTID_EXECUTED and GLOBAL.GTID_PURGED from
       gtid_executed table and binlog files during server startup.
@@ -8216,10 +8314,10 @@ int mysqld_main(int argc, char **argv)
 
   bool abort = false;
 
-  // /* Save pid of this process in a file */
-  // if (!opt_initialize) {
-  //   if (create_pid_file()) abort = true;
-  // }
+  /* Save pid of this process in a file */
+  if (!opt_initialize && !ConsensusLogManager::enable_consensus()) {
+    if (create_pid_file()) abort = true;
+  }
 
   /* Read the optimizer cost model configuration tables */
   if (!opt_initialize) reload_optimizer_cost_constants();
@@ -8245,7 +8343,6 @@ int mysqld_main(int argc, char **argv)
       that there are unprocessed options.
     */
     my_getopt_skip_unknown = false;
-
     if ((ho_error = handle_options(&remaining_argc, &remaining_argv, no_opts,
                                    mysqld_get_one_option)))
       abort = true;
@@ -8311,16 +8408,17 @@ int mysqld_main(int argc, char **argv)
   check_binlog_cache_size(nullptr);
   check_binlog_stmt_cache_size(nullptr);
 
-  xpaxos_set_privilege_checks_user();
-
   binlog_unsafe_map_init();
 
-  if (!opt_initialize) {
-    if (!opt_consensus_force_recovery) {
-      if (!opt_cluster_log_type_instance) {
-        start_consensus_apply_threads();
-      }
-    }
+  if (ConsensusLogManager::enable_consensus()) {
+    xpaxos_set_privilege_checks_user();
+
+    if (!opt_initialize && !opt_consensus_force_recovery && !opt_cluster_log_type_instance)
+      start_consensus_apply_threads();
+  } else {
+    ReplicaInitializer replica_initializer(opt_initialize, opt_skip_replica_start,
+                                          rpl_channel_filters,
+                                          &opt_replica_skip_errors);
   }
 
 #ifdef WITH_LOCK_ORDER
@@ -8344,6 +8442,8 @@ int mysqld_main(int argc, char **argv)
   im::ACL_inner_schema_register(opt_initialize);
 
   im::internal_account_ctx_init();
+
+  lizard::init_server_start_time_for_txn();
 
   (void)RUN_HOOK(server_state, after_recovery, (nullptr));
 
@@ -8404,6 +8504,12 @@ int mysqld_main(int argc, char **argv)
   start_handle_manager();
 
   create_compress_gtid_table_thread();
+
+  InitChangesetThreadPool(opt_changeset_threads);
+
+  polarx::create_background_poller();
+
+  if (!opt_initialize)  malloc_stats();
 
   LogEvent()
       .type(LOG_TYPE_ERROR)
@@ -8903,6 +9009,8 @@ static int handle_early_options() {
   vector<my_option> all_early_options;
   all_early_options.reserve(100);
 
+  xp::info(ER_XP_0) << "handle_early_options begin";
+
   my_getopt_register_get_addr(nullptr);
   /* Skip unknown options so that they may be processed later */
   my_getopt_skip_unknown = true;
@@ -8931,6 +9039,8 @@ static int handle_early_options() {
 
   // Swap with an empty vector, i.e. delete elements and free allocated space.
   vector<my_option>().swap(all_early_options);
+
+  xp::info(ER_XP_0) << "handle_early_options end";
 
   return ho_error;
 }
@@ -9259,7 +9369,7 @@ struct my_option my_long_options[] = {
     {"consensus-reset-mts-info", OPT_CLUSTER, "reset mts info when force change meta",
      &opt_consensus_reset_mts_info, &opt_consensus_reset_mts_info, 0, GET_BOOL,
      REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
-    {"cluster-dump-meta", OPT_CLUSTER, "Cluster dump meta",
+    {"cluster-dump-meta", OPT_CLUSTER, "Cluster dump meta, discard now",
      &opt_cluster_dump_meta, &opt_cluster_dump_meta, 0, GET_BOOL, REQUIRED_ARG,
      0, 0, 0, 0, 0, 0},
     {"cluster-force-single-mode", OPT_CLUSTER,
@@ -9272,6 +9382,10 @@ struct my_option my_long_options[] = {
     {"cluster-start-index", OPT_CLUSTER, "Cluster start valid index",
      &opt_consensus_start_index, &opt_consensus_start_index, 0, GET_ULL,
      REQUIRED_ARG, 1, 1, ULLONG_MAX, 0, 0, 0},
+    {"consensus-max-wait-seconds-for-next-trx-index", OPT_CLUSTER, "wait timeout for get_next_trx_index",
+     &opt_consensus_max_wait_seconds_for_next_trx_index, &opt_consensus_max_wait_seconds_for_next_trx_index, 0,
+     GET_ULL, REQUIRED_ARG, 10, 0, 0, 0, 0, 0},
+
     {"recover-snapshot", 0,
      "recover from the backup of cloud storage and output the committed index",
      &opt_recover_snapshot, &opt_recover_snapshot, 0, GET_BOOL, NO_ARG, 0, 0, 0,
@@ -9954,6 +10068,24 @@ SHOW_VAR status_vars[] = {
      SHOW_SCOPE_GLOBAL},
     {"Global_connection_memory", (char *)&show_global_mem_counter, SHOW_FUNC,
      SHOW_SCOPE_GLOBAL},
+    {"Group_update_fail_count", (char *)&group_update_fail_count, SHOW_LONGLONG,
+     SHOW_SCOPE_GLOBAL},
+    {"Group_update_follower_count", (char *)&group_update_follower_count,
+     SHOW_LONGLONG, SHOW_SCOPE_GLOBAL},
+    {"Group_update_free_count", (char *)&group_update_free_count, SHOW_LONGLONG,
+     SHOW_SCOPE_GLOBAL},
+    {"Group_update_leader_count", (char *)&group_update_leader_count,
+     SHOW_LONGLONG, SHOW_SCOPE_GLOBAL},
+    {"Group_update_ignore_count", (char *)&group_update_ignore_count,
+     SHOW_LONGLONG, SHOW_SCOPE_GLOBAL},
+    {"Group_update_insert_dup", (char *)&group_update_insert_dup, SHOW_LONGLONG,
+     SHOW_SCOPE_GLOBAL},
+    {"Group_update_reuse_count", (char *)&group_update_reuse_count,
+     SHOW_LONGLONG, SHOW_SCOPE_GLOBAL},
+    {"Group_update_total_count", (char *)&group_update_total_count,
+     SHOW_LONGLONG, SHOW_SCOPE_GLOBAL},
+    {"Group_update_group_same_count", (char *)&group_update_group_same_count,
+     SHOW_LONGLONG, SHOW_SCOPE_GLOBAL},
     {"Handler_commit", (char *)offsetof(System_status_var, ha_commit_count),
      SHOW_LONGLONG_STATUS, SHOW_SCOPE_ALL},
     {"Handler_delete", (char *)offsetof(System_status_var, ha_delete_count),
@@ -10236,16 +10368,37 @@ SHOW_VAR status_vars[] = {
      SHOW_SCOPE_ALL},
     {"consensus_fifo_cache_used_size", (char *)&show_fifo_cache_size, SHOW_FUNC,
      SHOW_SCOPE_GLOBAL},
-    {"first_index_in_consensus_fifo_cache",
-     (char *)&show_first_index_in_fifo_cache, SHOW_FUNC, SHOW_SCOPE_GLOBAL},
+    {"consensus_fifo_cache_first_index",
+     (char *)&show_fifo_cache_first_index, SHOW_FUNC, SHOW_SCOPE_GLOBAL},
     {"consensus_fifo_cache_log_count", (char *)&show_log_count_in_fifo_cache,
      SHOW_FUNC, SHOW_SCOPE_GLOBAL},
-    {"appliedindex_checker_queue", (char *)&show_appliedindex_checker_queue,
+    {"consensus_appliedindex_checker_queue", (char *)&show_appliedindex_checker_queue,
      SHOW_FUNC, SHOW_SCOPE_GLOBAL},
     {"consensus_easy_pool_size",
      reinterpret_cast<char *>(
          const_cast<long int *>(&alisql::easy_pool_alloc_byte)),
      SHOW_LONG, SHOW_SCOPE_GLOBAL},
+    {"consensus_in_leader_transfer", (char *)&show_consensus_in_leader_transfer,
+     SHOW_FUNC, SHOW_SCOPE_GLOBAL},
+    {"writeset_current_history_size", (char *)&writeset_current_history_size, SHOW_LONG,
+     SHOW_SCOPE_GLOBAL},
+    {"writeset_history_clear_count", (char *)&writeset_history_clear_count, SHOW_LONG,
+     SHOW_SCOPE_GLOBAL},
+    {"writeset_cannot_use_count", (char *)&writeset_cannot_use_count, SHOW_LONG,
+     SHOW_SCOPE_GLOBAL},
+    {"writeset_exceeds_max_size_count", (char *)&writeset_exceeds_max_size_count, SHOW_LONG,
+     SHOW_SCOPE_GLOBAL},
+    {"writeset_has_missing_keys_count", (char *)&writeset_has_missing_keys_count, SHOW_LONG,
+     SHOW_SCOPE_GLOBAL},
+    {"writeset_has_related_foreign_keys_count", (char *)&writeset_has_related_foreign_keys_count, SHOW_LONG,
+     SHOW_SCOPE_GLOBAL},
+    {"writeset_was_write_set_limit_reached_count", (char *)&writeset_was_write_set_limit_reached_count, SHOW_LONG,
+     SHOW_SCOPE_GLOBAL},
+    {"writeset_max_size_in_history", (char *)&writeset_max_size_in_history, SHOW_LONG,
+     SHOW_SCOPE_GLOBAL},
+    {"writeset_max_size_in_trx", (char *)&writeset_max_size_in_trx, SHOW_LONG,
+     SHOW_SCOPE_GLOBAL},
+
     {NullS, NullS, SHOW_LONG, SHOW_SCOPE_ALL}};
 
 void add_terminator(vector<my_option> *options) {
@@ -10412,6 +10565,16 @@ static int mysql_init_variables() {
 #endif /* defined(ENABLED_DEBUG_SYNC) */
   server_uuid[0] = 0;
 
+  writeset_current_history_size = 0;
+  writeset_history_clear_count = 0;
+  writeset_cannot_use_count = 0;
+  writeset_exceeds_max_size_count = 0;
+  writeset_has_missing_keys_count = 0;
+  writeset_has_related_foreign_keys_count = 0;
+  writeset_was_write_set_limit_reached_count = 0;
+  writeset_max_size_in_history = 0;
+  writeset_max_size_in_trx = 0;
+
   /* Character sets */
   system_charset_info = &my_charset_utf8mb3_general_ci;
   files_charset_info = &my_charset_utf8mb3_general_ci;
@@ -10485,6 +10648,9 @@ static int mysql_init_variables() {
   shared_memory_base_name = default_shared_memory_base_name;
 #endif
 
+  lizard::have_xa_prepare_with_trx_slot = SHOW_OPTION_YES;
+  lizard::have_xa_async_commit = SHOW_OPTION_YES;
+  lizard::have_xa_find_by_xid_with_hint = SHOW_OPTION_YES;
   return 0;
 }
 
@@ -10608,7 +10774,7 @@ bool mysqld_get_one_option(int optid,
     }
   }
 
-  xp::info(ER_XP_0) << "mysqld option: "
+  xp::system(ER_XP_0) << "mysqld option: "
       << "name:" << opt->name << ", value:" << (argument ? argument : "");
 
   switch (optid) {
@@ -12055,6 +12221,7 @@ PSI_mutex_key key_mutex_replica_worker_hash;
 PSI_mutex_key key_monitor_info_run_lock;
 PSI_mutex_key key_LOCK_delegate_connection_mutex;
 PSI_mutex_key key_LOCK_group_replication_connection_mutex;
+PSI_mutex_key key_LOCK_tx_commit_pending_mutex;
 
 /* clang-format off */
 static PSI_mutex_info all_server_mutexes[]=
@@ -12062,7 +12229,7 @@ static PSI_mutex_info all_server_mutexes[]=
   { &key_LOCK_tc, "TC_LOG_MMAP::LOCK_tc", 0, 0, PSI_DOCUMENT_ME},
   { &key_BINLOG_LOCK_commit, "MYSQL_BIN_LOG::LOCK_commit", 0, 0, PSI_DOCUMENT_ME},
   { &key_BINLOG_LOCK_commit_queue, "MYSQL_BIN_LOG::LOCK_commit_queue", 0, 0, PSI_DOCUMENT_ME},
-  { &key_BINLOG_LOCK_done, "MYSQL_BIN_LOG::LOCK_done", 0, 0, PSI_DOCUMENT_ME},
+  /* { &key_BINLOG_LOCK_done, "MYSQL_BIN_LOG::LOCK_done", 0, 0, PSI_DOCUMENT_ME}, */
   { &key_BINLOG_LOCK_flush_queue, "MYSQL_BIN_LOG::LOCK_flush_queue", 0, 0, PSI_DOCUMENT_ME},
   { &key_BINLOG_LOCK_index, "MYSQL_BIN_LOG::LOCK_index", 0, 0, PSI_DOCUMENT_ME},
   { &key_BINLOG_LOCK_log, "MYSQL_BIN_LOG::LOCK_log", 0, 0, PSI_DOCUMENT_ME},
@@ -12151,6 +12318,8 @@ static PSI_mutex_info all_server_mutexes[]=
 { &key_LOCK_authentication_policy, "LOCK_authentication_policy", PSI_FLAG_SINGLETON, 0, "A lock to ensure execution of CREATE USER or ALTER USER sql and SET @@global.authentication_policy variable are serialized"},
   { &key_LOCK_global_conn_mem_limit, "LOCK_global_conn_mem_limit", PSI_FLAG_SINGLETON, 0, PSI_DOCUMENT_ME},
   { &im::key_LOCK_internal_account_string, "LOCK_internal_account_string", PSI_FLAG_SINGLETON, 0, PSI_DOCUMENT_ME},
+  { &key_LOCK_tx_commit_pending_mutex, "LOCK_tx_commit_pending_mutex", PSI_FLAG_SINGLETON, 0, PSI_DOCUMENT_ME},
+  { &polarx::key_LOCK_slow_query_user_pattern, "LOCK_slow_query_user_pattern", PSI_FLAG_SINGLETON, 0, PSI_DOCUMENT_ME},
 
   { &key_consensus_info_data_lock, "consensus_info::data_lock", 0, 0, PSI_DOCUMENT_ME},
   { &key_consensus_info_run_lock, "consensus_info::run_lock", 0, 0, PSI_DOCUMENT_ME},
@@ -12166,6 +12335,7 @@ static PSI_mutex_info all_server_mutexes[]=
   { &key_CONSENSUSLOG_LOCK_Consensus_stage_change, "ConsensusLogManager::LOCK_consnesus_state_change", 0, 0, PSI_DOCUMENT_ME},
   { &key_CONSENSUSLOG_LOCK_commit_pos, "ConsensusLogManager::LOCK_consensus_commit_pos", 0, 0, PSI_DOCUMENT_ME},
   { &key_fifo_cache_cleaner, "fifo_cache_cleaner", 0, 0, PSI_DOCUMENT_ME},
+  { &key_LOCK_diagnose_excluded_vars_list, "LOCK_diagnose_excluded_vars_list", PSI_FLAG_SINGLETON, 0, PSI_DOCUMENT_ME},
 };
 /* clang-format on */
 
@@ -12241,6 +12411,10 @@ PSI_cond_key key_cond_slave_worker_hash;
 PSI_cond_key key_monitor_info_run_cond;
 PSI_cond_key key_COND_delegate_connection_cond_var;
 PSI_cond_key key_COND_group_replication_connection_cond_var;
+PSI_cond_key key_COND_tx_commit_pending_cond_var;
+#ifndef NDEBUG
+PSI_cond_key key_COND_bgc_preempt_cond_var;
+#endif
 
 /* clang-format off */
 static PSI_cond_info all_server_conds[]=
@@ -12285,6 +12459,10 @@ static PSI_cond_info all_server_conds[]=
   { &key_monitor_info_run_cond, "Source_IO_monitor::run_cond", 0, 0, PSI_DOCUMENT_ME},
   { &key_COND_delegate_connection_cond_var, "THD::COND_delegate_connection_cond_var", 0, 0, PSI_DOCUMENT_ME},
   { &key_COND_group_replication_connection_cond_var, "THD::COND_group_replication_connection_cond_var", 0, 0, PSI_DOCUMENT_ME},
+  { &key_COND_tx_commit_pending_cond_var, "THD::COND_tx_commit_pending_cond_var", 0, 0, PSI_DOCUMENT_ME},
+#ifndef NDEBUG
+  { &key_COND_bgc_preempt_cond_var, "THD::COND_bgc_preempt_cond_var", 0, 0, PSI_DOCUMENT_ME},
+#endif
 
   { &key_consensus_info_data_cond, "Consensus_info::data_cond", 0, 0, PSI_DOCUMENT_ME},
   { &key_consensus_info_start_cond, "Consensus_info::start_cond", 0, 0, PSI_DOCUMENT_ME},
@@ -12419,6 +12597,7 @@ PSI_stage_info stage_flushing_relay_log_and_source_info_repository= { 0, "Flushi
 PSI_stage_info stage_flushing_relay_log_info_file= { 0, "Flushing relay-log info file.", 0, PSI_DOCUMENT_ME};
 PSI_stage_info stage_freeing_items= { 0, "freeing items", 0, PSI_DOCUMENT_ME};
 PSI_stage_info stage_fulltext_initialization= { 0, "FULLTEXT initialization", 0, PSI_DOCUMENT_ME};
+PSI_stage_info stage_hotspot_wait_for_commit= { 0, "hotspot wait for commit", 0, PSI_DOCUMENT_ME};
 PSI_stage_info stage_init= { 0, "init", 0, PSI_DOCUMENT_ME};
 PSI_stage_info stage_killing_replica= { 0, "Killing replica", 0, PSI_DOCUMENT_ME};
 PSI_stage_info stage_logging_slow_query= { 0, "logging slow query", 0, PSI_DOCUMENT_ME};
@@ -12461,6 +12640,7 @@ PSI_stage_info stage_sql_thd_waiting_until_delay= { 0, "Waiting until SOURCE_DEL
 PSI_stage_info stage_system_lock= { 0, "System lock", 0, PSI_DOCUMENT_ME};
 PSI_stage_info stage_update= { 0, "update", 0, PSI_DOCUMENT_ME};
 PSI_stage_info stage_updating= { 0, "updating", 0, PSI_DOCUMENT_ME};
+PSI_stage_info stage_updating_hotspot_collecting= { 0, "updating hotspot collecting", 0, PSI_DOCUMENT_ME};
 PSI_stage_info stage_updating_main_table= { 0, "updating main table", 0, PSI_DOCUMENT_ME};
 PSI_stage_info stage_updating_reference_tables= { 0, "updating reference tables", 0, PSI_DOCUMENT_ME};
 PSI_stage_info stage_user_sleep= { 0, "User sleep", 0, PSI_DOCUMENT_ME};
@@ -12523,6 +12703,7 @@ PSI_stage_info *all_server_stages[] = {
     &stage_flushing_relay_log_info_file,
     &stage_freeing_items,
     &stage_fulltext_initialization,
+    &stage_hotspot_wait_for_commit,
     &stage_init,
     &stage_killing_replica,
     &stage_logging_slow_query,
@@ -12565,6 +12746,7 @@ PSI_stage_info *all_server_stages[] = {
     &stage_system_lock,
     &stage_update,
     &stage_updating,
+    &stage_updating_hotspot_collecting,
     &stage_updating_main_table,
     &stage_updating_reference_tables,
     &stage_user_sleep,

@@ -82,7 +82,8 @@ void trans_reset_one_shot_chistics(THD *thd) {
   thd->tx_read_only = thd->variables.transaction_read_only;
 
   /* Reset commit and snapshot gcn when transition end. */
-  thd->reset_gcn_variables();
+  thd->reset_trans_policy();
+  thd->m_trx_affected_rows = 0;
 }
 
 /**
@@ -792,7 +793,7 @@ bool trans_rollback_to_savepoint(THD *thd, LEX_STRING name) {
     thd->get_transaction()->push_unsafe_rollback_warnings(thd);
 
   thd->get_transaction()->m_savepoints = sv;
-
+  
   /**
     Checking whether it is safe to release metadata locks acquired after
     savepoint, if rollback to savepoint is successful.

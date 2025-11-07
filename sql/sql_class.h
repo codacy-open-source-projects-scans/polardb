@@ -113,7 +113,7 @@
 
 #include "ppi/ppi_statement.h"
 
-#include "sql/lizard/lizard_service.h"  // gcn_t, struct MyGCN...
+#include "sql/lizard/lizard_service.h"  // gcn_t, struct MyVisionGCN...
 #include "sql/trans_proc/returning_parse.h"
 
 #include "sql/ccl/ccl.h"
@@ -121,6 +121,11 @@
 #include "sql/sql_common_ext.h"
 
 #include "polarx_proc/changeset_common.h"
+
+#include "sql/xa/lizard_cmmt_policy.h"
+#include "sql/lizard_sql_class.h"
+
+#include "sql/group_update_ctx.h"  // GroupUpdateCtx
 
 namespace im {
 namespace recycle_bin {
@@ -179,6 +184,7 @@ struct MYSQL_LOCK;
 struct PPI_thread;
 struct PPI_transaction;
 struct PPI_stat;
+class GroupUpdate;
 
 class Sequence_last_value;
 typedef collation_unordered_map<std::string, Sequence_last_value *>
@@ -215,6 +221,12 @@ extern char empty_c_string[1];
   (yes, the sum is deliberately inaccurate)
 */
 constexpr size_t PREALLOC_NUM_HA = 15;
+
+enum class Sqb_ret_error {
+  SQB_RET_ERROR_NONE,
+  SQB_RET_ERROR_TIME,
+  SQB_RET_ERROR_CPU_AND_TIME
+};
 
 #ifndef NDEBUG
 // Used to sample certain debug flags when a query is read but before the reply
@@ -1364,7 +1376,18 @@ class THD : public MDL_context_owner,
   Security_context *m_security_ctx;
 
   Security_context *security_context() const { return m_security_ctx; }
-  void set_security_context(Security_context *sctx) { m_security_ctx = sctx; }
+  void set_security_context(Security_context *sctx) {
+    if (sctx == m_security_ctx) return;
+
+    /*
+      To prevent race conditions arising from concurrent threads executing
+      I_S.PROCESSLIST, a mutex LOCK_thd_security_ctx safeguards the security
+      context switch.
+    */
+    mysql_mutex_lock(&LOCK_thd_security_ctx);
+    m_security_ctx = sctx;
+    mysql_mutex_unlock(&LOCK_thd_security_ctx);
+  }
   List<Security_context> m_view_ctx_list;
 
   /**
@@ -1379,6 +1402,8 @@ class THD : public MDL_context_owner,
     @see generate_authentication_string
   */
   bool m_disable_password_validation;
+
+  GroupUpdateCtx gu_ctx;
 
   std::unique_ptr<Protocol_text> protocol_text;      // Normal protocol
   std::unique_ptr<Protocol_binary> protocol_binary;  // Binary protocol
@@ -1645,10 +1670,20 @@ class THD : public MDL_context_owner,
   uint16 peer_port;
   struct timeval start_time;
   struct timeval user_time;
+
+  /** count in ms. */
+  ulonglong sqb_cpu_start_time;
+  ulonglong sqb_start_time;
+
+  bool sqb_is_enabled = false;
+
   /**
     Query start time, expressed in microseconds.
   */
   ulonglong start_utime;
+
+  /** Snapshot of mask_internal_user variable. */
+  bool enable_mask_internal_user = false;
 
  private:
   /**
@@ -1957,13 +1992,24 @@ class THD : public MDL_context_owner,
  public:
   enum Consensus_error {
     CSS_NONE = 0,
-    CSS_LEADERSHIP_CHANGE,
+    CSS_SERVER_NOT_READY,
+    CSS_LEADERSHIP_CHANGING,
     CSS_LOG_TOO_LARGE,
+    CSS_LEADERSHIP_CHANGED,
     CSS_SHUTDOWN,
-    CSS_GU_ERROR,
     CSS_OTHER
   };
 
+  constexpr static uint32_t Consensus_error_code[Consensus_error::CSS_OTHER + 1] = {
+    ER_CONSENSUS_OTHER_ERROR,
+    ER_CONSENSUS_SERVER_NOT_READY,
+    ER_CONSENSUS_LEADERSHIP_IS_CHANGING,
+    ER_CONSENSUS_LOG_TOO_LARGE,
+    ER_CONSENSUS_LEADERSHIP_CHANGED,
+    ER_SERVER_SHUTDOWN,
+    ER_CONSENSUS_OTHER_ERROR
+  };
+ 
   uint64 consensus_index{0};
   uint64 consensus_term{0};
   Consensus_error consensus_error{CSS_NONE};
@@ -2070,10 +2116,6 @@ class THD : public MDL_context_owner,
     bool m_transaction_rollback_request;
 
     PPI_transaction *m_ppi_transaction;
-
-    /** owned_commnit_gcn might be set by loading SYS_GCN for attachable trx.
-    Bakcup and resotre owned_commit_gcn. */
-    MyGCN owned_commit_gcn;
   };
 
  public:
@@ -2112,6 +2154,8 @@ class THD : public MDL_context_owner,
 
     /// Transaction state data.
     Transaction_state m_trx_state;
+
+    lizard::Transaction_policy_state m_policy_state;
 
    private:
     Attachable_trx(const Attachable_trx &);
@@ -2559,6 +2603,7 @@ class THD : public MDL_context_owner,
   ulong statement_id_counter;
   ulong rand_saved_seed1, rand_saved_seed2;
   my_thread_t real_id;
+
   /**
     This counter is 32 bit because of the client protocol.
 
@@ -2791,6 +2836,9 @@ class THD : public MDL_context_owner,
   bool slave_thread;
 
   uchar password;
+
+  /** The comment of jdbc connection. */
+  char* conn_comment = nullptr;
 
  private:
   /**
@@ -3190,6 +3238,30 @@ class THD : public MDL_context_owner,
     return variables.time_zone;
   }
   time_t query_start_in_secs() const { return start_time.tv_sec; }
+  
+  /*----------------------------------------------------------------*/
+  /* Functions used for GongHang slow query block.  */
+  /*----------------------------------------------------------------*/
+  ulonglong sqb_query_start_in_ms() const;
+
+  bool sqb_is_block_command() const;
+
+  void sqb_set_cpu_start_time();
+
+  void sqb_set_time_and_error();
+
+  void sqb_send_kill_message(int err) const;
+
+  void sqb_reset_time_and_error() {
+    if (!sqb_is_enabled) return;
+    sqb_start_time = 0;
+    sqb_cpu_start_time = 0;
+  }
+
+  /*----------------------------------------------------------------*/
+  /* Functions used for GongHang slow query block.  */
+  /*----------------------------------------------------------------*/
+
   my_timeval query_start_timeval_trunc(uint decimals);
   void set_time();
   void set_time(const struct timeval *t) {
@@ -3902,6 +3974,7 @@ class THD : public MDL_context_owner,
     auto xid_state = trx->xid_state();
     /* XA transactions are always persisted by Innodb. */
     return (!xid_state->has_state(XID_STATE::XA_NOTR) ||
+            gu_ctx.is_follower() ||
             m_se_gtid_flags[SE_GTID_PERSIST]);
   }
 
@@ -4560,6 +4633,7 @@ class THD : public MDL_context_owner,
   */
 
   bool send_result_set_row(const mem_root_deque<Item *> &row_items);
+  bool send_returning_result_set_row(const mem_root_deque<Item *> &row_items, ptrdiff_t diff, bool is_before);
 
   /*
     Send the status of the current statement execution over network.
@@ -4862,13 +4936,9 @@ class THD : public MDL_context_owner,
 #endif
 
  public:
-  MyGCN owned_commit_gcn;
-
   MyVisionGCN owned_vision_gcn;
 
-  xa_branch_t owned_xa_branch;
-
-  xa_addr_t owned_master_addr;
+  lizard::Commit_policy_ctx cpolicy_ctx;
 
   struct im::ST_CONN_ATTR conn_attr;
   /** Returning clause lex */
@@ -4876,16 +4946,45 @@ class THD : public MDL_context_owner,
 
   bool xpaxos_replication_channel;
 
-  void reset_gcn_variables() {
+  /** Used for slow query blocker to judge if need to block. */
+  bool sqb_should_block = false;
+
+  /** Total affected rows in the transaction. */
+  longlong m_trx_affected_rows;
+
+  enum Sqb_ret_error sqb_ret_error;
+
+#ifndef NDEBUG
+  /** Replaced m_cond_preempt. Protected by LOCK_tx_commit_pending_mutex. */
+  mysql_cond_t COND_bgc_preempt_cond_var;
+#endif
+
+  /** Replaced m_stage_cond_commit_order and m_stage_cond_binlog. During the
+  binlog group commit process, when the status of tx_commit_pending changes,
+  this condition variable will be used to notify the sleeping followers.
+
+  Protected by LOCK_tx_commit_pending_mutex.*/
+  mysql_cond_t COND_tx_commit_pending_cond_var;
+
+  /** Protect tx_commit_pending flag during binlog group commit (and other
+  related variables and condition like next_to_commit,
+  COND_tx_commit_pending_cond_var and so on.) */
+  mysql_mutex_t LOCK_tx_commit_pending_mutex;
+
+  void reset_trans_policy() {
     variables.innodb_snapshot_gcn = GCN_NULL;
     variables.innodb_commit_gcn = GCN_NULL;
     variables.innodb_current_snapshot_gcn = false;
     variables.opt_query_via_flashback_area = false;
 
-    owned_commit_gcn.reset();
-    owned_vision_gcn.reset();
-    owned_xa_branch.reset();
-    owned_master_addr.reset();
+    owned_vision_gcn = GCN_NULL;
+
+    cpolicy_ctx.reset();
+  }
+  /** For attachable transaction, use single shard instead*/
+  void new_attachable_policy() {
+    reset_trans_policy();
+    cpolicy_ctx.activate_single_shard();
   }
 
   ulonglong get_snapshot_gcn() { return variables.innodb_snapshot_gcn; }
@@ -4940,9 +5039,13 @@ inline bool secondary_engine_lock_tables_mode(const THD &cthd) {
           cthd.locked_tables_mode == LTM_PRELOCKED_UNDER_LOCK_TABLES);
 }
 
+bool is_large_trx(THD *thd, ulonglong affected_rows, TABLE *const table);
+
 /** A short cut for thd->get_stmt_da()->set_ok_status(). */
 void my_ok(THD *thd, ulonglong affected_rows = 0, ulonglong id = 0,
-           const char *message = nullptr);
+               const char *message = nullptr);
+
+bool set_my_ok(THD *thd, ulonglong affected_rows, ulonglong id = 0, const char *message = nullptr);
 
 /** A short cut for thd->get_stmt_da()->set_eof_status(). */
 void my_eof(THD *thd);
@@ -5006,6 +5109,13 @@ inline void THD::set_connection_admin(bool connection_admin_flag) {
 */
 inline bool is_xa_tran_detached_on_prepare(const THD *thd) {
   return thd->variables.xa_detach_on_prepare;
+}
+
+inline bool need_print_utf8mb4_implicit_collation(const THD *thd,
+  const CHARSET_INFO *charset)
+{
+  return thd->variables.force_print_utf8mb4_implicit_collation
+         && strcmp(charset->csname, "utf8mb4") == 0;
 }
 
 #endif /* SQL_CLASS_INCLUDED */

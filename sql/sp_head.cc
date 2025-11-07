@@ -1972,7 +1972,8 @@ void sp_head::returns_type(THD *thd, String *result) const {
   if (field->has_charset()) {
     result->append(STRING_WITH_LEN(" CHARSET "));
     result->append(m_return_field_def.charset->csname);
-    if (!(m_return_field_def.charset->state & MY_CS_PRIMARY)) {
+    if (!(m_return_field_def.charset->state & MY_CS_PRIMARY)
+        || need_print_utf8mb4_implicit_collation(thd, m_return_field_def.charset)) {
       result->append(STRING_WITH_LEN(" COLLATE "));
       result->append(m_return_field_def.charset->m_coll_name);
     }
@@ -2862,6 +2863,8 @@ bool sp_head::execute_procedure(THD *thd, mem_root_deque<Item *> *args) {
 
   Security_context *save_security_ctx = nullptr;
   if (!err_status) err_status = set_security_ctx(thd, &save_security_ctx);
+
+  DEBUG_SYNC(thd, "after_switching_security_context");
 
   opt_trace_disable_if_no_stored_proc_func_access(thd, this);
 

@@ -28,7 +28,7 @@ namespace alisql {
  * LearnerServer implement
  */
 LearnerServer::LearnerServer(uint64_t serverId)
-    : RemoteServer(serverId), singleLeader(NULL), connectTimeout(1000) {}
+    : RemoteServer(serverId), singleLeader(NULL) {}
 
 void LearnerServer::stop(void *) {
   nextIndex = 1;
@@ -38,8 +38,7 @@ void LearnerServer::stop(void *) {
 
 void LearnerServer::connect(void *) {
   if (addr.port == 0)
-    addr = srv->createConnection(strAddr, getSharedThis(), connectTimeout,
-                                 serverId);
+    addr = srv->createConnection(strAddr, getSharedThis(), serverId);
 }
 
 void LearnerServer::disconnect(void *) {
@@ -72,8 +71,7 @@ void LearnerServer::sendMsg(void *ptr) {
 
   msg->set_msgid(msgId.fetch_add(1));
   if (addr.port == 0) {
-    addr = srv->createConnection(strAddr, getSharedThis(), connectTimeout,
-                                 serverId);
+    addr = srv->createConnection(strAddr, getSharedThis(), serverId);
     return;
   }
   if (netError.load()) return;
@@ -82,7 +80,7 @@ void LearnerServer::sendMsg(void *ptr) {
   msg->set_serverid(serverId);
   /* fill msg */
   if (waitForReply == 1) {
-    easy_warn_log(
+    easy_info_log(
         "Try to send msg to server %ld, now we are waiting for response.",
         serverId);
     return;

@@ -57,6 +57,7 @@
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/log_shared.h"
 #include "mysql_com.h"
+#include "sql/gh_slow_query_block/slow_query_block.h"
 #include "sql/protocol.h"
 #include "sql/rpl_trx_tracking.h"
 #ifdef HAVE_SYS_TIME_H
@@ -496,6 +497,26 @@ static Sys_var_bool Sys_pfs_enabled("performance_schema",
                                     READ_ONLY GLOBAL_VAR(pfs_param.m_enabled),
                                     CMD_LINE(OPT_ARG), DEFAULT(true),
                                     PFS_TRAILING_PROPERTIES);
+
+static Sys_var_bool Sys_rds_audit_flush_thread_enabled("rds_audit_flush_thread_enabled",
+                                    "Enable the audit thread create.",
+                                    READ_ONLY GLOBAL_VAR(opt_rds_audit_flush_thread_enabled),
+                                    CMD_LINE(OPT_ARG), DEFAULT(true),
+                                    PFS_TRAILING_PROPERTIES);
+
+static Sys_var_ulong Sys_server_max_threads(
+    "server_max_threads",
+    "Variable to set the value for the number of threads.",
+    READ_ONLY GLOBAL_VAR(opt_server_max_threads),
+    CMD_LINE(REQUIRED_ARG), VALID_RANGE(0, 1000 * 1024), DEFAULT(100 * 1024),
+    BLOCK_SIZE(1), PFS_TRAILING_PROPERTIES);
+
+static Sys_var_ulong Sys_error_log_ring_buffer_size(
+    "error_log_ring_buffer_size",
+    "Default startup value for the size of the ring buffer.",
+    READ_ONLY GLOBAL_VAR(opt_error_log_ring_buffer_size),
+    CMD_LINE(REQUIRED_ARG), VALID_RANGE(0, 10 * 1024 * 1024), DEFAULT(5 * 1024 * 1024),
+    BLOCK_SIZE(1), PFS_TRAILING_PROPERTIES);
 
 static Sys_var_charptr Sys_pfs_instrument(
     "performance_schema_instrument",
@@ -1741,7 +1762,13 @@ static Sys_var_bool Sys_binlog_order_commits(
     "binlog_order_commits",
     "Issue internal commit calls in the same order as transactions are"
     " written to the binary log. Default is to order commits.",
-    GLOBAL_VAR(opt_binlog_order_commits), CMD_LINE(OPT_ARG), DEFAULT(true));
+    GLOBAL_VAR(opt_binlog_order_commits), CMD_LINE(OPT_ARG), DEFAULT(false));
+
+static Sys_var_bool Sys_disable_binlog_savepoint(
+    "disable_binlog_savepoint",
+    "Determine whether to disable the binary log checkpointing."
+    "Default is True.",
+    GLOBAL_VAR(opt_disable_binlog_savepoint), CMD_LINE(OPT_ARG), DEFAULT(true));
 
 static Sys_var_ulong Sys_bulk_insert_buff_size(
     "bulk_insert_buffer_size",
@@ -4252,7 +4279,7 @@ static Sys_var_ulong Binlog_transaction_dependency_history_size(
     "Maximum number of rows to keep in the writeset history.",
     GLOBAL_VAR(mysql_bin_log.m_dependency_tracker.get_writeset()
                    ->m_opt_max_history_size),
-    CMD_LINE(REQUIRED_ARG, 0), VALID_RANGE(1, 1000000), DEFAULT(25000),
+    CMD_LINE(REQUIRED_ARG, 0), VALID_RANGE(1, 1000000), DEFAULT(200000),
     BLOCK_SIZE(1), &PLock_slave_trans_dep_tracker, NOT_IN_BINLOG,
     ON_CHECK(nullptr), ON_UPDATE(nullptr));
 
@@ -5039,6 +5066,14 @@ static Sys_var_ulong Sys_max_execution_time(
     "milliseconds",
     HINT_UPDATEABLE SESSION_VAR(max_execution_time), CMD_LINE(REQUIRED_ARG),
     VALID_RANGE(0, ULONG_MAX), DEFAULT(0), BLOCK_SIZE(1));
+
+static Sys_var_ulong Sys_max_trx_affected_rows(
+    "max_trx_affected_rows",
+    "A transaction that affects more than the specified number of rows will "
+    "report error.",
+    GLOBAL_VAR(sqb_max_trx_affected_rows), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, ULLONG_MAX), DEFAULT(0),
+    BLOCK_SIZE(1));
 
 static bool update_fips_mode(sys_var *, THD *, enum_var_type) {
   char ssl_err_string[OPENSSL_ERROR_LENGTH] = {'\0'};
@@ -6560,7 +6595,7 @@ static Sys_var_enforce_gtid_consistency Sys_enforce_gtid_consistency(
     PERSIST_AS_READONLY GLOBAL_VAR(_gtid_consistency_mode),
     CMD_LINE(OPT_ARG, OPT_ENFORCE_GTID_CONSISTENCY),
     enforce_gtid_consistency_aliases, 3,
-    DEFAULT(3 /*position of "false" in enforce_gtid_consistency_aliases*/),
+    DEFAULT(1 /*position of "ON" in enforce_gtid_consistency_aliases*/),
     DEFAULT(GTID_CONSISTENCY_MODE_ON), NO_MUTEX_GUARD, NOT_IN_BINLOG,
     ON_CHECK(check_session_admin_outside_trx_outside_sf_outside_sp));
 const char *fixup_enforce_gtid_consistency_command_line(char *value_arg) {
@@ -6809,7 +6844,7 @@ static Sys_var_gtid_mode Sys_gtid_mode(
     "be replicated and executed on all servers, and finally set all "
     "servers to GTID_MODE = ON.",
     PERSIST_AS_READONLY GLOBAL_VAR(Gtid_mode::sysvar_mode),
-    CMD_LINE(REQUIRED_ARG), Gtid_mode::names, DEFAULT(Gtid_mode::DEFAULT),
+    CMD_LINE(REQUIRED_ARG), Gtid_mode::names, DEFAULT(Gtid_mode::ON),
     NO_MUTEX_GUARD, NOT_IN_BINLOG,
     ON_CHECK(check_session_admin_outside_trx_outside_sf_outside_sp));
 
@@ -7239,6 +7274,18 @@ static Sys_var_struct<CHARSET_INFO, Get_name> Sys_default_collation_for_utf8mb4(
     DEFAULT(&my_charset_utf8mb4_0900_ai_ci), NO_MUTEX_GUARD, IN_BINLOG,
     ON_CHECK(check_default_collation_for_utf8mb4),
     ON_UPDATE(update_deprecated));
+
+static Sys_var_bool Sys_disable_default_collation_for_utf8mb4(
+    "disable_default_collation_for_utf8mb4",
+    "When this option is ON, disable use default_collation_for_utf8mb4.",
+    SESSION_VAR(disable_default_collation_for_utf8mb4), CMD_LINE(OPT_ARG), DEFAULT(false),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_bool Sys_force_print_utf8mb4_implicit_collation(
+    "force_print_utf8mb4_implicit_collation",
+    "When this option is on, force print explicit charset and collation.",
+    SESSION_VAR(force_print_utf8mb4_implicit_collation), CMD_LINE(OPT_ARG), DEFAULT(false),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
 
 static Sys_var_bool Sys_show_create_table_verbosity(
     "show_create_table_verbosity",
@@ -7701,7 +7748,7 @@ static Sys_var_bool Sys_xa_detatch_on_prepare(
     "until the session disconnects. ON is the only safe choice for "
     "replication.",
     HINT_UPDATEABLE SESSION_VAR(xa_detach_on_prepare), CMD_LINE(OPT_ARG),
-    DEFAULT(true), NO_MUTEX_GUARD, IN_BINLOG,
+    DEFAULT(false), NO_MUTEX_GUARD, IN_BINLOG,
     ON_CHECK(check_session_admin_outside_trx_outside_sf));
 
 #ifndef NDEBUG
@@ -7752,6 +7799,13 @@ static Sys_var_bool Sys_enable_changeset(
     GLOBAL_VAR(opt_enable_changeset), CMD_LINE(OPT_ARG), DEFAULT(true),
     NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0),
     ON_UPDATE(handle_enable_changeset));
+
+static Sys_var_bool Sys_pushdown_range_limit(
+    "pushdown_range_limit",
+    "Push down limit to range scan.",
+    HINT_UPDATEABLE SESSION_VAR(pushdown_range_limit),
+    CMD_LINE(OPT_ARG),
+    DEFAULT(false));
 
 #include "sys_vars_consensus.cc"
 #include "sys_vars_ext.cc"

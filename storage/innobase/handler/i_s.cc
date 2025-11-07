@@ -75,6 +75,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "sql/dd/dd_minor_upgrade.h"
 
+#include "lizard0fil0types.h"
+
 extern mysql_mutex_t LOCK_global_system_variables;
 
 constexpr char plugin_author[] = PLUGIN_AUTHOR_ORACLE;
@@ -152,10 +154,37 @@ static buf_page_desc_t i_s_page_type[] = {
     {"ZLOB_DATA", FIL_PAGE_TYPE_ZLOB_DATA},
     {"ZLOB_INDEX", FIL_PAGE_TYPE_ZLOB_INDEX},
     {"ZLOB_FRAG", FIL_PAGE_TYPE_ZLOB_FRAG},
-    {"ZLOB_FRAG_ENTRY", FIL_PAGE_TYPE_ZLOB_FRAG_ENTRY},
-    {"RTREE_INDEX", I_S_PAGE_TYPE_RTREE},
-    {"IBUF_INDEX", I_S_PAGE_TYPE_IBUF},
-    {"SDI_INDEX", I_S_PAGE_TYPE_SDI}};
+    {"ZLOB_FRAG_ENTRY", FIL_PAGE_TYPE_ZLOB_FRAG_ENTRY}, /*i_s_page_type[29] */
+    {"", 0},                                            /*i_s_page_type[30] */
+    {"", 0},                                            /*i_s_page_type[31] */
+    {"", 0},                                            /*i_s_page_type[32] */
+    {"", 0},                                            /*i_s_page_type[33] */
+    {"", 0},                                            /*i_s_page_type[34] */
+    {"", 0},                                            /*i_s_page_type[35] */
+    {"", 0},                                            /*i_s_page_type[36] */
+    {"", 0},                                            /*i_s_page_type[37] */
+    {"", 0},                                            /*i_s_page_type[38] */
+    {"", 0},                                            /*i_s_page_type[39] */
+    {"PANDA_INDEX", FIL_PAGE_INDEX_PANDA},              /*i_s_page_type[40] */
+    {"RTREE_INDEX", I_S_PAGE_TYPE_RTREE},               /*i_s_page_type[41] */
+    {"IBUF_INDEX", I_S_PAGE_TYPE_IBUF},                 /*i_s_page_type[42] */
+    {"SDI_INDEX", I_S_PAGE_TYPE_SDI}};                  /*i_s_page_type[43] */
+
+const char *i_s_index_page_type_to_str(page_type_t page_type) {
+  if (fil_page_type_is_index(page_type)) {
+    if (page_type == FIL_PAGE_RTREE) {
+      return i_s_page_type[I_S_PAGE_TYPE_RTREE].type_str;
+    } else if (page_type == FIL_PAGE_SDI) {
+      return i_s_page_type[I_S_PAGE_TYPE_SDI].type_str;
+    } else if (page_type == FIL_PAGE_INDEX_PANDA) {
+      return i_s_page_type[FIL_PAGE_INDEX_PANDA].type_str;
+    } else {
+      return i_s_page_type[I_S_PAGE_TYPE_INDEX].type_str;
+    }
+  }
+
+  return "";
+}
 
 /** This structure defines information we will fetch from pages
 currently cached in the buffer pool. It will be used to populate
@@ -5927,10 +5956,10 @@ static int i_s_dict_fill_innodb_indexes(THD *thd, const dict_index_t *index,
   OK(fields[SYS_INDEX_NUM_FIELDS]->store(index->n_fields));
 
   /* FIL_NULL is UINT32_UNDEFINED */
-  if (index->page == FIL_NULL) {
+  if (index->page_no() == FIL_NULL) {
     OK(fields[SYS_INDEX_PAGE_NO]->store(-1));
   } else {
-    OK(fields[SYS_INDEX_PAGE_NO]->store(index->page));
+    OK(fields[SYS_INDEX_PAGE_NO]->store(index->page_no()));
   }
 
   OK(fields[SYS_INDEX_SPACE]->store(index->space));
@@ -5947,7 +5976,10 @@ information_schema.innodb_indexes table with related index information
 @param[in]      thd             thread
 @param[in,out]  tables          tables to fill
 @return 0 on success */
-static int i_s_innodb_indexes_fill_table(THD *thd, Table_ref *tables, Item *) {
+int fill_i_s_innodb_indexes_low(THD *thd, Table_ref *tables, Item *,
+                                Fill_func fill_func,
+                                bool exclude_partition_index,
+                                bool exclude_dd_table) {
   btr_pcur_t pcur;
   const rec_t *rec;
   mem_heap_t *heap;
@@ -5981,12 +6013,13 @@ static int i_s_innodb_indexes_fill_table(THD *thd, Table_ref *tables, Item *) {
     /* Populate a dict_index_t structure with information from
     a INNODB_INDEXES row */
     ret = dd_process_dd_indexes_rec(heap, rec, &index_rec, &mdl_on_tab, &parent,
-                                    &mdl_on_parent, dd_indexes, &mtr);
+                                    &mdl_on_parent, dd_indexes, &mtr,
+                                    exclude_dd_table);
 
     dict_sys_mutex_exit();
 
     if (ret) {
-      i_s_dict_fill_innodb_indexes(thd, index_rec, tables->table);
+      fill_func(thd, index_rec, tables->table);
     }
 
     mem_heap_empty(heap);
@@ -6009,10 +6042,68 @@ static int i_s_innodb_indexes_fill_table(THD *thd, Table_ref *tables, Item *) {
 
   mtr_commit(&mtr);
   dd_table_close(dd_indexes, thd, &mdl, true);
+
+  if (exclude_partition_index) {
+    goto exit;
+  }
+
+  /* Scan mysql.index_partitions */
+  mem_heap_empty(heap);
+  mtr_start(&mtr);
+
+  rec = dd_startscan_system(thd, &mdl, &pcur, &mtr,
+                            dd_partition_indexes_name.c_str(), &dd_indexes);
+
+  /* Process each record in the table */
+  while (rec) {
+    const dict_index_t *index_rec;
+    MDL_ticket *mdl_on_tab = nullptr;
+    dict_table_t *parent = nullptr;
+    MDL_ticket *mdl_on_parent = nullptr;
+
+    /* Populate a dict_index_t structure with information from a
+     * mysql.index_partitions row */
+    ret = dd_process_dd_partition_indexes_rec(heap, rec, &index_rec,
+                                              &mdl_on_tab, &parent,
+                                              &mdl_on_parent, dd_indexes, &mtr);
+
+    dict_sys_mutex_exit();
+
+    if (ret) {
+      fill_func(thd, index_rec, tables->table);
+    }
+
+    mem_heap_empty(heap);
+
+    /* Get the next record */
+    dict_sys_mutex_enter();
+
+    if (index_rec != nullptr) {
+      dd_table_close(index_rec->table, thd, &mdl_on_tab, true);
+
+      /* Close parent table if it's a fts aux table. */
+      if (index_rec->table->is_fts_aux() && parent) {
+        dd_table_close(parent, thd, &mdl_on_parent, true);
+      }
+    }
+
+    mtr_start(&mtr);
+    rec = dd_getnext_system_rec(&pcur, &mtr);
+  }
+
+  mtr_commit(&mtr);
+  dd_table_close(dd_indexes, thd, &mdl, true);
+
+exit:
   dict_sys_mutex_exit();
   mem_heap_free(heap);
 
   return 0;
+}
+
+static int i_s_innodb_indexes_fill_table(THD *thd, Table_ref *tables, Item *) {
+  return fill_i_s_innodb_indexes_low(thd, tables, nullptr,
+                                     i_s_dict_fill_innodb_indexes, true, true);
 }
 
 /** Bind the dynamic table INFORMATION_SCHEMA.innodb_indexes

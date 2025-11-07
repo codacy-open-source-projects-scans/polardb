@@ -32,7 +32,6 @@ LocalServer::LocalServer(uint64_t serverIdParm)
     : Server(serverIdParm),
       lastSyncedIndex(1),
       logType(false),
-      learnerConnTimeout(0),
       cidx(1000) {}
 
 void LocalServer::beginLeadership(void *) {
@@ -67,8 +66,14 @@ void LocalServer::fillInfo(void *ptr) {
   ci.electionWeight = electionWeight;
   ci.learnerSource = 0;
   ci.appliedIndex = getAppliedIndex();
+  ci.applyDelaySeconds = paxos->getApplyDelaySeconds();
+  ci.applyThreadRunning = paxos->getApplyThreadRunning();
+  ci.disableElection = paxos->debugDisableElection;
+  ci.logInstance = paxos->getLogInstance();
   ci.pipelining = false;
   ci.useApplied = false;
+  ci.serverIp = paxos->getServerIp();
+  ci.serverPort = paxos->getServerPort();
 
   cis->push_back(std::move(ci));
 }
@@ -101,7 +106,7 @@ uint64_t LocalServer::writeLogDoneInternal(uint64_t logIndex, bool forceSend) {
 
   if (forceSend) /* for large trx, send directly after sync partial */
   {
-    easy_warn_log("Server %d : writeLogDoneInternal logIndex:%ld, lastSyncedIndex:%llu\n",
+    easy_info_log("Server %d : writeLogDoneInternal logIndex:%ld, lastSyncedIndex:%llu\n",
                   serverId, logIndex, lastSyncedIndex.load());
     paxos->appendLog(false);
   }
@@ -131,14 +136,12 @@ uint64_t AliSQLServer::writeLogDone(uint64_t logIndex) {
    * tryUpdateCommitIndex here. Later, we will write local log and send msg in
    * the same time, at that time we should call tryUpdateCommitIndex here.
    */
-  int tmp = 0;
-
-  tmp = paxos->tryUpdateCommitIndex();
+  int tmp = paxos->tryUpdateCommitIndex();
   easy_info_log(
       "Server %d : writeLogDone logIndex:%ld, tryUpdateCommitIndex return:%d, lastSyncedIndex:%llu\n",
       serverId, logIndex, tmp, lastSyncedIndex.load());
 
-  if (paxos->getReplicateWithCacheLog() == false) paxos->appendLog(false);
+  if (!paxos->getReplicateWithCacheLog()) paxos->appendLog(false);
 
   return logIndex;
 }
@@ -231,13 +234,6 @@ void RemoteServer::stop(void *) {
   }
 }
 
-uint64_t RemoteServer::getConnTimeout() {
-  if (!isLearner || !paxos || paxos->getLocalServer()->learnerConnTimeout == 0)
-    return paxos ? paxos->getHeartbeatTimeout() / 4 : 1000;
-  else
-    return paxos->getLocalServer()->learnerConnTimeout;
-}
-
 void RemoteServer::connect(void *ptr) {
   if (addr.port == 0) {
     uint64_t cidx;
@@ -249,7 +245,7 @@ void RemoteServer::connect(void *ptr) {
       cidx = serverId;
     easy_info_log("Connect server %d, cidx %llu", serverId, cidx);
     addr =
-        srv->createConnection(strAddr, getSharedThis(), getConnTimeout(), cidx);
+        srv->createConnection(strAddr, getSharedThis(), cidx);
   }
 }
 
@@ -259,8 +255,6 @@ void RemoteServer::disconnect(void *ptr) {
     addr.port = 0;
   }
 }
-
-void RemoteServer::sendMsg(void *ptr) { sendMsgFunc(false, false, ptr); }
 
 void RemoteServer::sendMsgFunc(bool lockless, bool force, void *ptr) {
   if (isLearner) {
@@ -314,8 +308,7 @@ void RemoteServer::sendMsgFuncInternal(bool lockless, bool force, void *ptr,
   if (isStop.load()) return;
   /* Skip send msg this time, connect action will done before next send msg. */
   if (addr.port == 0) {
-    addr = srv->createConnection(strAddr, getSharedThis(), getConnTimeout(),
-                                 serverId);
+    addr = srv->createConnection(strAddr, getSharedThis(), serverId);
     return;
   }
 
@@ -449,7 +442,7 @@ void RemoteServer::sendMsgFuncInternal(bool lockless, bool force, void *ptr,
       bool isTimeout = timeout != 0 && diffMS(lastSendTP) > timeout;
       if (!isTimeout &&
           !paxos->getLog()->getLeftSize(nextIndex, maxPacketSize)) {
-        easy_warn_log(
+        easy_info_log(
             "Try to send msg to server %ld, now we are waiting for response, "
             "ignore.\n",
             serverId);
@@ -463,10 +456,10 @@ void RemoteServer::sendMsgFuncInternal(bool lockless, bool force, void *ptr,
         return;
       }
       if (isTimeout)
-        easy_warn_log("Force to send msg to server %ld, because timeout.\n",
+        easy_info_log("Force to send msg to server %ld, because timeout.\n",
                       serverId);
       else
-        easy_warn_log(
+        easy_info_log(
             "Force to send msg to server %ld, because the left log size is too "
             "large.\n",
             serverId);
@@ -487,14 +480,7 @@ void RemoteServer::sendMsgFuncInternal(bool lockless, bool force, void *ptr,
       else if (!lockless)
         logSize = paxos->appendLogFillForEach(msg, this, mode);
     }
-    ++(paxos->stats_.countMsgAppendLog);
-
-    if (msg->entries_size() == 0)
-      ++(paxos->stats_.countHeartbeat);
-    else
-      lastEntrySize = msg->entries().rbegin()->ByteSize();
-  } else if (msg->msgtype() == Paxos::RequestVote)
-    ++(paxos->stats_.countMsgRequestVote);
+  }
 
   /* If there are log left, we try to send the continue log entries. */
   if (logSize >= paxos->getMaxPacketSize() && matchIndex.load() != 0 &&
@@ -509,7 +495,7 @@ void RemoteServer::sendMsgFuncInternal(bool lockless, bool force, void *ptr,
     else
       lli = paxos->getLastLogIndex();
   }
-  easy_warn_log(
+  easy_info_log(
       "Server %d : Send msg msgId(%llu) to server %ld, term:%ld, commitIndex:%llu, "
       "startLogIndex:%ld, entries_size:%d, log_size:%llu lli:%ld\n",
       paxos ? paxos->getLocalServer()->serverId : 0, msg->msgid(), serverId,
@@ -523,19 +509,37 @@ void RemoteServer::sendMsgFuncInternal(bool lockless, bool force, void *ptr,
     if (isLearner && !paxos->option.enableLearnerHeartbeat_)
       heartbeatTimer->stop();
   } else if (msg->msgtype() == Paxos::AppendLog && !force) {
-    easy_warn_log(
-        "Server %d : Skip send msg msgId(%llu) to server %ld because the "
-        "entries_size is 0, and not force\n",
-        paxos ? paxos->getLocalServer()->serverId : 0, msg->msgid(), serverId);
-    waitForReply = 0;
-    if (isLearner && !paxos->option.enableLearnerHeartbeat_) {
-      easy_warn_log(
-          "Server %d : current server is learner but msg entries_size is 0, "
-          "start heartbeat.",
-          paxos ? paxos->getLocalServer()->serverId : 0);
-      heartbeatTimer->restart();
+    if (paxos->getWeakReadRefreshTimeout() >= 0 
+        && msg->commitindex() == paxos->getLog()->getSafeLastLogIndexNoLock()) {
+      //force send realtime heartbeat
+    } else {
+      easy_info_log(
+          "Server %d : Skip send msg msgId(%llu) to server %ld because the "
+          "entries_size is 0, and not force\n",
+          paxos ? paxos->getLocalServer()->serverId : 0, msg->msgid(), serverId);
+      waitForReply = 0;
+      if (isLearner && !paxos->option.enableLearnerHeartbeat_) {
+        easy_warn_log(
+            "Server %d : current server is learner but msg entries_size is 0, "
+            "start heartbeat.",
+            paxos ? paxos->getLocalServer()->serverId : 0);
+        heartbeatTimer->restart();
+      }
+      return;
     }
-    return;
+  }
+
+  if (msg->msgtype() == Paxos::AppendLog) {
+    ++(paxos->stats_.countMsgAppendLog);
+
+    if (msg->entries_size() == 0)
+      ++(paxos->stats_.countHeartbeat);
+
+    if (msg->entries_size() > 0)
+      lastEntrySize = msg->entries().rbegin()->ByteSize();
+
+  } else if (msg->msgtype() == Paxos::RequestVote) {
+    ++(paxos->stats_.countMsgRequestVote);
   }
 
   if (paxos->cdrMgr_.inRecovery) {
@@ -605,11 +609,18 @@ void RemoteServer::fillInfo(void *ptr) {
   else
     ci.learnerSource = learnerSource;
   ci.appliedIndex = getAppliedIndex();
+  ci.applyDelaySeconds = applyDelaySeconds;
+  ci.applyThreadRunning = applyThreadRunning;
+  ci.disableElection = disableElection;
+  ci.logInstance = logInstance;
   if (isLearner && !paxos->getEnableLearnerPipelining())
     ci.pipelining = false;
   else
     ci.pipelining = !disablePipelining;
   ci.useApplied = sendByAppliedIndex;
+
+  ci.serverIp = serverIp;
+  ci.serverPort = serverPort;
 
   cis->push_back(std::move(ci));
 }

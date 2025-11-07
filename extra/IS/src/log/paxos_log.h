@@ -103,6 +103,22 @@ class PaxosLog {
   // should not be called if paxos mutex is held, there is deadlock risk in
   // AliSQLServer
   virtual uint64_t getSafeLastLogIndex() { return getLastLogIndex(); }
+  virtual uint64_t getSafeLastLogIndexNoLock() { return getLastLogIndex(); }
+  virtual uint64_t getWaitMilliseconds4OldTrxFinish() { return 0; }
+  virtual void forceUpdateAppliedIndex(const uint64_t) { }
+  virtual void waitOldTrxFinish() { }
+  virtual void waitOldXaFinish() { }
+  virtual uint64_t waitOldBgcFinish() { return 0; }
+  virtual void setLimitNone() { }
+  virtual void setLimitNewTrx() { }
+  virtual void setLimitXaFinish() { }
+  virtual void setLimitAll() { }
+  virtual bool isInLeaderTransfer() { return false; }
+  virtual bool isInLimitAll() { return false; }
+  virtual uint64_t getLeaderTransferState() { return 0; }
+  virtual uint64_t getLimitNewTrxState() { return 0; }
+  virtual uint64_t getLimitNoneState() { return 0; }
+
   virtual uint64_t getLength() = 0;
   virtual uint64_t append(const LogEntry &entry) = 0;
   virtual uint64_t appendWithCheck(const LogEntry &entry) {
@@ -171,6 +187,7 @@ class PaxosLog {
     return ret;
   }
   virtual bool isStateMachineHealthy() { return true; }
+  virtual uint64_t getMockStartIndex() { return 0; }
   virtual bool entriesPreCheck(
       const ::google::protobuf::RepeatedPtrField<LogEntry> &) {
     return false;

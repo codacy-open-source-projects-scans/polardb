@@ -51,17 +51,20 @@ uint64 show_fifo_cache_size(THD *, SHOW_VAR *var, char *buff) {
   var->type = SHOW_LONGLONG;
   var->value = buff;
   long *value = reinterpret_cast<long *>(buff);
-  uint64 size =
-      consensus_log_manager.get_fifo_cache_manager()->get_fifo_cache_size();
+  uint64 size = 0;
+  if (consensus_log_manager.get_fifo_cache_manager())
+    size = consensus_log_manager.get_fifo_cache_manager()->get_fifo_cache_size();
   *value = static_cast<long long>(size);
   return 0;
 }
 
-uint64 show_first_index_in_fifo_cache(THD *, SHOW_VAR *var, char *buff) {
+uint64 show_fifo_cache_first_index(THD *, SHOW_VAR *var, char *buff) {
   var->type = SHOW_LONGLONG;
   var->value = buff;
   long *value = reinterpret_cast<long *>(buff);
-  uint64 size = consensus_log_manager.get_fifo_cache_manager()
+  uint64 size = 0;
+  if (consensus_log_manager.get_fifo_cache_manager())
+    size = consensus_log_manager.get_fifo_cache_manager()
                     ->get_first_index_of_fifo_cache();
   *value = static_cast<long long>(size);
   return 0;
@@ -71,9 +74,19 @@ uint64 show_log_count_in_fifo_cache(THD *, SHOW_VAR *var, char *buff) {
   var->type = SHOW_LONGLONG;
   var->value = buff;
   long *value = reinterpret_cast<long *>(buff);
-  uint64 size = consensus_log_manager.get_fifo_cache_manager()
+  uint64 size = 0;
+  if (consensus_log_manager.get_fifo_cache_manager())
+    size = consensus_log_manager.get_fifo_cache_manager()
                     ->get_fifo_cache_log_count();
   *value = static_cast<long long>(size);
+  return 0;
+}
+
+uint64 show_consensus_in_leader_transfer(THD *, SHOW_VAR *var, char *buff) {
+  var->type = SHOW_LONGLONG;
+  var->value = buff;
+  long *value = reinterpret_cast<long *>(buff);
+  *value = mysql_bin_log.is_in_leader_transfer() ? 1 : 0;
   return 0;
 }
 
@@ -172,17 +185,18 @@ int ConsensusLogManager::init(uint64 max_fifo_cache_size_arg,
   current_index = fake_current_index_arg;
   cache_index = 0;
   sync_index = 0;
-  apply_index = 1;
-  real_apply_index = 1;
+  apply_index = 0;
+  real_apply_index = 0;
   apply_index_end_pos = 0;
   apply_index_current_pos = 0;
+  apply_ev_finish_count = 0;
   apply_term = 1;
   apply_catchup = 0;
   current_term = 1;
   stop_term = UINT64_MAX;
   already_set_start_index = false;
   already_set_start_term = false;
-  apply_ev_seq = 1;
+  apply_ev_seq = 0;
   in_large_trx_applying = false;
   enable_rotate = false;
   in_large_trx_appending = false;
@@ -214,6 +228,15 @@ int ConsensusLogManager::init(uint64 max_fifo_cache_size_arg,
   mysql_cond_init(key_COND_consensuslog_catchup, &COND_consensuslog_catchup);
   mysql_cond_init(key_COND_consensus_state_change,
                   &COND_consensus_state_change);
+
+  log_file_index = new ConsensusLogIndex();
+  log_file_index->init();
+
+  if (!ConsensusLogManager::enable_consensus()) {
+    inited = true;
+    return 0;
+  }
+
   recovery_manager = new Consensus_recovery_manager();
   recovery_manager->init();
 
@@ -222,9 +245,6 @@ int ConsensusLogManager::init(uint64 max_fifo_cache_size_arg,
 
   prefetch_manager = new ConsensusPreFetchManager();
   prefetch_manager->init(max_prefetch_cache_size_arg);
-
-  log_file_index = new ConsensusLogIndex();
-  log_file_index->init();
 
   Rpl_info_factory::init_consensus_repo_metadata();
   consensus_info = Rpl_info_factory::create_consensus_info();
@@ -245,7 +265,7 @@ int ConsensusLogManager::init(uint64 max_fifo_cache_size_arg,
 int ConsensusLogManager::init_consensus_info() {
   // init sys info
   Consensus_info *consensus_info = get_consensus_info();
-  if (!opt_consensus_force_recovery) {
+  if (!opt_consensus_force_recovery && ConsensusLogManager::enable_consensus()) {
     if (consensus_info->consensus_init_info()) {
       xp::error(ER_XP_0) << "Fail to init consensus_info.";
       return -1;
@@ -318,25 +338,26 @@ int ConsensusLogManager::dump_cluster_info_to_file(std::string meta_file_name,
 }
 
 int ConsensusLogManager::init_service() {
+  if (!ConsensusLogManager::enable_consensus()) return 0;
+
   if (!opt_initialize) {
     Consensus_info *consensus_info = get_consensus_info();
-    if (opt_cluster_dump_meta) {
-      std::string meta_file_name = "consensus.meta";
-      std::ostringstream oss;
-      oss << "Consensus_apply_index: " << rli_info->get_consensus_apply_index() << "\n" 
-          << "Consensus_cluster_info: " << consensus_info->get_cluster_info() << "\n"
-          << "Consensus_learner_info: " << consensus_info->get_cluster_learner_info() << "\n"
-          << "Cluster_id: " << consensus_info->get_cluster_id() << "\n"
-          << "Current_term: " << consensus_info->get_current_term() << "\n"
-          << "Recover_status: " << consensus_info->get_recover_status() << "\n"
-          << "Last_leader_term: " << consensus_info->get_last_leader_term() << "\n"
-          << "Start_apply_index: " << consensus_info->get_start_apply_index() << "\n";
-
-      if (dump_cluster_info_to_file(meta_file_name, oss.str()) < 0) return -1;
-      xp::system(ER_XP_0) << "Dump meta file(" << meta_file_name 
-                        << ") successfully. " << oss.str();
-      return 1;
-    }
+    std::string meta_file_name = "consensus.meta";
+    std::ostringstream oss;
+    oss << "Consensus_apply_index: " << rli_info->get_consensus_apply_index() << "\n" 
+        << "Consensus_cluster_info: " << consensus_info->get_cluster_info() << "\n"
+        << "Consensus_learner_info: " << consensus_info->get_cluster_learner_info() << "\n"
+        << "Cluster_id: " << consensus_info->get_cluster_id() << "\n"
+        << "Current_term: " << consensus_info->get_current_term() << "\n"
+        << "Recover_status: " << consensus_info->get_recover_status() << "\n"
+        << "Last_leader_term: " << consensus_info->get_last_leader_term() << "\n"
+        << "Start_apply_index: " << consensus_info->get_start_apply_index() << "\n"
+        << "Binlog_sync_index: " << get_sync_index() << "\n"
+        << "Pid: " << getpid() << "\n";
+    const int dump_result =  dump_cluster_info_to_file(meta_file_name, oss.str());
+    xp::system(ER_XP_0) << "Dump meta file(" << meta_file_name 
+                        << ") " << (dump_result < 0 ? "failed" : "success")
+                        << " - " << oss.str();
 
     if (opt_cluster_force_change_meta) {
       consensus_info->set_cluster_id(opt_cluster_id);
@@ -412,6 +433,9 @@ int ConsensusLogManager::init_service() {
     alisql_server = std::make_shared<alisql::AliSQLServer>(0);
     consensus_ptr =
         new alisql::Paxos(opt_consensus_election_timeout, consensus_log);
+    consensus_ptr->setHeartbeatInterval(opt_consensus_heartbeat_interval);
+    consensus_ptr->setSendTimeout(opt_consensus_send_timeout);
+    consensus_ptr->setConnectTimeout(opt_consensus_connect_timeout);
     consensus_ptr->setStateChangeCb(stateChangeCb);
     consensus_ptr->setMaxPacketSize(opt_consensus_max_packet_size);
     consensus_ptr->setPipeliningTimeout(opt_consensus_pipelining_timeout);
@@ -434,16 +458,22 @@ int ConsensusLogManager::init_service() {
         opt_consensus_configure_change_timeout);
     consensus_ptr->setMaxDelayIndex4NewMember(
         opt_consensus_new_follower_threshold);
+    consensus_ptr->setMaxDelaySeconds4NewLeader(
+        opt_consensus_new_leader_max_apply_delay_seconds);
     consensus_ptr->setEnableDynamicEasyIndex(opt_consensus_dynamic_easyindex);
     consensus_ptr->setEnableLearnerPipelining(opt_consensus_learner_pipelining);
     consensus_ptr->setEnableLearnerHeartbeat(opt_consensus_learner_heartbeat);
+    consensus_ptr->setWeakReadRefreshTimeout(opt_consensus_weak_read_refresh_timeout);
     consensus_ptr->setEnableAutoResetMatchIndex(
         opt_consensus_auto_reset_match_index);
     consensus_ptr->setEnableAutoLeaderTransfer(
         opt_consensus_auto_leader_transfer);
+    consensus_ptr->setServerIp(opt_consensus_server_ip);
+    consensus_ptr->setServerPort(opt_consensus_server_port);
     consensus_ptr->setAutoLeaderTransferCheckSeconds(
         opt_consensus_auto_leader_transfer_check_seconds);
     consensus_ptr->setThreadHook([]() { my_thread_init(); }, my_thread_end);
+    consensus_ptr->setLogInstance(opt_cluster_log_type_instance);
     if (!opt_consensus_force_recovery) {
       if (!is_learner) {
         // startup as normal node
@@ -519,15 +549,16 @@ int ConsensusLogManager::cleanup() {
     mysql_mutex_unlock(&LOCK_consensus_state_change);
     mysql_cond_broadcast(&COND_consensus_state_change);
     mysql_cond_broadcast(&COND_server_started);
-    my_thread_join(&consensus_state_change_thread_handle, NULL);
-    recovery_manager->cleanup();
-    fifo_cache_manager->cleanup();
-    prefetch_manager->cleanup();
-    log_file_index->cleanup();
+    if (consensus_state_change_is_running)
+      my_thread_join(&consensus_state_change_thread_handle, NULL);
+    if (recovery_manager) recovery_manager->cleanup();
+    if (fifo_cache_manager) fifo_cache_manager->cleanup();
+    if (prefetch_manager) prefetch_manager->cleanup();
+    if (log_file_index) log_file_index->cleanup();
 
     close_cached_file(cache_log->get_io_cache());
 
-    consensus_info->end_info();
+    if (consensus_info) consensus_info->end_info();
     delete fifo_cache_manager;
     delete consensus_info;
     delete prefetch_manager;
@@ -619,6 +650,10 @@ int ConsensusLogManager::write_log_entry(ConsensusLogEntry &log,
     if (*consensus_index == 0) goto end;
     assert(*consensus_index != 0);
 
+    if (opt_enable_appliedindex_checker && log.outer) {
+      intervalType inv{*consensus_index, *consensus_index, 1};
+      appliedindex_checker.prepare(inv);
+    }
     // do not rotate if binlog working because of 2 stage recovery
   } else {
     bool do_rotate = false;
@@ -668,27 +703,22 @@ int ConsensusLogManager::write_log_entries(std::vector<ConsensusLogEntry> &logs,
   MYSQL_BIN_LOG *log = status == Consensus_Log_System_Status::BINLOG_WORKING
                            ? binlog
                            : &rli_info->relay_log;
+  //disable rotate when still binlog, because not LOCK_LOG held
   enable_rotate =
-      !(logs.back().flag & Consensus_log_event_flag::FLAG_LARGE_TRX);
+      (!(logs.back().flag & Consensus_log_event_flag::FLAG_LARGE_TRX) && status != BINLOG_WORKING);
   if ((error = log->append_multi_consensus_logs(logs, max_index, &do_rotate,
                                                 rli_info))) {
     goto end;
   }
   if (do_rotate && recovery_manager->is_pending_recovering_trx_empty() &&
       enable_rotate) {
-    if (status == BINLOG_WORKING) {
-      if ((error = binlog->rotate_consensus_log())) {
-        goto end;
-      }
-    } else {
-      Master_info *mi = rli_info->mi;
-      mysql_mutex_lock(&mi->data_lock);
-      if ((error = rotate_relay_log(rli_info->mi))) {
-        mysql_mutex_unlock(&mi->data_lock);
-        goto end;
-      }
+    Master_info *mi = rli_info->mi;
+    mysql_mutex_lock(&mi->data_lock);
+    if ((error = rotate_relay_log(rli_info->mi))) {
       mysql_mutex_unlock(&mi->data_lock);
+      goto end;
     }
+    mysql_mutex_unlock(&mi->data_lock);
   }
 end:
   if (error)
@@ -771,8 +801,8 @@ int ConsensusLogManager::get_log_entry(uint64 channel_id,
   error = fifo_cache_manager->get_log_from_cache(
       consensus_index, consensus_term, log_content, outer, flag, checksum);
   DBUG_EXECUTE_IF("get_log_from_fifo_fail_when_blob_end",
-                  error = ALREADY_SWAP_OUT;);
-  if (error == ALREADY_SWAP_OUT) {
+                  error = CLC_ALREADY_SWAP_OUT;);
+  if (error == CLC_ALREADY_SWAP_OUT) {
     uint64_t last_sync_index = sync_index;
     if (consensus_index > last_sync_index) {
       // don't prefetch log if it is not written to disk
@@ -796,7 +826,7 @@ int ConsensusLogManager::get_log_entry(uint64 channel_id,
       }
       channel->set_prefetch_request(consensus_index);
     }
-  } else if (error == OUT_OF_RANGE) {
+  } else if (error == CLC_OUT_OF_RANGE) {
     xp::error(ER_XP_0) << "ConsensusLogManager::get_log_entry fail, out of "
                           "fifo range. channel_id "
                        << channel_id
@@ -838,24 +868,35 @@ int ConsensusLogManager::get_log_position(uint64 consensus_index,
   return error;
 }
 
-uint64 ConsensusLogManager::get_next_trx_index(uint64 consensus_index) {
+uint64 ConsensusLogManager::get_next_trx_index(uint64 consensus_index, bool enable_retry/*  = true */) {
   uint64 retIndex = consensus_index;
+  int curr_retry = 0;
   if (consensus_index != 0) {
-    auto consensus_guard = create_lock_guard(
-      [&] { rdlock_consensus_status(); },
-      [&] { unlock_consensus_status(); }
-    );
-    MYSQL_BIN_LOG *log = status == Consensus_Log_System_Status::BINLOG_WORKING
-                             ? binlog
-                             : &(rli_info->relay_log);
+    const int max_retry_count = 2 * opt_consensus_max_wait_seconds_for_next_trx_index;
+    while (curr_retry <= max_retry_count) {
+      auto consensus_guard = create_lock_guard(
+        [&] { rdlock_consensus_status(); },
+        [&] { unlock_consensus_status(); }
+      );
+      MYSQL_BIN_LOG *log = status == Consensus_Log_System_Status::BINLOG_WORKING
+                              ? binlog
+                              : &(rli_info->relay_log);
 
-    retIndex = log->get_trx_end_index(consensus_index);
-    if (retIndex == 0) {
-      xp::error(ER_XP_0) << "fail to find next trx index.";
-      abort();
+      if (log->get_trx_end_index(consensus_index, retIndex) == 0) {
+        break;
+      } else if (retIndex > 0 && enable_retry) {
+        consensus_guard.unlock();
+        curr_retry++;
+        xp::error(ER_XP_0) << "fail to find next trx index, retry after 500ms, current try " << curr_retry;
+        my_sleep(500 * 1000);/* 500ms */
+      } else {
+        xp::error(ER_XP_0) << "fail to find next trx index from " << consensus_index;
+        abort();
+      }
     }
   }
   xp::system(ER_XP_0) << "get_next_trx_index"
+                    << ", curr_retry: " << curr_retry
                     << ", input index: " << consensus_index
                     << ", next transaction index is " << retIndex + 1;
   return retIndex + 1;
@@ -1227,6 +1268,7 @@ int ConsensusLogManager::wait_follower_upgraded(uint64 term, uint64 index) {
   while (!(recovery_manager->is_pending_recovering_trx_empty())) {
     my_sleep(1000);
   }
+
   // prefetch stop, and release LOCK_consensuslog_status
   prefetch_manager->disable_all_prefetch_channels();
 
@@ -1274,8 +1316,8 @@ int ConsensusLogManager::wait_follower_upgraded(uint64 term, uint64 index) {
   set_consensus_system_status(BINLOG_WORKING);
 
   // reset apply start point displayed in information_schema
-  apply_index = 1;
-  real_apply_index = 1;
+  apply_index = 0;
+  real_apply_index = 0;
   already_set_start_index = false;
   already_set_start_term = false;
 
@@ -1283,21 +1325,8 @@ int ConsensusLogManager::wait_follower_upgraded(uint64 term, uint64 index) {
 
   // log type instance do not to recover start index
   if (!opt_cluster_log_type_instance) {
-    /*
-      TODO: the global set gtid_state->binlog_previous_gtids is not maintenaned
-      correctly on followers, and as a result the content of previous gtid event
-      in binlog file is incorrect at binlog rotation.
-
-      So, when follower upgrading to leader, that using the previous gtid event
-      in binlog to adjust the value in memory is unreliable.
-
-      Actually in xdb cluster, binlog previous gtid set are always equivalent to
-      executed gtid set, we disable adjusting temporarily.
-    */
-    // if (index > 0 && binlog->reset_previous_gtids_logged(index)) {
-    //   xp::error(ER_XP_0) << "Failed to reset previous gtids logged.";
-    // }
     consensus_info->set_last_leader_term(term);
+    update_applied_index(consensus_ptr->getCommitIndex());
   }
   consensus_info->set_recover_status(
       Consensus_Log_System_Status::BINLOG_WORKING);
@@ -1368,8 +1397,65 @@ uint64 ConsensusLogManager::get_sync_index(bool serious) {
 
 uint64 ConsensusLogManager::get_final_sync_index() {
   mysql_mutex_lock(get_sequence_stage1_lock());
-  uint64_t final_sync_index = current_index ? current_index - 1 : 0;
+  const uint64_t final_sync_index = current_index ? current_index - 1 : 0;
   mysql_mutex_unlock(get_sequence_stage1_lock());
+  return final_sync_index;
+}
+
+uint64 ConsensusLogManager::get_final_sync_index_no_lock() {
+  const uint64_t final_sync_index = (current_index.load() - 1);
+  return final_sync_index;
+}
+
+uint64 ConsensusLogManager::get_wait_milliseconds_for_old_trx_finish() {
+  return opt_consensus_wait_milliseconds_before_change_leader + opt_consensus_wait_unfinished_trx_timeout;
+}
+
+void ConsensusLogManager::wait_old_trx_finish()
+{
+  const ulonglong min_wait_time_ms = opt_consensus_wait_milliseconds_before_change_leader;
+  const ulonglong max_wait_time_ms = opt_consensus_wait_unfinished_trx_timeout;
+  ulonglong wait_time_ms = 0;
+
+  if (min_wait_time_ms)
+    my_sleep(min_wait_time_ms * 1000);
+
+  while (wait_time_ms++ < max_wait_time_ms
+         && innodb_hton->ext.has_started_mysql_trx()) {
+    my_sleep(1000);//1ms
+  }
+  xp::system(ER_XP_COMMIT) << "leaderTransfer wait_old_trx_finish"
+                         << ", wait_time_ms " << min_wait_time_ms + wait_time_ms
+                         << ", has_started_mysql_trx " << innodb_hton->ext.has_started_mysql_trx();
+}
+
+void ConsensusLogManager::wait_old_xa_finish()
+{
+  const int max_wait_time_ms = opt_consensus_wait_unfinished_xa_timeout;
+  int wait_time_ms = 0;
+  while (wait_time_ms++ < max_wait_time_ms
+        && xa_finishing_count.load() > 0) {
+    my_sleep(1000);//1ms
+  }
+  xp::system(ER_XP_COMMIT) << "leaderTransfer wait_old_xa_finish"
+                         << ", wait_time_ms " << wait_time_ms
+                         << ", xa_finishing_count " << xa_finishing_count.load();
+}
+
+uint64 ConsensusLogManager::wait_old_bgc_finish()
+{
+  uint64 final_sync_index = get_final_sync_index();
+  const int max_wait_time_ms = opt_consensus_wait_unfinished_bgc_timeout;
+  int wait_time_ms = 0;
+  while (wait_time_ms++ < max_wait_time_ms
+        && consensus_ptr->getCommitIndex() < final_sync_index) {
+    my_sleep(1000);//1ms
+  }
+  xp::system(ER_XP_COMMIT) << "leaderTransfer wait_old_bgc_finish"
+                         << ", wait_time_ms " << wait_time_ms
+                         << ", commitIndex " << consensus_ptr->getCommitIndex()
+                         << ", final_sync_index " << final_sync_index;
+
   return final_sync_index;
 }
 
@@ -1479,13 +1565,12 @@ bool ConsensusLogManager::is_state_machine_ready() {
          consensus_ptr->getTerm() == get_current_term();
 }
 
-bool ConsensusLogManager::option_invalid(bool log_bin) {
-  if (!log_bin) {
-    xp::error(ER_XP_0) << "PolarDB-X Engine log_bin must be set to ON";
-    return true;
+void ConsensusLogManager::force_update_applied_index(const uint64_t index) {
+  if (opt_enable_appliedindex_checker) {
+    appliedindex_checker.commit(index);
+  } else {
+    update_applied_index(index);
   }
-
-  return false;
 }
 
 IO_CACHE *ConsensusLogManager::get_cache() { return cache_log->get_io_cache(); }

@@ -49,7 +49,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include <ostream>
 
-#include "lizard0tcn.h"
+#include "lizard0mon.h"
 
 // Forward declaration
 struct fil_addr_t;
@@ -85,8 +85,8 @@ enum class Page_fetch {
   POSSIBLY_FREED,
 
   /** Like Page_fetch::POSSIBLY_FREED, but do not mind if the page id is out of
-     tablespace. */
-  GPP_FETCH,
+     tablespace. And also nowait if the page is in IO Fix state. */
+  IGNORE_MISSING_NOWAIT,
 };
 /** @} */
 
@@ -379,12 +379,12 @@ done.
 @param[in] hint Cache_hint::MAKE_YOUNG or Cache_hint::KEEP_OLD
 @param[in] file File name from where it was called.
 @param[in] line Line from where it was called.
-@param[in] gpp_fetch (only used in debug mode)
+@param[in] guess (guess page, only used in debug mode)
 @param[in,out] mtr Mini-transaction covering the fetch
 @return true if success */
 bool buf_page_get_known_nowait(ulint rw_latch, buf_block_t *block,
                                Cache_hint hint, const char *file, ulint line,
-                               bool gpp_fetch [[maybe_unused]], mtr_t *mtr);
+                               bool guess [[maybe_unused]], mtr_t *mtr);
 
 /** Given a tablespace id and page number tries to get that page. If the
 page is not in the buffer pool it is not loaded and NULL is returned.
@@ -1148,6 +1148,7 @@ class buf_page_t {
         list(other.list),
         newest_modification(other.newest_modification),
         oldest_modification(other.oldest_modification),
+        cleanouts(other.cleanouts),
         LRU(other.LRU),
         zip(other.zip)
 #ifndef UNIV_HOTBACKUP
@@ -1301,6 +1302,11 @@ class buf_page_t {
   it was clean. */
   lsn_t get_oldest_lsn() const noexcept { return oldest_modification; }
 
+  /** @return how many cleanouts */
+  ulint get_cleanouts() const noexcept { return cleanouts; }
+  /** increase cleanouts */
+  void inc_cleanouts() noexcept { cleanouts++; }
+
   /** @return true if the page is dirty. */
   bool is_dirty() const noexcept { return get_oldest_lsn() > 0; }
 
@@ -1313,7 +1319,10 @@ class buf_page_t {
   void set_oldest_lsn(lsn_t lsn) noexcept;
 
   /** Set page to clean state. */
-  void set_clean() noexcept { set_oldest_lsn(0); }
+  void set_clean() noexcept {
+    set_oldest_lsn(0);
+    cleanouts = 0;
+  }
 
   /** @name General fields
   None of these bit-fields must be modified without holding
@@ -1583,6 +1592,9 @@ class buf_page_t {
   /** log sequence number of the youngest modification to this block, zero
   if not modified. Protected by block mutex */
   lsn_t oldest_modification;
+
+  /** How many records has been cleanout. */
+  ulint cleanouts;
 
  public:
   /** log sequence number of the START of the log entry written of the oldest

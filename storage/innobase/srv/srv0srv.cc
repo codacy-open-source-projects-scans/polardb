@@ -288,6 +288,9 @@ ulong srv_log_write_events = INNODB_LOG_EVENTS_DEFAULT;
 /** Number of events used for notifications about redo flush. */
 ulong srv_log_flush_events = INNODB_LOG_EVENTS_DEFAULT;
 
+/** Time in microseconds the log writer sleeps. */
+ulong srv_log_writer_sleep_time = 1;
+
 /** Number of slots in a small buffer, which is used to allow concurrent
 writes to log buffer. The slots are addressed by LSN values modulo number
 of the slots. */
@@ -453,6 +456,8 @@ bool srv_validate_tablespace_paths = true;
 bool srv_use_fdatasync = false;
 /** Scan depth for LRU flush batch i.e.: number of blocks scanned*/
 ulong srv_LRU_scan_depth = 1024;
+/** Scan depth for LRU when try to get free page. */
+ulong srv_LRU_get_free_scan_depth = BUF_LRU_SEARCH_SCAN_THRESHOLD;
 /** Whether or not to flush neighbors of a block */
 ulong srv_flush_neighbors = 1;
 /** Previously requested size. Accesses protected by memory barriers. */
@@ -2153,13 +2158,7 @@ static void srv_update_cpu_usage() {
     return;
   }
 
-  int n_cpu = 0;
-  constexpr int MAX_CPU_N = 128;
-  for (int i = 0; i < MAX_CPU_N; ++i) {
-    if (CPU_ISSET(i, &cs)) {
-      ++n_cpu;
-    }
-  }
+  const int n_cpu = CPU_COUNT(&cs);
 
   srv_cpu_usage.n_cpu = n_cpu;
   MONITOR_SET(MONITOR_CPU_N, int64_t(n_cpu));

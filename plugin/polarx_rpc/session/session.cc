@@ -184,7 +184,7 @@ _retry:
             msgs.swap(message_queue_);
             if (enable_perf_hist && schedule_time_ != 0) {
               auto delay_time = Ctime::steady_ns() - schedule_time_;
-              g_schedule_hist.update(static_cast<double>(delay_time) / 1e9);
+              g_schedule_hist->update(static_cast<double>(delay_time) / 1e9);
             }
             schedule_time_ = 0;  /// clear it anyway
           }
@@ -196,6 +196,12 @@ _retry:
               success_enter = false;  /// no recheck needed
               break;
             } else if (killed_.load(std::memory_order_acquire)) {
+              /// Send the fatal message first.
+              encoder_.message_encoder().encode_error(
+                  PolarXRPC::Error::FATAL, ER_POLARX_RPC_ERROR_MSG,
+                  "Session killed and abort following requests.", "HY000");
+              flush();
+              
               /// safe to access it because we check shutdown before
               tcp_.session_manager().remove_and_shutdown(
                   tcp_.epoll().session_count(),
@@ -230,7 +236,7 @@ _retry:
               if (run_start_time != 0) {
                 auto run_end_time = Ctime::steady_ns();
                 auto run_time = run_end_time - run_start_time;
-                g_run_hist.update(static_cast<double>(run_time) / 1e9);
+                g_run_hist->update(static_cast<double>(run_time) / 1e9);
               }
               if (run) detacher.set_run();
             }
@@ -408,17 +414,15 @@ err_t Csession::sql_stmt_execute(const PolarXRPC::Sql::StmtExecute &msg) {
   auto thd = get_thd();
 #ifdef MYSQL8
   /// lizard specific GCN timestamp
-  if (!thd->in_active_multi_stmt_transaction()) thd->reset_gcn_variables();
+  if (!thd->in_active_multi_stmt_transaction()) thd->reset_trans_policy();
   if (msg.has_use_cts_transaction() && msg.use_cts_transaction())
     thd->variables.innodb_current_snapshot_gcn = true;
   if (msg.has_snapshot_seq()) {
     thd->variables.innodb_snapshot_gcn = msg.snapshot_seq();
-    thd->owned_vision_gcn = {csr_t::CSR_ASSIGNED,
-                             thd->variables.innodb_snapshot_gcn, SCN_NULL};
+    thd->owned_vision_gcn = (gcn_t)thd->variables.innodb_snapshot_gcn;
   }
   if (msg.has_commit_seq()) {
     thd->variables.innodb_commit_gcn = msg.commit_seq();
-    thd->owned_commit_gcn.assign_from_var(thd->variables.innodb_commit_gcn);
   }
   if (msg.has_query_via_flashback_area() && msg.query_via_flashback_area()) {
     thd->variables.opt_query_via_flashback_area = true;
@@ -641,17 +645,15 @@ err_t Csession::sql_plan_execute(const PolarXRPC::ExecPlan::ExecPlan &msg) {
   auto thd = get_thd();
 #ifdef MYSQL8
   /// lizard specific GCN timestamp
-  if (!thd->in_active_multi_stmt_transaction()) thd->reset_gcn_variables();
+  if (!thd->in_active_multi_stmt_transaction()) thd->reset_trans_policy();
   if (msg.has_use_cts_transaction() && msg.use_cts_transaction())
     thd->variables.innodb_current_snapshot_gcn = true;
   if (msg.has_snapshot_seq()) {
     thd->variables.innodb_snapshot_gcn = msg.snapshot_seq();
-    thd->owned_vision_gcn = {csr_t::CSR_ASSIGNED,
-                             thd->variables.innodb_snapshot_gcn, SCN_NULL};
+    thd->owned_vision_gcn = (gcn_t)thd->variables.innodb_snapshot_gcn;
   }
   if (msg.has_commit_seq()) {
     thd->variables.innodb_commit_gcn = msg.commit_seq();
-    thd->owned_commit_gcn.assign_from_var(thd->variables.innodb_commit_gcn);
   }
   if (msg.has_query_via_flashback_area() && msg.query_via_flashback_area()) {
     thd->variables.opt_query_via_flashback_area = true;

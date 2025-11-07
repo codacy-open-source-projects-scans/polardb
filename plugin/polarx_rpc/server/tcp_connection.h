@@ -24,7 +24,6 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 *****************************************************************************/
 
-
 //
 // Created by zzy on 2022/7/6.
 //
@@ -155,7 +154,8 @@ class CtcpConnection final : public CepollCallback {
 
   inline void tcp_info(int err, const char *what = nullptr,
                        const char *extra = nullptr) {
-    tcp_log(MY_INFORMATION_LEVEL, err, what, extra);
+    // do nothing
+    // tcp_log(MY_INFORMATION_LEVEL, err, what, extra);
   }
 
   inline void tcp_warn(int err, const char *what = nullptr,
@@ -201,7 +201,7 @@ class CtcpConnection final : public CepollCallback {
         if (fin_start_time != 0) {
           auto fin_end_time = Ctime::steady_ns();
           auto fin_time = fin_end_time - fin_start_time;
-          g_fin_hist.update(static_cast<double>(fin_time) / 1e9);
+          g_fin_hist->update(static_cast<double>(fin_time) / 1e9);
         }
       }
     }
@@ -484,10 +484,21 @@ class CtcpConnection final : public CepollCallback {
                 *msg.msg);
         Authentication_interface::Response r;
         if (LIKELY(!auth_handler_)) {
+          // try default mysql41 first
           auth_handler_ = Sasl_mysql41_auth::create(*this);
           r = auth_handler_->handle_start(authm.mech_name(), authm.auth_data(),
                                           authm.initial_response());
-          tcp_info(0, "start auth", authm.mech_name().c_str());
+          if (enable_xrpc_sha2 && r.status == Authentication_interface::Error &&
+              r.error_code == ER_AUTHENTICATION_POLICY_MISMATCH) {
+            // try SHA2
+            auth_handler_.reset();
+            auth_handler_ = Sasl_sha2_auth::create(*this);
+            r = auth_handler_->handle_start("SHA2", authm.auth_data(),
+                                            authm.initial_response());
+            tcp_info(0, "start auth", "SHA2");
+          } else if (r.status != Authentication_interface::Error) {
+            tcp_info(0, "start auth", authm.mech_name().c_str());
+          }
         } else {
           r.status = Authentication_interface::Error,
           r.error_code = ER_NET_PACKETS_OUT_OF_ORDER;
@@ -597,7 +608,7 @@ class CtcpConnection final : public CepollCallback {
               if (start_time != 0) {
                 auto now = Ctime::steady_ns();
                 auto recv_time = now - start_time;
-                g_recv_first_hist.update(static_cast<double>(recv_time) / 1e9);
+                g_recv_first_hist->update(static_cast<double>(recv_time) / 1e9);
               }
             }
 
@@ -701,8 +712,8 @@ class CtcpConnection final : public CepollCallback {
                   if (start_time != 0) {
                     auto now = Ctime::steady_ns();
                     auto recv_time = now - start_time;
-                    g_recv_all_hist.update(static_cast<double>(recv_time) /
-                                           1e9);
+                    g_recv_all_hist->update(static_cast<double>(recv_time) /
+                                            1e9);
                   }
                 }
 
@@ -720,7 +731,7 @@ class CtcpConnection final : public CepollCallback {
                   if (auth_start_time != 0) {
                     auto auth_end_time = Ctime::steady_ns();
                     auto auth_time = auth_end_time - auth_start_time;
-                    g_auth_hist.update(static_cast<double>(auth_time) / 1e9);
+                    g_auth_hist->update(static_cast<double>(auth_time) / 1e9);
                   }
                 }
 
@@ -805,7 +816,7 @@ class CtcpConnection final : public CepollCallback {
       if (decode_start_time != 0) {
         auto decode_end_time = Ctime::steady_ns();
         auto decode_time = decode_end_time - decode_start_time;
-        g_decode_hist.update(static_cast<double>(decode_time) / 1e9);
+        g_decode_hist->update(static_cast<double>(decode_time) / 1e9);
       }
 
       /// dealing notify or direct run outside the read lock.

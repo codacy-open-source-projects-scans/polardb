@@ -52,11 +52,11 @@ Proc *Trans_proc_returning::instance() {
 }
 
 /**
-  Evoke the sql_cmd object for returning() proc.
+  Invoke the sql_cmd object for returning() proc.
 */
-Sql_cmd *Trans_proc_returning::evoke_cmd(THD *thd,
-                                         mem_root_deque<Item *> *list) const {
-  return new (thd->mem_root) Sql_cmd_type(thd, list, this);
+Sql_cmd *Trans_proc_returning::invoke_cmd(THD *thd,
+                                          mem_root_deque<Item *> *list) const {
+  return new (thd->mem_root) Sql_cmd_trans_proc_returning(thd, list, this, false);
 }
 
 /**
@@ -90,7 +90,15 @@ LEX_CSTRING Sql_cmd_trans_proc_returning::get_field_items_and_stmt(THD *thd) {
 
     if (s == "*") thd->lex_returning->inc_wild();
   }
-
+  if (m_is_returning_all) {
+    Fixed_item fixed_item {MYSQL_TYPE_LONGLONG, "returning_before_after"};
+    thd->lex_returning->set_fixed_item(fixed_item);
+  }
+  if (m_proc->str() == std::string(BACKFILL_RETURNING_PROC_NAME)) {
+    thd->lex_returning->set_backfill_returning(true);
+  } else {
+    thd->lex_returning->set_backfill_returning(false);
+  }
   res = (*m_list)[1]->val_str(&str);
   DBUG_RETURN(
       to_lex_cstring(strmake_root(thd->mem_root, res->ptr(), res->length())));
@@ -132,6 +140,31 @@ bool Sql_cmd_trans_proc_returning::pc_execute(THD *thd) {
 void Sql_cmd_trans_proc_returning::send_result(THD *, bool) {
   DBUG_ENTER("Sql_cmd_trans_proc_returning::send_result");
   DBUG_VOID_RETURN;
+}
+/* Singleton instance for returning */
+Proc *Trans_proc_returning_all::instance() {
+  static Proc *proc = new Trans_proc_returning_all(key_memory_package);
+  return proc;
+}
+/**
+  Invoke the sql_cmd object for returning() proc.
+*/
+Sql_cmd *Trans_proc_returning_all::invoke_cmd(
+    THD *thd, mem_root_deque<Item *> *list) const {
+  return new (thd->mem_root) Sql_cmd_trans_proc_returning(thd, list, this, true);
+}
+
+/* Singleton instance for backfill returning */
+Proc *Trans_proc_backfill_returning::instance() {
+  static Proc *proc = new Trans_proc_backfill_returning(key_memory_package);
+  return proc;
+}
+/**
+  Invoke the sql_cmd object for backfill() proc.
+*/
+Sql_cmd *Trans_proc_backfill_returning::invoke_cmd(
+    THD *thd, mem_root_deque<Item *> *list) const {
+  return new (thd->mem_root) Sql_cmd_trans_proc_returning(thd, list, this, false);
 }
 
 } /* namespace im */

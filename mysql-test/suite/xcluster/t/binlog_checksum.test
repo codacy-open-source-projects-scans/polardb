@@ -148,13 +148,14 @@ while($cnt)
 --connection conn1
 --source include/wait_follower_catchup.inc
 
-select count(distinct(APPLIED_INDEX)) from information_schema.alisql_cluster_global where role <> "leader";
+select count(distinct APPLIED_INDEX) = 1 from information_schema.alisql_cluster_global;
 
 # cleanup
 --connection conn1
 drop table t1;
 set global source_verify_checksum=OFF;
 set global replica_sql_verify_checksum=OFF;
+--source include/wait_follower_catchup.inc
 --connection conn2
 set global source_verify_checksum=OFF;
 set global replica_sql_verify_checksum=OFF;

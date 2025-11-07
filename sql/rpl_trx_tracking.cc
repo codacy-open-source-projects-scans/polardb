@@ -39,6 +39,7 @@
 #include "sql/sql_lex.h"
 #include "sql/system_variables.h"
 #include "sql/transaction_info.h"
+#include "debug_sync.h"
 
 Logical_clock::Logical_clock() : state(SEQ_UNINIT), offset(0) {}
 
@@ -252,32 +253,45 @@ void Writeset_trx_dependency_tracker::get_dependency(THD *thd,
       !write_set_ctx->was_write_set_limit_reached();
   bool exceeds_capacity = false;
 
+  mysql_mutex_lock(&LOCK_replica_trans_dep_tracker);
   if (can_use_writesets) {
+    if (writeset->size() > writeset_max_size_in_history)
+      writeset_max_size_in_history = writeset->size();
+
+    if (writeset->size() > writeset_max_size_in_trx)
+      writeset_max_size_in_trx = writeset->size();
+
+    /*
+     Compute the greatest sequence_number among all conflicts and add the
+     transaction's row hashes to the history.
+    */
+    DEBUG_SYNC(thd, "wait_in_get_dependency");
+    int64 last_parent = m_writeset_history_start;
+    int64 dup_count = 0;
+    if (!m_writeset_history.empty()) {
+      for (std::vector<uint64>::iterator it = writeset->begin();
+          it != writeset->end(); ++it) {
+        Writeset_history::iterator hst = m_writeset_history.find(*it);
+        if (hst != m_writeset_history.end()) {
+          dup_count++;
+          if (hst->second > last_parent && hst->second < sequence_number)
+            last_parent = hst->second;
+        }
+      }
+    }
+
     /*
      Check if adding this transaction exceeds the capacity of the writeset
      history. If that happens, m_writeset_history will be cleared only after
      using its information for current transaction.
     */
     exceeds_capacity =
-        m_writeset_history.size() + writeset->size() > m_opt_max_history_size;
+        m_writeset_history.size() + writeset->size() - dup_count > m_opt_max_history_size;
+    writeset_exceeds_max_size_count += exceeds_capacity;
 
-    /*
-     Compute the greatest sequence_number among all conflicts and add the
-     transaction's row hashes to the history.
-    */
-    int64 last_parent = m_writeset_history_start;
-    for (std::vector<uint64>::iterator it = writeset->begin();
-         it != writeset->end(); ++it) {
-      Writeset_history::iterator hst = m_writeset_history.find(*it);
-      if (hst != m_writeset_history.end()) {
-        if (hst->second > last_parent && hst->second < sequence_number)
-          last_parent = hst->second;
-
-        hst->second = sequence_number;
-      } else {
-        if (!exceeds_capacity)
-          m_writeset_history.insert(
-              std::pair<uint64, int64>(*it, sequence_number));
+    if (!exceeds_capacity) {
+      for (const auto& key : *writeset) {
+          m_writeset_history.insert_or_assign(key, sequence_number);
       }
     }
 
@@ -294,17 +308,28 @@ void Writeset_trx_dependency_tracker::get_dependency(THD *thd,
       */
       commit_parent = std::min(last_parent, commit_parent);
     }
+  } else {
+    writeset_has_missing_keys_count += write_set_ctx->get_has_missing_keys();
+    writeset_has_related_foreign_keys_count += write_set_ctx->get_has_related_foreign_keys();
+    writeset_was_write_set_limit_reached_count += write_set_ctx->was_write_set_limit_reached();
+    writeset_cannot_use_count++;
   }
 
   if (exceeds_capacity || !can_use_writesets) {
     m_writeset_history_start = sequence_number;
     m_writeset_history.clear();
+    writeset_max_size_in_trx = 0;
+    writeset_history_clear_count++;
   }
+  writeset_current_history_size = m_writeset_history.size();
+  mysql_mutex_unlock(&LOCK_replica_trans_dep_tracker);
 }
 
 void Writeset_trx_dependency_tracker::rotate(int64 start) {
   m_writeset_history_start = start;
   m_writeset_history.clear();
+  writeset_max_size_in_trx = 0;
+  writeset_history_clear_count++;
 }
 
 /**

@@ -33,6 +33,9 @@
 #include "sql/xa/lizard_xa_proc.h"
 #include "sql/xa/lizard_xa_trx.h"
 #include "sql/lizard/lizard_hb_freezer.h"
+#include "sql/raii/sentry.h"
+
+using namespace lizard;
 
 namespace im {
 
@@ -52,15 +55,9 @@ const LEX_CSTRING xa_status_str[] = {{C_STRING_WITH_LEN("ATTACHED")},
                                      {C_STRING_WITH_LEN("NOTSTART_OR_FORGET")},
                                      {C_STRING_WITH_LEN("NOT_SUPPORT")}};
 
-/* Singleton instance for find_by_xid */
-Proc *Xa_proc_find_by_xid::instance() {
-  static Proc *proc = new Xa_proc_find_by_xid(key_memory_xa_proc);
-  return proc;
-}
-
-Sql_cmd *Xa_proc_find_by_xid::evoke_cmd(THD *thd,
-                                        mem_root_deque<Item *> *list) const {
-  return new (thd->mem_root) Sql_cmd_type(thd, list, this);
+static inline bool trx_slot_check_retention() {
+  handlerton *ttse = innodb_hton;
+  return ttse->ext.trx_slot_check_retention();
 }
 
 /**
@@ -71,7 +68,8 @@ Sql_cmd *Xa_proc_find_by_xid::evoke_cmd(THD *thd,
 
   @retval     true if parsing error.
 */
-bool get_xid(const mem_root_deque<Item *> *list, XID *xid) {
+static bool get_xid(const mem_root_deque<Item *> *list, const size_t item_idx,
+                    XID *xid) {
   char buff[256];
   char gtrid[MAXGTRIDSIZE];
   char bqual[MAXBQUALSIZE];
@@ -83,7 +81,7 @@ bool get_xid(const mem_root_deque<Item *> *list, XID *xid) {
   String *res;
 
   /* gtrid */
-  res = (*list)[0]->val_str(&str);
+  res = (*list)[item_idx]->val_str(&str);
   gtrid_length = res->length();
   if (gtrid_length > MAXGTRIDSIZE) {
     return true;
@@ -91,7 +89,7 @@ bool get_xid(const mem_root_deque<Item *> *list, XID *xid) {
   memcpy(gtrid, res->ptr(), gtrid_length);
 
   /* bqual */
-  res = (*list)[1]->val_str(&str);
+  res = (*list)[item_idx + 1]->val_str(&str);
   bqual_length = res->length();
   if (bqual_length > MAXBQUALSIZE) {
     return true;
@@ -99,7 +97,7 @@ bool get_xid(const mem_root_deque<Item *> *list, XID *xid) {
   memcpy(bqual, res->ptr(), bqual_length);
 
   /* formatID */
-  formatID = (*list)[2]->val_int();
+  formatID = (*list)[item_idx + 2]->val_int();
 
   /** Set XID. */
   xid->set(formatID, gtrid, gtrid_length, bqual, bqual_length);
@@ -107,12 +105,33 @@ bool get_xid(const mem_root_deque<Item *> *list, XID *xid) {
   return false;
 }
 
+static bool get_slot_ptr(const mem_root_deque<Item *> *list,
+                         const size_t item_idx, slot_ptr_t *slot_ptr) {
+  /* Slot Address */
+  assert(list->size() > item_idx);
+  *slot_ptr = (*list)[item_idx]->val_int();
+  return false;
+}
+
+/**************************************/
+/* find_by_xid Related */
+/**************************************/
+Proc *Xa_proc_find_by_xid::instance() {
+  static Proc *proc = new Xa_proc_find_by_xid(key_memory_xa_proc);
+  return proc;
+}
+
+Sql_cmd *Xa_proc_find_by_xid::invoke_cmd(THD *thd,
+                                         mem_root_deque<Item *> *list) const {
+  return new (thd->mem_root) Sql_cmd_type(thd, list, this, false);
+}
+
 bool Sql_cmd_xa_proc_find_by_xid::pc_execute(THD *) {
   DBUG_ENTER("Sql_cmd_xa_proc_find_by_xid::pc_execute");
   DBUG_RETURN(false);
 }
 
-static const LEX_CSTRING get_csr_str(const enum csr_t my_csr) {
+static const LEX_CSTRING get_csr_str(const csr_t my_csr) {
   return transaction_csr_str[my_csr];
 }
 
@@ -124,6 +143,8 @@ void Sql_cmd_xa_proc_find_by_xid::send_result(THD *thd, bool error) {
   XID xid;
   auto thd_xs = thd->get_transaction()->xid_state();
   MyXAInfo info(XA_status::NOTSTART_OR_FORGET);
+  size_t uuid_len = 0;
+  slot_ptr_t slot_ptr_hint = 0;
 
   protocol = thd->get_protocol();
 
@@ -132,9 +153,14 @@ void Sql_cmd_xa_proc_find_by_xid::send_result(THD *thd, bool error) {
     DBUG_VOID_RETURN;
   }
 
-  if (get_xid(m_list, &xid)) {
+  if (get_xid(m_list, Xa_proc_find_by_xid_with_hint::XA_PARAM_GTRID, &xid)) {
     my_error(ER_XA_PROC_WRONG_XID, MYF(0), MAXGTRIDSIZE, MAXBQUALSIZE);
     DBUG_VOID_RETURN;
+  }
+
+  if (m_has_tslot_hint) {
+    get_slot_ptr(m_list, Xa_proc_find_by_xid_with_hint::XA_PARAM_COLUMN_UBA,
+                 &slot_ptr_hint);
   }
 
   /** Cannot be doing XA transaction. */
@@ -145,7 +171,7 @@ void Sql_cmd_xa_proc_find_by_xid::send_result(THD *thd, bool error) {
     DBUG_VOID_RETURN;
   }
 
-  lizard::xa::search_trx_info(&xid, &info);
+  lizard::xa::search_trx_info(&xid, &info, slot_ptr_hint);
 
   if (m_proc->send_result_metadata(thd)) DBUG_VOID_RETURN;
 
@@ -175,15 +201,17 @@ void Sql_cmd_xa_proc_find_by_xid::send_result(THD *thd, bool error) {
       protocol->store_null();
       /** master transaction ptr */
       protocol->store_null();
+      /** Server UUID */
+      protocol->store_null();
       break;
     case DETACHED_PREPARE:
     case COMMIT:
     case ROLLBACK:
       /** 1. Return GCN info */
-      if (info.gcn.is_pmmt_gcn()) {
+      if (info.is_proposal) {
         ut_a(info.status == DETACHED_PREPARE);
-        protocol->store((ulonglong)info.gcn.gcn());
-        csr_str = get_csr_str(info.gcn.csr());
+        protocol->store((ulonglong)info.gcn.gcn);
+        csr_str = get_csr_str(info.gcn.csr);
         protocol->store_string(csr_str.str, csr_str.length, system_charset_info);
       } else if (info.gcn.is_null()) {
         /** Prepare without ac_prepare. */
@@ -192,8 +220,8 @@ void Sql_cmd_xa_proc_find_by_xid::send_result(THD *thd, bool error) {
         protocol->store_null();
       } else {
         assert(info.status == COMMIT || info.status == ROLLBACK);
-        protocol->store((ulonglong)info.gcn.gcn());
-        csr_str = get_csr_str(info.gcn.csr());
+        protocol->store((ulonglong)info.gcn.gcn);
+        csr_str = get_csr_str(info.gcn.csr);
         protocol->store_string(csr_str.str, csr_str.length, system_charset_info);
       }
 
@@ -226,6 +254,10 @@ void Sql_cmd_xa_proc_find_by_xid::send_result(THD *thd, bool error) {
         protocol->store_null();
       }
 
+      /** 5. Return Server UUID */
+      uuid_len = std::min(strlen(server_uuid_ptr), MAX_SERVER_UUID_LENGTH);
+      protocol->store_string(server_uuid_ptr, uuid_len, system_charset_info);
+
       break;
     default:
       assert(0);
@@ -238,11 +270,28 @@ void Sql_cmd_xa_proc_find_by_xid::send_result(THD *thd, bool error) {
   DBUG_VOID_RETURN;
 }
 
+
+/**************************************/
+/* find_by_xid_with_hint Related */
+/**************************************/
+Proc *Xa_proc_find_by_xid_with_hint::instance() {
+  static Proc *proc = new Xa_proc_find_by_xid_with_hint(key_memory_xa_proc);
+  return proc;
+}
+
+Sql_cmd *Xa_proc_find_by_xid_with_hint::invoke_cmd(
+    THD *thd, mem_root_deque<Item *> *list) const {
+  return new (thd->mem_root) Sql_cmd_type(thd, list, this, true);
+}
+
 Proc *Xa_proc_prepare_with_trx_slot::instance() {
   static Proc *proc = new Xa_proc_prepare_with_trx_slot(key_memory_xa_proc);
   return proc;
 }
 
+/**************************************/
+/* prepare_with_trx_slot Related */
+/**************************************/
 class Nested_xa_prepare_lex {
  public:
   Nested_xa_prepare_lex(THD *thd, XID *xid)
@@ -275,7 +324,7 @@ class Nested_xa_prepare_lex {
   LEX *m_saved_lex;
 };
 
-Sql_cmd *Xa_proc_prepare_with_trx_slot::evoke_cmd(
+Sql_cmd *Xa_proc_prepare_with_trx_slot::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
@@ -286,8 +335,14 @@ bool Sql_cmd_xa_proc_prepare_with_trx_slot::pc_execute(THD *thd) {
   XID xid;
   XID_STATE *xid_state = thd->get_transaction()->xid_state();
 
+  /** 0. Check retention for TXN (contains coordinator logs). */
+  if (!trx_slot_check_retention()) {
+    my_error(ER_XA_PROC_RETENTION_NOT_SATISFIED, MYF(0));
+    DBUG_RETURN(true);
+  }
+
   /** 1. parsed XID from parameters list. */
-  if (get_xid(m_list, &xid)) {
+  if (get_xid(m_list, Xa_proc_prepare_with_trx_slot::XA_PARAM_GTRID, &xid)) {
     my_error(ER_XA_PROC_WRONG_XID, MYF(0), MAXGTRIDSIZE, MAXBQUALSIZE);
     DBUG_RETURN(true);
   }
@@ -310,8 +365,9 @@ bool Sql_cmd_xa_proc_prepare_with_trx_slot::pc_execute(THD *thd) {
   Because Sql_cmd_xa_prepare::execute will depend on the state on LEX in
   some places. */
   Nested_xa_prepare_lex nested_xa_prepare_lex(thd, &xid);
-  (dynamic_cast<Sql_cmd_xa_prepare *>(thd->lex->m_sql_cmd))->set_delay_ok();
-  if (thd->lex->m_sql_cmd->execute(thd)) {
+  Sql_cmd_xa_prepare *cmd_executor = nested_xa_prepare_lex.get_cmd_executor();
+  cmd_executor->set_delay_ok();
+  if (cmd_executor->execute(thd)) {
     DBUG_RETURN(true);
   }
 
@@ -355,8 +411,8 @@ Proc *Xa_proc_send_heartbeat::instance() {
   return proc;
 }
 
-Sql_cmd *Xa_proc_send_heartbeat::evoke_cmd(THD *thd,
-                                           mem_root_deque<Item *> *list) const {
+Sql_cmd *Xa_proc_send_heartbeat::invoke_cmd(
+    THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
@@ -395,7 +451,7 @@ Proc *Xa_proc_advance_gcn_no_flush::instance() {
   return proc;
 }
 
-Sql_cmd *Xa_proc_advance_gcn_no_flush::evoke_cmd(
+Sql_cmd *Xa_proc_advance_gcn_no_flush::invoke_cmd(
     THD *thd, mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
@@ -408,23 +464,30 @@ Proc *Xa_proc_ac_prepare::instance() {
   return proc;
 }
 
-Sql_cmd *Xa_proc_ac_prepare::evoke_cmd(THD *thd,
-                                       mem_root_deque<Item *> *list) const {
+Sql_cmd *Xa_proc_ac_prepare::invoke_cmd(THD *thd,
+                                        mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
 bool Sql_cmd_xa_proc_ac_prepare::pc_execute(THD *thd) {
   DBUG_ENTER("Sql_cmd_xa_proc_ac_prepare::pc_execute");
-
   branch_num_t n_global;
   branch_num_t n_local;
   gcn_t pre_commit_gcn;
   XID xid;
-  XID_STATE *xid_state = thd->get_transaction()->xid_state();
+  XID_STATE *xid_state =nullptr;
+  AC_prepare_policy *policy = nullptr;
+
+  xid_state = thd->get_transaction()->xid_state();
+  /** 0. Check retention for TXN (contains coordinator logs). */
+  if (!trx_slot_check_retention()) {
+    my_error(ER_XA_PROC_RETENTION_NOT_SATISFIED, MYF(0));
+    DBUG_RETURN(true);
+  }
 
   /** 1. parsed XID, n_branch, n_local_branch, pre commit gcn from parameters
   list. */
-  if (get_xid(m_list, &xid)) {
+  if (get_xid(m_list, Xa_proc_ac_prepare::XA_PARAM_GTRID, &xid)) {
     my_error(ER_XA_PROC_WRONG_XID, MYF(0), MAXGTRIDSIZE, MAXBQUALSIZE);
     DBUG_RETURN(true);
   }
@@ -464,37 +527,21 @@ bool Sql_cmd_xa_proc_ac_prepare::pc_execute(THD *thd) {
     DBUG_RETURN(true);
   }
 
-  /** 4. Set owned commit gcn and branch info. */
-  thd->owned_commit_gcn.assign_from_ac_prepare(pre_commit_gcn);
-  thd->owned_xa_branch = {n_global, n_local};
+  /** 4. Take AC_prepare_policy from pocket, and init it. */
+  policy =
+      thd->cpolicy_ctx.activate_ac_prepare(pre_commit_gcn, {n_global, n_local});
 
-  /**
-    When binlog is the Transaction Coordinator and sql_log_bin is set as false
-    for some reasons, trx_set_prepared_in_tc is not called so proposal gcn decide
-    will not be processed.
-  */
-  if (!thd->variables.sql_log_bin) {
-    innodb_hton->ext.decide_xa_when_prepare(&thd->owned_commit_gcn);
-  }
-
-  /** 6. Do xa prepare. Will generate a new nested LEX to complete xa_prepare.
+  /** 5. Do xa prepare. Will generate a new nested LEX to complete xa_prepare.
   Because Sql_cmd_xa_prepare::execute will depend on the state on LEX in
   some places. */
   Nested_xa_prepare_lex nested_xa_prepare_lex(thd, &xid);
   Sql_cmd_xa_prepare *cmd_executor = nested_xa_prepare_lex.get_cmd_executor();
   cmd_executor->set_delay_ok();
-  if (thd->lex->m_sql_cmd->execute(thd)) {
-    thd->reset_gcn_variables();
+  if (cmd_executor->execute(thd)) {
     DBUG_RETURN(true);
   }
 
-  MyGCN decided_gcn = cmd_executor->get_proposal_gcn();
-  assert(decided_gcn.decided());
-  m_proposal_gcn = decided_gcn.gcn();
-  m_csr = decided_gcn.csr();
-
-  /** 8. reset gcn variables and status. */
-  thd->reset_gcn_variables();
+  m_pmmt = policy->clone_pmmt();
 
   DBUG_RETURN(false);
 }
@@ -519,8 +566,8 @@ void Sql_cmd_xa_proc_ac_prepare::send_result(THD *thd, bool error) {
   protocol->store_string(server_uuid_ptr, uuid_len, system_charset_info);
   protocol->store((ulonglong)m_trx_id);
   protocol->store((ulonglong)m_slot_ptr);
-  protocol->store((ulonglong)m_proposal_gcn);
-  auto csr_str = get_csr_str(m_csr);
+  protocol->store((ulonglong)m_pmmt.gcn);
+  auto csr_str = get_csr_str(m_pmmt.csr);
   protocol->store_string(csr_str.str, csr_str.length, system_charset_info);
   if (protocol->end_row()) DBUG_VOID_RETURN;
 
@@ -539,8 +586,8 @@ Proc *Xa_proc_ac_commit::instance() {
   return proc;
 }
 
-Sql_cmd *Xa_proc_ac_commit::evoke_cmd(THD *thd,
-                                      mem_root_deque<Item *> *list) const {
+Sql_cmd *Xa_proc_ac_commit::invoke_cmd(THD *thd,
+                                       mem_root_deque<Item *> *list) const {
   return new (thd->mem_root) Sql_cmd_type(thd, list, this);
 }
 
@@ -619,22 +666,26 @@ bool Sql_cmd_xa_proc_ac_commit::get_master_parms(char server_uuid[],
 bool Sql_cmd_xa_proc_ac_commit::pc_execute(THD *thd) {
   DBUG_ENTER("Sql_cmd_xa_proc_ac_commit::pc_execute");
 
-  gcn_t gcn;
-  MyGCN my_gcn;
+  gcn_t hlc_gcn;
   XID xid;
   char server_uuid[MAX_SERVER_UUID_LENGTH + 1] = "";
   xa_addr_t addr;
 
+  /** 0. Check retention for TXN (contains coordinator logs). */
+  if (!trx_slot_check_retention()) {
+    my_error(ER_XA_PROC_RETENTION_NOT_SATISFIED, MYF(0));
+    DBUG_RETURN(true);
+  }
+
   /** 1. parsed XID, master branch info, commit_gcn from parameters list. */
-  if (get_xid(m_list, &xid)) {
+  if (get_xid(m_list, Xa_proc_ac_commit::XA_PARAM_GTRID, &xid)) {
     my_error(ER_XA_PROC_WRONG_XID, MYF(0), MAXGTRIDSIZE, MAXBQUALSIZE);
     DBUG_RETURN(true);
   }
 
-  gcn = (*m_list)[Xa_proc_ac_commit::XA_PARAM_COMMIT_GCN]->val_int();
-
-  if (gcn == GCN_NULL || gcn < GCN_INITIAL) {
-    my_error(ER_XA_PROC_AC_INVALID_GCN, MYF(0), gcn);
+  hlc_gcn = (*m_list)[Xa_proc_ac_commit::XA_PARAM_COMMIT_GCN]->val_int();
+  if (hlc_gcn == GCN_NULL || hlc_gcn < GCN_INITIAL) {
+    my_error(ER_XA_PROC_AC_INVALID_GCN, MYF(0), hlc_gcn);
     DBUG_RETURN(true);
   }
 
@@ -642,18 +693,16 @@ bool Sql_cmd_xa_proc_ac_commit::pc_execute(THD *thd) {
     DBUG_RETURN(true);
   }
 
-  /** 2. Set owned commit gcn and branch info. */
-  thd->owned_commit_gcn.assign_from_ac_commit(gcn);
+  /** 2. Take AC_commit_policy from pocket, and init it. */
+  thd->cpolicy_ctx.activate_ac_commit(hlc_gcn, addr);
 
-  /** TODO: Check master_uba ? <11-04-24, zanye.zjy> */
-  thd->owned_master_addr = addr;
-
-  /** 4. Do XA COMMIT. Will generate a new nested LEX to complete xa_commit.
+  /** 3. Do XA COMMIT. Will generate a new nested LEX to complete xa_commit.
   Because Sql_cmd_xa_commit::execute will depend on the state on LEX in
   some places. */
   Nested_xa_commit_lex nested_xa_commit_lex(thd, &xid);
-  (dynamic_cast<Sql_cmd_xa_commit *>(thd->lex->m_sql_cmd))->set_delay_ok();
-  if (thd->lex->m_sql_cmd->execute(thd)) {
+  Sql_cmd_xa_commit *cmd_executor = nested_xa_commit_lex.get_cmd_executor();
+  cmd_executor->set_delay_ok();
+  if (cmd_executor->execute(thd)) {
     DBUG_RETURN(true);
   }
 

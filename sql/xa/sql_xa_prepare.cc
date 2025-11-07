@@ -30,6 +30,7 @@
 #include "sql/debug_sync.h"               // DEBUG_SYNC
 #include "sql/handler.h"                  // ha_rollback_trans
 #include "sql/mdl_context_backup.h"       // MDL_context_backup_manager
+#include "sql/raii/sentry.h"
 #include "sql/rpl_replica_commit_order_manager.h"  // Commit_order_manager
 #include "sql/sql_class.h"                         // THD
 #include "sql/transaction.h"  // trans_reset_one_shot_chistics, trans_track_end_trx
@@ -140,6 +141,13 @@ bool Sql_cmd_xa_prepare::trans_xa_prepare(THD *thd) {
     return true;
   }
 
+  if (!thd->xpaxos_replication_channel
+      && opt_consensus_disable_empty_xa
+      && is_empty_xa_prepare(thd)) {
+    my_error(ER_EMPTY_XA_NOT_ALLOWED, MYF(0));
+    return true;
+  }
+
   auto rollback_xa_tran = create_scope_guard([&]() {
 #ifdef HAVE_PSI_TRANSACTION_INTERFACE
     assert(thd->m_transaction_psi == nullptr);
@@ -154,6 +162,8 @@ bool Sql_cmd_xa_prepare::trans_xa_prepare(THD *thd) {
     tran->cleanup();
     my_error(ER_XA_RBROLLBACK, MYF(0));
   });
+
+  raii::Sentry<> cp_ctx_guard{[&]() -> void { thd->cpolicy_ctx.reset(); }};
 
   /*
     Acquire metadata lock which will ensure that XA PREPARE is blocked
@@ -178,9 +188,6 @@ bool Sql_cmd_xa_prepare::trans_xa_prepare(THD *thd) {
                        (ha_rollback_trans(thd, true), true), false) ||
       ::process_xa_prepare(thd))
     return true;
-
-  // Lizard: Save proposal gcn info to avoid losing it
-  set_proposal_gcn(thd->owned_commit_gcn);
 
   xid_state->set_state(XID_STATE::XA_PREPARED);
   MYSQL_SET_TRANSACTION_XA_STATE(thd->m_transaction_psi,

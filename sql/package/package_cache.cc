@@ -32,6 +32,7 @@
 #include "sql/package/package_common.h"
 #include "sql/package/package_parse.h"
 #include "sql/package/proc.h"
+#include "sql/package/proc_conn.h"
 #include "sql/recycle_bin/recycle_proc.h"
 #include "sql/sp_head.h"
 #include "sql/trans_proc/implicit_savepoint.h"
@@ -47,6 +48,8 @@
 #include "sql/package/show_native_procedure.h"
 
 #include "sql/lizard/undo_proc.h"
+#include "sql/pli/license_proc.h"
+#include "sql/proxy/proxy_proc.h"
 #include "sql/xa/lizard_xa_proc.h"
 #include "sql/xrpc/xrpc_proc.h"
 
@@ -56,6 +59,7 @@
 #include "sql/sql_jemalloc.h"
 #endif
 #include "sql/package/proc_gpp.h"
+#include "sql/package/proc_cleanout.h"
 
 namespace im {
 
@@ -110,7 +114,7 @@ bool exist_native_proc(const char *db, const char *name) {
 }
 
 /**
-  Find the native proc and evoke the parse tree root
+  Find the native proc and invoke the parse tree root
 
   @param[in]    THD               Thread context
   @param[in]    sp_name           Proc name
@@ -118,12 +122,12 @@ bool exist_native_proc(const char *db, const char *name) {
 
   @retval       parse_tree_root   Parser structure
 */
-Parse_tree_root *find_native_proc_and_evoke(THD *thd, sp_name *sp_name,
-                                            PT_item_list *pt_expr_list) {
+Parse_tree_root *find_native_proc_and_invoke(THD *thd, sp_name *sp_name,
+                                             PT_item_list *pt_expr_list) {
   const Proc *proc = find_package_element<Proc>(
       std::string(sp_name->m_db.str), std::string(sp_name->m_name.str));
 
-  return proc ? proc->PT_evoke(thd, pt_expr_list, proc) : nullptr;
+  return proc ? proc->PT_invoke(thd, pt_expr_list, proc) : nullptr;
 }
 
 /**
@@ -148,6 +152,9 @@ void package_context_init() {
   /* dbms_xa.find_by_xid("$gtrid", "$bqual", "$formatID") */
   register_package<Proc, Xa_proc_find_by_xid>(XA_PROC_SCHEMA);
 
+  /* dbms_xa.find_by_xid("$gtrid", "$bqual", "$formatID", "$uba_hint") */
+  register_package<Proc, Xa_proc_find_by_xid_with_hint>(XA_PROC_SCHEMA);
+
   /* dbms_xa.prepare_with_trx_slot */
   register_package<Proc, Xa_proc_prepare_with_trx_slot>(XA_PROC_SCHEMA);
 
@@ -165,6 +172,13 @@ void package_context_init() {
 
   /* dbms_trans.returning() */
   register_package<Proc, Trans_proc_returning>(TRANS_PROC_SCHEMA);
+
+  /* dbms_trans.backfill() */
+  register_package<Proc, Trans_proc_backfill_returning>(TRANS_PROC_SCHEMA);
+
+  /* dbms_trans.returning_all() */
+  register_package<Proc, Trans_proc_returning_all>(TRANS_PROC_SCHEMA);
+
 
   /* dbms_undo.trunc_status() */
   register_package<Proc, Proc_trunc_status>(PROC_UNDO_SCHEMA);
@@ -194,6 +208,10 @@ void package_context_init() {
   /* dbms_recycle.restore_table(...) */
   register_package<Proc, im::recycle_bin::Recycle_proc_restore>(
       im::recycle_bin::RECYCLE_BIN_PROC_SCHEMA);
+
+  /** dbms_license */
+  register_package<Proc, License_proc_show_info>(LICENSE_PROC_SCHEMA);
+  register_package<Proc, License_proc_check_license>(LICENSE_PROC_SCHEMA);
 
   /* dbms_admin.show_native_procedure() */
   register_package<Proc, im::Show_native_procedure_proc>(im::ADMIN_PROC_SCHEMA);
@@ -226,6 +244,8 @@ void package_context_init() {
       CONSENSUS_PROC_SCHEMA);
   register_package<Proc, Consensus_proc_configure_follower>(
       CONSENSUS_PROC_SCHEMA);
+  register_package<Proc, Consensus_proc_configure_followers>(
+      CONSENSUS_PROC_SCHEMA);
   register_package<Proc, Consensus_proc_configure_learner>(
       CONSENSUS_PROC_SCHEMA);
   register_package<Proc, Consensus_proc_force_single_mode>(
@@ -240,6 +260,7 @@ void package_context_init() {
   register_package<Proc, Consensus_proc_purge_log>(CONSENSUS_PROC_SCHEMA);
   register_package<Proc, Consensus_proc_local_purge_log>(CONSENSUS_PROC_SCHEMA);
   register_package<Proc, Consensus_proc_force_purge_log>(CONSENSUS_PROC_SCHEMA);
+  register_package<Proc, Consensus_proc_force_purge_cache>(CONSENSUS_PROC_SCHEMA);
   register_package<Proc, Consensus_proc_drop_prefetch_channel>(
       CONSENSUS_PROC_SCHEMA);
 
@@ -247,6 +268,14 @@ void package_context_init() {
   register_package<Proc, Proc_perf_hist>(XRPC_PROC_SCHEMA);
   /** xrpc.cmd() */
   register_package<Proc, Proc_cmd>(im::XRPC_PROC_SCHEMA);
+
+  /** proxy.reset_db() */
+  register_package<Proc, Proc_reset_db>(im::PROXY_PROC_SCHEMA);
+  /** proxy.get_token() */
+  register_package<Proc, Proc_get_token>(im::PROXY_PROC_SCHEMA);
+  /** proxy.switch_user() */
+  register_package<Proc, Proc_switch_user>(im::PROXY_PROC_SCHEMA);
+  register_package<Proc, Proc_ping>(im::PROXY_PROC_SCHEMA);
 
   /* procedures: polarx.changeset_* */
   register_package<Proc, Changeset_proc_start>(POLARX_PROC_SCHEMA);
@@ -267,6 +296,16 @@ void package_context_init() {
 
   /* dbms_stat.flush_gpp() */
   register_package<Proc, Proc_index_stat_flush_gpp>(PROC_STAT_SCHEMA);
+
+  /* dbms_stat.flush_cleanout() */
+  register_package<Proc, Proc_flush_cleanout>(PROC_STAT_SCHEMA);
+
+  /* dbms_conn.comment_connection(...) */
+  register_package<Proc, Conn_proc_comment>(PROC_CONN_SCHEMA);
+  /* dbms_conn.show_connection(...) */
+  register_package<Proc, Conn_proc_show>(PROC_CONN_SCHEMA);
+  /* dbms_conn.show_client_error_code(...) */
+  register_package<Proc, Conn_proc_show_client_error_code>(PROC_CONN_SCHEMA);
 }
 
 } /* namespace im */

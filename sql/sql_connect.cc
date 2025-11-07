@@ -35,6 +35,7 @@
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/log_shared.h"
 #include "pfs_thread_provider.h"
+#include "sql/gh_slow_query_block/slow_query_block.h"
 #include "sql/table.h"
 
 #ifndef _WIN32
@@ -91,6 +92,7 @@
 #include "sql/system_variables.h"
 #include "sql_string.h"
 #include "violite.h"
+#include <regex>
 
 #ifdef HAVE_ARPA_INET_H
 #include <arpa/inet.h>
@@ -650,8 +652,16 @@ static int check_connection(THD *thd) {
 
   auth_rc = acl_authenticate(thd, COM_CONNECT);
 
+  polarx::check_sqb_user_pattern(thd);
+
   if (mysql_audit_notify(thd, AUDIT_EVENT(MYSQL_AUDIT_CONNECTION_CONNECT))) {
-    return 1;
+    if (thd->get_stmt_da()->mysql_errno() ==
+        ER_CONN_CONTROL_CONN_REFUSE_CONNECTION) {
+      /** not return here, the audit log plugin might need to log the error.*/
+      auth_rc = 1;
+    } else {
+      return 1;
+    }
   }
 
   if (mysql_audit_notify(thd,

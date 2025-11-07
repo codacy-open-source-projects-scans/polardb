@@ -223,10 +223,10 @@ static bool dd_index_match(const dict_index_t *index, const Index *dd_index) {
 
   ut_ad(p.exists(dd_index_key_strings[DD_INDEX_ROOT]));
   p.get(dd_index_key_strings[DD_INDEX_ROOT], &root);
-  if (root != index->page) {
-    ib::warn(ER_IB_MSG_164)
-        << "Index root in InnoDB is " << index->page << " while index root in"
-        << " global DD is " << root;
+  if (root != index->page_no()) {
+    ib::warn(ER_IB_MSG_164) << "Index root in InnoDB is " << index->page_no()
+                            << " while index root in"
+                            << " global DD is " << root;
     match = false;
   }
 
@@ -238,6 +238,14 @@ static bool dd_index_match(const dict_index_t *index, const Index *dd_index) {
     ib::warn(ER_IB_MSG_165) << "Index transaction id in InnoDB is "
                             << index->trx_id << " while index transaction"
                             << " id in global DD is " << trx_id;
+    match = false;
+  }
+
+  page_type_t page_type = lizard::dd_index_get_page_type(index, p);
+  if (page_type != index->page_type()) {
+    ib::warn(ER_IB_MSG_164) << "Index page type in InnoDB is "
+                            << index->page_type() << " while index page type in"
+                            << " global DD is " << page_type;
     match = false;
   }
 
@@ -910,7 +918,9 @@ bool dd_table_discard_tablespace(THD *thd, const dict_table_t *table,
       ut_ad(index != nullptr);
 
       dd::Properties &p = dd_index->se_private_data();
-      p.set(dd_index_key_strings[DD_INDEX_ROOT], index->page);
+      p.set(dd_index_key_strings[DD_INDEX_ROOT], index->page_no());
+      p.set(dd_index_key_strings[DD_INDEX_PAGE_TYPE], index->page_type());
+      p.set(dd_index_key_strings[DD_TABLE_ID], table->id);
     }
 
     /* Set new table id for dd columns */
@@ -2503,10 +2513,11 @@ void dd_import_instant_add_columns(const dict_table_t *table,
 @param[in]      index           InnoDB index object */
 template <typename Index>
 static void dd_write_index(dd::Object_id dd_space_id, Index *dd_index,
-                           const dict_index_t *index,
-                           const lizard::Ha_ddl_policy *ddl_policy) {
+                           const dict_index_t *index) {
   ut_ad(index->id != 0);
-  ut_ad(index->page >= FSP_FIRST_INODE_PAGE_NO);
+  ut_ad(index->page_no() >= FSP_FIRST_INODE_PAGE_NO);
+  ut_ad(index->page_no() != FIL_NULL || index->type & DICT_FTS ||
+        index->table->flags2 & DICT_TF2_DISCARDED);
 
   dd_index->set_tablespace_id(dd_space_id);
 
@@ -2514,26 +2525,25 @@ static void dd_write_index(dd::Object_id dd_space_id, Index *dd_index,
   p.set(dd_index_key_strings[DD_INDEX_ID], index->id);
   p.set(dd_index_key_strings[DD_INDEX_SPACE_ID], index->space);
   p.set(dd_index_key_strings[DD_TABLE_ID], index->table->id);
-  p.set(dd_index_key_strings[DD_INDEX_ROOT], index->page);
+  p.set(dd_index_key_strings[DD_INDEX_ROOT], index->page_no());
   dd_index_set_se_private_for_system_cols(
       dd_index, index->trx_id,
       txn_info_t{index->txn.scn, index->txn.uba, index->txn.gcn});
+  p.set(dd_index_key_strings[DD_INDEX_PAGE_TYPE], index->page_type());
 
   dd::Properties &options = dd_index->options();
-  lizard::dd_write_index_format(&options, index, ddl_policy);
+  lizard::dd_write_index_format(&options, index);
 }
 
 template void dd_write_index<dd::Index>(dd::Object_id, dd::Index *,
-                                        const dict_index_t *,
-                                        const lizard::Ha_ddl_policy *ddl_policy);
-template void dd_write_index<dd::Partition_index>(
-    dd::Object_id, dd::Partition_index *, const dict_index_t *,
-    const lizard::Ha_ddl_policy *ddl_policy);
+                                        const dict_index_t *);
+template void dd_write_index<dd::Partition_index>(dd::Object_id,
+                                                  dd::Partition_index *,
+                                                  const dict_index_t *);
 
 template <typename Table>
 void dd_write_table(dd::Object_id dd_space_id, Table *dd_table,
-                    const dict_table_t *table,
-                    const lizard::Ha_ddl_policy *ddl_policy) {
+                    const dict_table_t *table) {
   /* Only set the tablespace id for tables in innodb_system tablespace */
   if (dd_space_id == dict_sys_t::s_dd_sys_space_id) {
     dd_table->set_tablespace_id(dd_space_id);
@@ -2556,7 +2566,7 @@ void dd_write_table(dd::Object_id dd_space_id, Table *dd_table,
     the out-of-sync order */
     const dict_index_t *index = dd_find_index(table, dd_index);
     ut_ad(index != nullptr);
-    dd_write_index(dd_space_id, dd_index, index, ddl_policy);
+    dd_write_index(dd_space_id, dd_index, index);
   }
 
   bool has_row_versions = table->has_row_versions();
@@ -2629,11 +2639,9 @@ void dd_write_table(dd::Object_id dd_space_id, Table *dd_table,
 }
 
 template void dd_write_table<dd::Table>(dd::Object_id, dd::Table *,
-                                        const dict_table_t *,
-                                        const lizard::Ha_ddl_policy *ddl_policy);
+                                        const dict_table_t *);
 template void dd_write_table<dd::Partition>(dd::Object_id, dd::Partition *,
-                                            const dict_table_t *,
-                                            const lizard::Ha_ddl_policy *ddl_policy);
+                                            const dict_table_t *);
 
 template <typename Table>
 void dd_set_table_options(Table *dd_table, const dict_table_t *table) {
@@ -2858,7 +2866,9 @@ template const dict_index_t *dd_find_index<dd::Partition_index>(
       dict_mem_index_create(table->name.m_name, key.name, 0, type, n_fields);
 
   /** Lizard-4.0: Set stored gpp. */
-  lizard::dd_fill_dict_index_format(index_policy, table, index);
+  page_type_t real_page_type;
+  lizard::dd_fill_dict_index_format(index_policy, table, index,
+                                    &real_page_type);
 
   index->n_uniq = n_uniq;
 
@@ -2877,6 +2887,7 @@ template const dict_index_t *dd_find_index<dd::Partition_index>(
 
     if (field->is_virtual_gcol()) {
       index->type |= DICT_VIRTUAL;
+      ut_ad(real_page_type != FIL_PAGE_INDEX_PANDA);
 
       /* Whether it is a multi-value index */
       if ((field->gcol_info->expr_item &&
@@ -2945,7 +2956,10 @@ template const dict_index_t *dd_find_index<dd::Partition_index>(
 
   index->n_user_defined_cols = key.user_defined_key_parts;
 
-  if (dict_index_add_to_cache(table, index, 0, false) != DB_SUCCESS) {
+  /* TODO: we now change the third param from page_no==0 to page_no==FIL_NULL.
+     Confirm it is ok. */
+  if (dict_index_add_to_cache(table, index, index->root, real_page_type,
+                              false) != DB_SUCCESS) {
     ut_d(ut_error);
     ut_o(return HA_ERR_GENERIC);
   }
@@ -3112,8 +3126,8 @@ inline int dd_fill_dict_index(const dd::Table &dd_table, const TABLE *m_form,
         m_table->name.m_name, "GEN_CLUST_INDEX", 0, DICT_CLUSTERED, 0);
     index->n_uniq = 0;
 
-    dberr_t new_err =
-        dict_index_add_to_cache(m_table, index, index->page, false);
+    dberr_t new_err = dict_index_add_to_cache(m_table, index, index->root,
+                                              FIL_PAGE_TYPE_UNUSED, false);
     if (new_err != DB_SUCCESS) {
       error = HA_ERR_GENERIC;
       goto dd_error;
@@ -3191,10 +3205,13 @@ inline int dd_fill_dict_index(const dd::Table &dd_table, const TABLE *m_form,
         }
         ut_ad(index_policy);
         /** Lizard-4.0: Set stored gpp. */
-        lizard::dd_fill_dict_index_format(*index_policy, m_table, doc_id_index);
+        page_type_t expected_page_type;
+        lizard::dd_fill_dict_index_format(*index_policy, m_table, doc_id_index,
+                                          &expected_page_type);
 
-        dberr_t new_err = dict_index_add_to_cache(m_table, doc_id_index,
-                                                  doc_id_index->page, false);
+        dberr_t new_err =
+            dict_index_add_to_cache(m_table, doc_id_index, doc_id_index->root,
+                                    expected_page_type, false);
         if (new_err != DB_SUCCESS) {
           error = HA_ERR_GENERIC;
           goto dd_error;
@@ -5116,7 +5133,12 @@ dict_table_t *dd_open_table_one(dd::cache::Dictionary_client *client,
     ut_ad(index->type & DICT_FTS || root != FIL_NULL ||
           dict_table_is_discarded(m_table));
     ut_ad(id != 0);
-    index->page = root;
+
+    page_type_t root_page_type =
+        lizard::dd_index_get_page_type(index, se_private_data);
+
+    index->root = {root, root_page_type};
+
     index->space = sid;
     index->id = id;
     index->trx_id = trx_id;
@@ -5367,7 +5389,7 @@ static const rec_t *dd_getnext_system_low(btr_pcur_t *pcur, mtr_t *mtr) {
     pcur->move_to_next_user_rec(mtr);
 
     if (pcur->index()->is_clustered()) {
-      assert_lizard_page_attributes(pcur->get_page(), pcur->index());
+      assert_page_txn_attributes(pcur->get_page(), pcur->index());
     }
 
     rec = pcur->get_rec();
@@ -5872,7 +5894,8 @@ bool dd_process_dd_virtual_columns_rec(mem_heap_t *heap, const rec_t *rec,
 bool dd_process_dd_indexes_rec(mem_heap_t *heap, const rec_t *rec,
                                const dict_index_t **index, MDL_ticket **mdl,
                                dict_table_t **parent, MDL_ticket **parent_mdl,
-                               dict_table_t *dd_indexes, mtr_t *mtr) {
+                               dict_table_t *dd_indexes, mtr_t *mtr,
+                               bool exclude_dd_table) {
   ulint len;
   const byte *field;
   uint32_t index_id;
@@ -5897,6 +5920,159 @@ bool dd_process_dd_indexes_rec(mem_heap_t *heap, const rec_t *rec,
     mtr_commit(mtr);
     return false;
   }
+
+  /* Get the se_private_data field. */
+  field = (const byte *)rec_get_nth_field(
+      nullptr, rec, offsets,
+      dd_object_table.field_number("FIELD_SE_PRIVATE_DATA") + DD_FIELD_OFFSET,
+      &len);
+
+  if (len == 0 || len == UNIV_SQL_NULL) {
+    mtr_commit(mtr);
+    return false;
+  }
+
+  /* Get index id. */
+  dd::String_type prop((char *)field);
+  dd::Properties *p = dd::Properties::parse_properties(prop);
+
+  if (!p || !p->exists(dd_index_key_strings[DD_INDEX_ID]) ||
+      !p->exists(dd_index_key_strings[DD_INDEX_SPACE_ID])) {
+    if (p) {
+      delete p;
+    }
+    mtr_commit(mtr);
+    return false;
+  }
+
+  if (p->get(dd_index_key_strings[DD_INDEX_ID], &index_id)) {
+    delete p;
+    mtr_commit(mtr);
+    return false;
+  }
+
+  /* Get the tablespace id. */
+  if (p->get(dd_index_key_strings[DD_INDEX_SPACE_ID], &space_id)) {
+    delete p;
+    mtr_commit(mtr);
+    return false;
+  }
+
+  /* Skip mysql.* indexes. */
+  if ((exclude_dd_table ||
+       DBUG_EVALUATE_IF("skip_dd_table_access_check", false, true)) &&
+      space_id == dict_sys->s_dict_space_id) {
+    delete p;
+    mtr_commit(mtr);
+    return false;
+  }
+
+  /* Load the table and get the index. */
+  if (!p->exists(dd_index_key_strings[DD_TABLE_ID])) {
+    delete p;
+    mtr_commit(mtr);
+    return false;
+  }
+
+  if (!p->get(dd_index_key_strings[DD_TABLE_ID], &table_id)) {
+    THD *thd = current_thd;
+    dict_table_t *table;
+
+    /* Commit before load the table */
+    mtr_commit(mtr);
+    table = dd_table_open_on_id(table_id, thd, mdl, true, true);
+
+    if (!table) {
+      delete p;
+      return false;
+    }
+
+    /* For fts aux table, we need to acquire mdl lock on parent. */
+    if (table->is_fts_aux()) {
+      fts_aux_table_t fts_table;
+
+      /* Find the parent ID. */
+      ut_d(bool is_fts =) fts_is_aux_table_name(&fts_table, table->name.m_name,
+                                                strlen(table->name.m_name));
+      ut_ad(is_fts);
+
+      table_id_t parent_id = fts_table.parent_id;
+
+      dd_table_close(table, thd, mdl, true);
+
+      *parent = dd_table_open_on_id(parent_id, thd, parent_mdl, true, true);
+
+      if (*parent == nullptr) {
+        delete p;
+        return false;
+      }
+
+      table = dd_table_open_on_id(table_id, thd, mdl, true, true);
+
+      if (!table) {
+        dd_table_close(*parent, thd, parent_mdl, true);
+        delete p;
+        return false;
+      }
+    }
+
+    for (const dict_index_t *t_index = table->first_index(); t_index != nullptr;
+         t_index = t_index->next()) {
+      if (t_index->space == space_id && t_index->id == index_id) {
+        *index = t_index;
+      }
+    }
+
+    if (*index == nullptr) {
+      dd_table_close(table, thd, mdl, true);
+      if (table->is_fts_aux() && *parent) {
+        dd_table_close(*parent, thd, parent_mdl, true);
+      }
+      delete p;
+      return false;
+    }
+
+    delete p;
+  } else {
+    delete p;
+    mtr_commit(mtr);
+    return false;
+  }
+
+  return true;
+}
+
+/** Process one mysql.index_partitions record and get the dict_index_t
+@param[in]      heap            Temp memory heap
+@param[in,out]  rec             mysql.indexes record
+@param[in,out]  index           dict_index_t to fill
+@param[in]      mdl             MDL on index->table
+@param[in,out]  parent          Parent table if it's fts aux table.
+@param[in,out]  parent_mdl      MDL on parent if it's fts aux table.
+@param[in]      dd_indexes      dict_table_t obj of mysql.indexes
+@param[in]      mtr             Mini-transaction
+@retval true if index is filled */
+bool dd_process_dd_partition_indexes_rec(mem_heap_t *heap, const rec_t *rec,
+                                         const dict_index_t **index,
+                                         MDL_ticket **mdl,
+                                         dict_table_t **parent,
+                                         MDL_ticket **parent_mdl,
+                                         dict_table_t *dd_indexes, mtr_t *mtr) {
+  ulint len;
+  const byte *field;
+  uint32_t index_id;
+  uint32_t space_id;
+  uint64_t table_id;
+
+  *index = nullptr;
+
+  ut_ad(!rec_get_deleted_flag(rec, dict_table_is_comp(dd_indexes)));
+
+  ulint *offsets = rec_get_offsets(rec, dd_indexes->first_index(), nullptr,
+                                   ULINT_UNDEFINED, UT_LOCATION_HERE, &heap);
+
+  const dd::Object_table &dd_object_table =
+      dd::get_dd_table<dd::Partition_index>();
 
   /* Get the se_private_data field. */
   field = (const byte *)rec_get_nth_field(
@@ -6478,7 +6654,7 @@ bool dd_create_fts_index_table(const dict_table_t *parent_table,
 
   table->dd_space_id = dd_space_id;
 
-  dd_write_table(dd_space_id, dd_table, table, nullptr);
+  dd_write_table(dd_space_id, dd_table, table);
 
   MDL_ticket *mdl_ticket = nullptr;
   if (dd::acquire_exclusive_table_mdl(thd, db_name.c_str(), table_name.c_str(),
@@ -6619,7 +6795,7 @@ bool dd_create_fts_common_table(const dict_table_t *parent_table,
 
   table->dd_space_id = dd_space_id;
 
-  dd_write_table(dd_space_id, dd_table, table, nullptr);
+  dd_write_table(dd_space_id, dd_table, table);
 
   MDL_ticket *mdl_ticket = nullptr;
   if (dd::acquire_exclusive_table_mdl(thd, db_name.c_str(), table_name.c_str(),
@@ -7226,6 +7402,13 @@ void dict_table_t::get_table_name(std::string &schema,
                                   std::string &table) const {
   std::string dict_table_name(name.m_name);
   dict_name::get_table(dict_table_name, schema, table);
+}
+
+void dict_table_t::get_table_name(std::string &schema, std::string &table,
+                                  std::string &partition) const {
+  bool is_tmp;
+  std::string dict_table_name(name.m_name);
+  dict_name::get_table(dict_table_name, true, schema, table, partition, is_tmp);
 }
 #endif /* !UNIV_HOTBACKUP */
 

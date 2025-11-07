@@ -70,16 +70,16 @@ loose-performance-schema-consumer-thread-instrumentation=ON
 log-error-verbosity=3
 opt_force_index_pct_cached=1
 
-# for xcluster
-consensus-election-timeout=5000
-consensus-io-thread_cnt=8
-consensus-worker-thread_cnt=8
+# use old default value
+binlog_order_commits=ON
+enforce_gtid_consistency=FALSE
+gtid_mode=OFF
+xa_detach_on_prepare=ON
 consensus_log_level=LOG_ERROR
-enable_appliedindex_checker=ON
-commit_pos_watcher=ON
 
-skip-replica-start=OFF
-binlog_order_commits=OFF
+disable_default_collation_for_utf8mb4=0
+force_print_utf8mb4_implicit_collation=0
+
 
 [mysqld.1]
 report-port=                @mysqld.1.port

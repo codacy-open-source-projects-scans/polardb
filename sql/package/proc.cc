@@ -39,8 +39,8 @@ namespace im {
 
   @retval       Parse_tree_root
 */
-Parse_tree_root *Proc::PT_evoke(THD *thd, PT_item_list *pt_expr_list,
-                                const Proc *proc) const {
+Parse_tree_root *Proc::PT_invoke(THD *thd, PT_item_list *pt_expr_list,
+                                 const Proc *proc) const {
   return new (thd->mem_root) PT_proc_type(pt_expr_list, proc);
 }
 
@@ -78,6 +78,12 @@ bool Proc::send_result_metadata(THD *thd) const {
       case MYSQL_TYPE_TIMESTAMP:
         field_list.push_back(item = new Item_temporal(
                                  MYSQL_TYPE_TIMESTAMP,
+                                 Name_string((*it).name, strlen((*it).name)), 0,
+                                 0));
+        break;
+      case MYSQL_TYPE_DATETIME:
+        field_list.push_back(item = new Item_temporal(
+                                 MYSQL_TYPE_DATETIME,
                                  Name_string((*it).name, strlen((*it).name)), 0,
                                  0));
         break;

@@ -105,7 +105,7 @@ int fill_consensus_commit_pos(THD *thd, Table_ref *tables, Item *) {
 int fill_alisql_cluster_global(THD *thd, Table_ref *tables, Item *) {
   DBUG_ENTER("fill_alisql_cluster_global");
   int res = 0;
-  if (opt_consensus_force_recovery) DBUG_RETURN(res);
+  if (opt_consensus_force_recovery || !consensus_ptr) DBUG_RETURN(res);
   TABLE *table = tables->table;
   // get from consensus alg layer
   uint64 id = server_id;
@@ -120,6 +120,10 @@ int fill_alisql_cluster_global(THD *thd, Table_ref *tables, Item *) {
   uint64 learner_source = 0;
   std::string pipelining;
   std::string use_applied;
+  std::string instance_type;
+  std::string disable_election;
+  std::string server_ip;
+  uint64 server_port = 0;
   size_t node_num = 1;
   alisql::Paxos::MemberInfoType mi;
   std::vector<alisql::Paxos::ClusterInfoType> cis;
@@ -178,6 +182,11 @@ int fill_alisql_cluster_global(THD *thd, Table_ref *tables, Item *) {
     } else {
       use_applied = "No";
     }
+    instance_type = cis[i].logInstance ? "Log" : "Normal";
+    disable_election = cis[i].disableElection ? "Yes" : "No";
+    server_ip =  cis[i].serverIp;
+    server_port = cis[i].serverPort;
+
     int field_num = 0;
     table->field[field_num++]->store((longlong)id, true);
     table->field[field_num++]->store(ip_port.c_str(), ip_port.length(),
@@ -197,6 +206,13 @@ int fill_alisql_cluster_global(THD *thd, Table_ref *tables, Item *) {
                                      system_charset_info);
     table->field[field_num++]->store(use_applied.c_str(), use_applied.length(),
                                      system_charset_info);
+    table->field[field_num++]->store(instance_type.c_str(), instance_type.length(),
+                                     system_charset_info);
+    table->field[field_num++]->store(disable_election.c_str(), disable_election.length(),
+                                     system_charset_info);
+    table->field[field_num++]->store(server_ip.c_str(), server_ip.length(),
+                                     system_charset_info);
+    table->field[field_num++]->store((longlong)server_port, true);
     if (schema_table_store_record(thd, table)) DBUG_RETURN(1);
   }
 
@@ -206,7 +222,7 @@ int fill_alisql_cluster_global(THD *thd, Table_ref *tables, Item *) {
 int fill_alisql_cluster_local(THD *thd, Table_ref *tables, Item *) {
   DBUG_ENTER("fill_alisql_cluster_local");
   int res = 0;
-  if (opt_consensus_force_recovery) DBUG_RETURN(res);
+  if (opt_consensus_force_recovery || !consensus_ptr) DBUG_RETURN(res);
   TABLE *table = tables->table;
   // get from consensus alg layer
   uint64 id = server_id;
@@ -221,7 +237,12 @@ int fill_alisql_cluster_local(THD *thd, Table_ref *tables, Item *) {
   uint64 last_log_index = 0;
   Consensus_Log_System_Status rw_status = consensus_log_manager.get_status();
   std::string rw_status_str;
+  std::string disable_election_str;
+  std::string apply_running_str;
   std::string instance_type;
+  std::string leader_ip;
+  uint64 leader_port = 0;
+
   alisql::Paxos::MemberInfoType mi;
   consensus_ptr->getMemberInfo(&mi);
   id = mi.serverId;
@@ -239,7 +260,13 @@ int fill_alisql_cluster_local(THD *thd, Table_ref *tables, Item *) {
       role = "Candidate";
       break;
     case alisql::Paxos::StateType::LEADER:
-      role = "Leader";
+      /* not a stable leader if server_ready_for_rw is no and
+      * consensus_auto_leader_transfer is on */
+      if (opt_consensus_auto_leader_transfer &&
+          (opt_cluster_log_type_instance || rw_status == RELAY_LOG_WORKING))
+        role = "Prepared";
+      else
+        role = "Leader";
       break;
     case alisql::Paxos::StateType::LEARNER:
       role = "Learner";
@@ -248,28 +275,19 @@ int fill_alisql_cluster_local(THD *thd, Table_ref *tables, Item *) {
       role = "No Role";
       break;
   }
-  /* not a stable leader if server_ready_for_rw is no and
-   * consensus_auto_leader_transfer is on */
-  if (role == "Leader" && opt_consensus_auto_leader_transfer &&
-      (opt_cluster_log_type_instance || rw_status == RELAY_LOG_WORKING))
-    role = "Prepared";
-
   voted_for = mi.votedFor;
 
-  if (opt_cluster_log_type_instance) {
+  if (opt_cluster_log_type_instance || rw_status == RELAY_LOG_WORKING) {
     rw_status_str = "No";
   } else {
-    switch (rw_status) {
-      case BINLOG_WORKING:
-        rw_status_str = "Yes";
-        break;
-      case RELAY_LOG_WORKING:
-        rw_status_str = "No";
-        break;
-    }
+    rw_status_str = "Yes";
   }
 
   instance_type = opt_cluster_log_type_instance ? "Log" : "Normal";
+  disable_election_str = opt_consensus_disable_election ? "Yes" : "No";
+  apply_running_str = consensus_ptr->getApplyThreadRunning() ? "Yes" : "No";
+  leader_ip = mi.leaderIp;
+  leader_port = mi.leaderPort;
 
   int field_num = 0;
   table->field[field_num++]->store((longlong)id, true);
@@ -288,6 +306,14 @@ int fill_alisql_cluster_local(THD *thd, Table_ref *tables, Item *) {
                                    rw_status_str.length(), system_charset_info);
   table->field[field_num++]->store(instance_type.c_str(),
                                    instance_type.length(), system_charset_info);
+  table->field[field_num++]->store(disable_election_str.c_str(),
+                                   disable_election_str.length(), system_charset_info);
+  table->field[field_num++]->store(apply_running_str.c_str(),
+                                   apply_running_str.length(), system_charset_info);
+  table->field[field_num++]->store(leader_ip.c_str(),
+                                   leader_ip.length(),
+                                   system_charset_info);
+  table->field[field_num++]->store((longlong)leader_port, true);
 
   if (schema_table_store_record(thd, table)) DBUG_RETURN(1);
 
@@ -296,7 +322,7 @@ int fill_alisql_cluster_local(THD *thd, Table_ref *tables, Item *) {
 
 int fill_alisql_cluster_health(THD *thd, Table_ref *tables, Item *) {
   DBUG_ENTER("fill_alisql_cluster_health");
-  if (opt_consensus_force_recovery) DBUG_RETURN(0);
+  if (opt_consensus_force_recovery || !consensus_ptr) DBUG_RETURN(0);
   TABLE *table = tables->table;
 
   std::vector<alisql::Paxos::HealthInfoType> hi;
@@ -306,6 +332,8 @@ int fill_alisql_cluster_health(THD *thd, Table_ref *tables, Item *) {
     int field_num = 0;
     std::string role;
     std::string connected;
+    std::string running;
+    uint64_t applyDelaySeconds;
     table->field[field_num++]->store((longlong)e.serverId, true);
     table->field[field_num++]->store(e.addr.c_str(), e.addr.length(),
                                      system_charset_info);
@@ -338,6 +366,12 @@ int fill_alisql_cluster_health(THD *thd, Table_ref *tables, Item *) {
     table->field[field_num++]->store((longlong)e.logDelayNum, true);
     table->field[field_num++]->store((longlong)e.applyDelayNum, true);
 
+    running = e.applyThreadRunning ? "Yes" : "No";
+    table->field[field_num++]->store(running.c_str(), running.length(),
+                                     system_charset_info);
+    applyDelaySeconds = (e.applyDelayNum == 0) ? 0 : e.applyDelaySeconds;
+    table->field[field_num++]->store((longlong)applyDelaySeconds, true);
+
     if (schema_table_store_record(thd, table)) DBUG_RETURN(1);
   }
 
@@ -348,6 +382,8 @@ int fill_alisql_cluster_learner_source(THD *thd, Table_ref *tables, Item *) {
   DBUG_ENTER("fill_alisql_cluster_learner_source");
   int res = 0;
   TABLE *table = tables->table;
+
+  if (opt_consensus_force_recovery || !consensus_ptr) DBUG_RETURN(res);
 
   // get from consensus alg layer
   uint64 learner_id = 0;
@@ -449,6 +485,8 @@ int fill_alisql_cluster_prefetch_channel(THD *thd, Table_ref *tables, Item *) {
 int fill_alisql_cluster_consensus_status(THD *thd, Table_ref *tables, Item *) {
   DBUG_ENTER("fill_alisql_cluster_consensus_status");
   int res = 0;
+  if (opt_consensus_force_recovery || !consensus_ptr) DBUG_RETURN(res);
+
   TABLE *table = tables->table;
 
   // get from consensus alg layer
@@ -494,6 +532,7 @@ int fill_alisql_cluster_consensus_membership_change(THD *thd, Table_ref *tables,
                                                     Item *) {
   DBUG_ENTER("fill_alisql_cluster_consensus_membership_change");
   TABLE *table = tables->table;
+  if (opt_consensus_force_recovery || !consensus_ptr) DBUG_RETURN(0);
 
   std::vector<alisql::Paxos::MembershipChangeType> mch =
       consensus_ptr->getMembershipChangeHistory();
@@ -585,6 +624,10 @@ ST_FIELD_INFO alisql_cluster_global_fields_info[] = {
      0},
     {"PIPELINING", 3, MYSQL_TYPE_STRING, 0, 0, 0, 0},
     {"SEND_APPLIED", 3, MYSQL_TYPE_STRING, 0, 0, 0, 0},
+    {"INSTANCE_TYPE", 10, MYSQL_TYPE_STRING, 0, 0, 0, 0},
+    {"DISABLE_ELECTION", 3, MYSQL_TYPE_STRING, 0, 0, 0, 0},
+    {"SERVER_IP", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0, 0},
+    {"SERVER_PORT", MY_INT64_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONGLONG, 0, 0, 0, 0},
     {0, 0, MYSQL_TYPE_STRING, 0, 0, 0, 0}};
 
 ST_FIELD_INFO alisql_cluster_local_fields_info[] = {
@@ -604,6 +647,10 @@ ST_FIELD_INFO alisql_cluster_local_fields_info[] = {
      0, 0},
     {"SERVER_READY_FOR_RW", 3, MYSQL_TYPE_STRING, 0, 0, 0, 0},
     {"INSTANCE_TYPE", 10, MYSQL_TYPE_STRING, 0, 0, 0, 0},
+    {"DISABLE_ELECTION", 3, MYSQL_TYPE_STRING, 0, 0, 0, 0},
+    {"APPLY_RUNNING", 3, MYSQL_TYPE_STRING, 0, 0, 0, 0},
+    {"LEADER_IP", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0, 0},
+    {"LEADER_PORT", MY_INT64_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONGLONG, 0, 0, 0, 0},
     {0, 0, MYSQL_TYPE_STRING, 0, 0, 0, 0}};
 
 ST_FIELD_INFO alisql_cluster_health_fields_info[] = {
@@ -614,6 +661,9 @@ ST_FIELD_INFO alisql_cluster_health_fields_info[] = {
     {"LOG_DELAY_NUM", MY_INT64_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONGLONG, 0, 0, 0,
      0},
     {"APPLY_DELAY_NUM", MY_INT64_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONGLONG, 0, 0,
+     0, 0},
+    {"APPLY_RUNNING", 3, MYSQL_TYPE_STRING, 0, 0, 0, 0},
+    {"APPLY_DELAY_SECONDS", MY_INT64_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONGLONG, 0, 0,
      0, 0},
     {0, 0, MYSQL_TYPE_STRING, 0, 0, 0, 0}};
 

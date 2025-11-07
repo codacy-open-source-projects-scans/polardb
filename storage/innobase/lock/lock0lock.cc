@@ -65,8 +65,12 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "mysql/plugin.h"
 #include "mysql/psi/psi_thread.h"
 
+#include "lizard0lock0lock.h"
 #include "lizard0row.h"
+#include "lizard0row0sel.h"
+#include "lizard0txn0rec.h"
 #include "lizard0undo.h"
+#include "lizard0btr0pcur.h"
 
 /* Flag to enable/disable deadlock detector. */
 bool innobase_deadlock_detect = true;
@@ -237,32 +241,30 @@ bool lock_clust_rec_cons_read_sees(
     btr_pcur_t *pcur,       /*!< in: current pcursor that define position */
     lizard::Vision *vision) /*!< in: consistent read view */
 {
+  ut_ad(!index->table->is_temporary());
   ut_ad(index->is_clustered());
   ut_ad(page_rec_is_user_rec(rec));
   ut_ad(rec_offs_validate(rec, index, offsets));
-
-  /* Temp-tables are not shared across connections and multiple
-  transactions from different connections cannot simultaneously
-  operate on same temp-table and so read of temp-table is
-  always consistent read. */
-  if (srv_read_only_mode || index->table->is_temporary()) {
-    ut_ad(vision == nullptr || !vision->is_active() ||
-          index->table->is_temporary());
-    return (true);
-  }
-
+  ut_ad(lizard::pcur_position_validate(pcur, rec, index));
   /* All gcn query visible or not,
-     pls use lizard::gp_clust_rec_cons_read_sees */
+     pls use lizard::gp_clust_or_panda_rec_cons_read_sees */
   ut_a(!vision->is_asof_gcn());
 
   /* NOTE that we call this function while holding the search
   system latch. */
 
   /** Lizard: the following codes is a check */
-  txn_rec_t txn_rec;
-  lizard::row_get_txn_rec(rec, index, offsets, &txn_rec);
+  const txn_layout_t layout = TL_CLOVER;
+  txn_rec_t txn_rec(rec, index, offsets, layout);
+  Cleanout_ctx_t cctx(pcur);
 
-  lizard::txn_rec_cleanout_state_by_misc(&txn_rec, pcur, rec, index, offsets);
+  /** Try to see optimistically. */
+  if (lizard::txn_rec_try_see(&txn_rec, layout, vision, cctx(MTR_LOG_NONE))) {
+    return true;
+  }
+
+  lizard::txn_rec_execute_when_query(&txn_rec, layout, vision->visible_by(),
+                                     cctx(MTR_LOG_NO_REDO));
 
   return (vision->modifications_visible(&txn_rec, index->table->name));
 }
@@ -283,6 +285,8 @@ bool lock_sec_rec_cons_read_sees(
     const dict_index_t *index,    /*!< in: index */
     const lizard::Vision *vision) /*!< in: consistent read view */
 {
+  ut_ad(!index->table->is_temporary());
+  ut_ad(!lizard::dict_index_is_panda(index));
   ut_ad(page_rec_is_user_rec(rec));
 
   /* NOTE that we might call this function while holding the search
@@ -290,14 +294,10 @@ bool lock_sec_rec_cons_read_sees(
 
   if (recv_recovery_is_on()) {
     return (false);
+  }
 
-  } else if (index->table->is_temporary()) {
-    /* Temp-tables are not shared across connections and multiple
-    transactions from different connections cannot simultaneously
-    operate on same temp-table and so read of temp-table is
-    always consistent read. */
-
-    return (true);
+  if (lizard::dict_index_inject_stress_test_for_panda(index)) {
+    ut_a(lizard::row_panda_rec_neighbor_unique_check(rec, index));
   }
 
   trx_id_t max_trx_id = page_get_max_trx_id(page_align(rec));
@@ -997,34 +997,39 @@ The difficulties to keep in mind here:
                  the seen trx_id is still active or not
 */
 static bool can_older_trx_be_still_active(trx_id_t max_old_active_id) {
-  if (mutex_enter_nowait(&trx_sys->mutex) != 0) {
-    ut_ad(!trx_sys_mutex_own());
-    /* The mutex is currently locked by somebody else. Instead of wasting time
-    on spinning and waiting to acquire it, we loop over the shards and check if
-    any of them contains a value in the range (-infinity,max_old_active_id].
-    NOTE: Do not be tempted to "cache" the minimum, until you also enforce that
-    transactions are inserted to shards in a monotone order!
-    Current implementation heavily depends on the property that even if we put
-    a trx with smaller id to any structure later, it could not have modified a
-    row the caller saw earlier. */
-    static_assert(TRX_SHARDS_N < 1000, "The loop should be short");
-    for (auto &shard : trx_sys->shards) {
-      if (shard.active_rw_trxs.peek().min_id() <= max_old_active_id) {
-        return true;
-      }
-    }
-    return false;
-  }
-  ut_ad(trx_sys_mutex_own());
-  const trx_t *trx = UT_LIST_GET_LAST(trx_sys->rw_trx_list);
-  if (trx == nullptr) {
-    trx_sys_mutex_exit();
-    return false;
-  }
-  assert_trx_in_rw_list(trx);
-  const trx_id_t min_active_now_id = trx->id;
-  trx_sys_mutex_exit();
-  return min_active_now_id <= max_old_active_id;
+  /** Lizard: We have maintained min active id globally. */
+  return lizard::gcs_load_min_active_tid() <= max_old_active_id;
+
+  //  if (mutex_enter_nowait(&trx_sys->mutex) != 0) {
+  //    ut_ad(!trx_sys_mutex_own());
+
+  /* The mutex is currently locked by somebody else. Instead of wasting time
+  on spinning and waiting to acquire it, we loop over the shards and check if
+  any of them contains a value in the range (-infinity,max_old_active_id].
+  NOTE: Do not be tempted to "cache" the minimum, until you also enforce that
+  transactions are inserted to shards in a monotone order!
+  Current implementation heavily depends on the property that even if we put
+  a trx with smaller id to any structure later, it could not have modified a
+  row the caller saw earlier. */
+
+  //    static_assert(TRX_SHARDS_N < 1000, "The loop should be short");
+  //    for (auto &shard : trx_sys->shards) {
+  //      if (shard.active_rw_trxs.peek().min_id() <= max_old_active_id) {
+  //        return true;
+  //      }
+  //    }
+  //    return false;
+  //  }
+  //  ut_ad(trx_sys_mutex_own());
+  //  const trx_t *trx = UT_LIST_GET_LAST(trx_sys->rw_trx_list);
+  //  if (trx == nullptr) {
+  //    trx_sys_mutex_exit();
+  //    return false;
+  //  }
+  //  assert_trx_in_rw_list(trx);
+  //  const trx_id_t min_active_now_id = trx->id;
+  //  trx_sys_mutex_exit();
+  //  return min_active_now_id <= max_old_active_id;
 }
 
 /** Checks if some transaction has an implicit x-lock on a record in a secondary
@@ -1036,15 +1041,16 @@ static bool can_older_trx_be_still_active(trx_id_t max_old_active_id) {
  NOTE that this function can return false positives but never false
  negatives. The caller must confirm all positive results by checking if the trx
  is still active. */
-static trx_t *lock_sec_rec_some_has_impl(const rec_t *rec, dict_index_t *index,
-                                         const ulint *offsets) {
-  trx_t *trx;
+static txn_rw_t lock_sec_rec_some_has_impl(const rec_t *rec,
+                                           dict_index_t *index,
+                                           const ulint *offsets) {
+  txn_rw_t txn_rw;
   trx_id_t max_trx_id;
   const page_t *page = page_align(rec);
 
   ut_ad(!locksys::owns_exclusive_global_latch());
   ut_ad(!trx_sys_mutex_own());
-  ut_ad(!index->is_clustered());
+  ut_ad(!index->is_clustered() && !index->is_panda());
   ut_ad(page_rec_is_user_rec(rec));
   ut_ad(rec_offs_validate(rec, index, offsets));
 
@@ -1056,21 +1062,24 @@ static trx_t *lock_sec_rec_some_has_impl(const rec_t *rec, dict_index_t *index,
   max trx id to the log, and therefore during recovery, this value
   for a page may be incorrect. */
 
+  DBUG_EXECUTE_IF("ib_skip_check_page_max_trx_id", goto requires_clust_rec;);
+
   if (!recv_recovery_is_on() && !can_older_trx_be_still_active(max_trx_id)) {
-    trx = nullptr;
+    txn_rw.reset();
 
   } else if (!lock_check_trx_id_sanity(max_trx_id, rec, index, offsets)) {
     /* The page is corrupt: try to avoid a crash by returning 0 */
-    trx = nullptr;
+    txn_rw.reset();
 
     /* In this case it is possible that some transaction has an implicit
     x-lock. We have to look in the clustered index. */
 
   } else {
-    trx = row_vers_impl_x_locked(rec, index, offsets);
+  [[maybe_unused]] requires_clust_rec:
+    txn_rw = row_vers_impl_x_locked(rec, index, offsets);
   }
 
-  return (trx);
+  return (txn_rw);
 }
 
 #ifdef UNIV_DEBUG
@@ -1084,10 +1093,12 @@ static trx_t *lock_sec_rec_some_has_impl(const rec_t *rec, dict_index_t *index,
 @return true iff there's a transaction, whose id is not equal to trx_id,
         that has an explicit lock on the given rec, in the given
         precise_mode. */
-static bool lock_rec_other_trx_holds_expl(ulint precise_mode, const trx_t *trx,
+static bool lock_rec_other_trx_holds_expl(ulint precise_mode,
+                                          const txn_rw_t &txn_rw,
                                           const rec_t *rec,
                                           const buf_block_t *block) {
   bool holds = false;
+  txn_rw_t impl;
 
   /* We will inspect locks from various shards when inspecting transactions. */
   locksys::Global_exclusive_latch_guard guard{UT_LOCATION_HERE};
@@ -1098,7 +1109,8 @@ static bool lock_rec_other_trx_holds_expl(ulint precise_mode, const trx_t *trx,
   from creating any new explicit locks.
   So, all explicit locks we will see must have been created at the time when
   the transaction was not committed yet. */
-  if (trx_t *impl_trx = trx_rw_is_active(trx->id, false)) {
+  impl = lizard::txn_rw_is_active(txn_rw, false);
+  if (impl.trx) {
     ulint heap_no = page_rec_get_heap_no(rec);
     mutex_enter(&trx_sys->mutex);
 
@@ -1106,7 +1118,7 @@ static bool lock_rec_other_trx_holds_expl(ulint precise_mode, const trx_t *trx,
       const lock_t *expl_lock =
           lock_rec_has_expl(precise_mode, block, heap_no, t);
 
-      if (expl_lock && expl_lock->trx != impl_trx) {
+      if (expl_lock && expl_lock->trx != impl.trx) {
         /* An explicit lock is held by trx other than
         the trx holding the implicit lock. */
         holds = true;
@@ -1719,7 +1731,8 @@ static inline lock_rec_req_status lock_rec_lock_fast(
                               the record */
     ulint heap_no,            /*!< in: heap number of record */
     dict_index_t *index,      /*!< in: index of record */
-    que_thr_t *thr)           /*!< in: query thread */
+    que_thr_t *thr,           /*!< in: query thread */
+    const lock_ignore_t &ignore)
 {
   ut_ad(locksys::owns_page_shard(block->get_page_id()));
   ut_ad(!srv_read_only_mode);
@@ -1746,13 +1759,17 @@ static inline lock_rec_req_status lock_rec_lock_fast(
 
   if (lock == nullptr) {
     if (!impl) {
-      RecLock rec_lock(index, block, heap_no, mode);
+      if (ignore.allowed()) {
+        status = LOCK_REC_IGNORE_CREATE;
+      } else {
+        RecLock rec_lock(index, block, heap_no, mode);
 
-      trx_mutex_enter(trx);
-      rec_lock.create(trx);
-      trx_mutex_exit(trx);
+        trx_mutex_enter(trx);
+        rec_lock.create(trx);
+        trx_mutex_exit(trx);
 
-      status = LOCK_REC_SUCCESS_CREATED;
+        status = LOCK_REC_SUCCESS_CREATED;
+      }
     }
   } else {
     trx_mutex_enter(trx);
@@ -1766,15 +1783,19 @@ static inline lock_rec_req_status lock_rec_lock_fast(
       then we do not set a new lock bit, otherwise we do
       set */
       if (!lock_rec_get_nth_bit(lock, heap_no)) {
-        lock_rec_set_nth_bit(lock, heap_no);
-        status = LOCK_REC_SUCCESS_CREATED;
+        if (ignore.allowed()) {
+          status = LOCK_REC_IGNORE_CREATE;
+        } else {
+          lock_rec_set_nth_bit(lock, heap_no);
+          status = LOCK_REC_SUCCESS_CREATED;
+        }
       }
     }
 
     trx_mutex_exit(trx);
   }
   ut_ad(status == LOCK_REC_SUCCESS || status == LOCK_REC_SUCCESS_CREATED ||
-        status == LOCK_REC_FAIL);
+        status == LOCK_REC_FAIL || status == LOCK_REC_IGNORE_CREATE);
   return (status);
 }
 
@@ -1834,7 +1855,8 @@ lock, or in the case of a page supremum record, a gap type lock.
 DB_SKIP_LOCKED, or DB_LOCK_NOWAIT */
 static dberr_t lock_rec_lock_slow(bool impl, select_mode sel_mode, ulint mode,
                                   const buf_block_t *block, ulint heap_no,
-                                  dict_index_t *index, que_thr_t *thr) {
+                                  dict_index_t *index, que_thr_t *thr,
+				  const lock_ignore_t &ignore) {
   ut_ad(locksys::owns_page_shard(block->get_page_id()));
   ut_ad(!srv_read_only_mode);
   ut_ad((LOCK_MODE_MASK & mode) != LOCK_S ||
@@ -1921,10 +1943,13 @@ static dberr_t lock_rec_lock_slow(bool impl, select_mode sel_mode, ulint mode,
   create an explicit lock so it is easier to track the wait-for relation.*/
   if (!impl || conflicting.bypassed) {
     /* Set the requested lock on the record. */
+    if (ignore.allowed()) {
+      return DB_LOCK_IGNORE_CREATE;
+    } else {
+      lock_rec_add_to_queue(LOCK_REC | mode, block, heap_no, index, trx);
 
-    lock_rec_add_to_queue(LOCK_REC | mode, block, heap_no, index, trx);
-
-    return (DB_SUCCESS_LOCKED_REC);
+      return (DB_SUCCESS_LOCKED_REC);
+    }
   }
   return (DB_SUCCESS);
 }
@@ -1949,7 +1974,8 @@ of a page supremum record, a gap type lock.
 DB_SKIP_LOCKED, or DB_LOCK_NOWAIT */
 static dberr_t lock_rec_lock(bool impl, select_mode sel_mode, ulint mode,
                              const buf_block_t *block, ulint heap_no,
-                             dict_index_t *index, que_thr_t *thr) {
+                             dict_index_t *index, que_thr_t *thr,
+                             const lock_ignore_t &ignore) {
   ut_ad(locksys::owns_page_shard(block->get_page_id()));
   ut_ad(!srv_read_only_mode);
   ut_ad((LOCK_MODE_MASK & mode) != LOCK_S ||
@@ -1966,14 +1992,16 @@ static dberr_t lock_rec_lock(bool impl, select_mode sel_mode, ulint mode,
   ut_ad(!impl || ((mode & LOCK_REC_NOT_GAP) == LOCK_REC_NOT_GAP));
   /* We try a simplified and faster subroutine for the most
   common cases */
-  switch (lock_rec_lock_fast(impl, mode, block, heap_no, index, thr)) {
+  switch (lock_rec_lock_fast(impl, mode, block, heap_no, index, thr, ignore)) {
     case LOCK_REC_SUCCESS:
       return (DB_SUCCESS);
     case LOCK_REC_SUCCESS_CREATED:
       return (DB_SUCCESS_LOCKED_REC);
+    case LOCK_REC_IGNORE_CREATE:
+      return (DB_LOCK_IGNORE_CREATE);
     case LOCK_REC_FAIL:
-      return (
-          lock_rec_lock_slow(impl, sel_mode, mode, block, heap_no, index, thr));
+      return (lock_rec_lock_slow(impl, sel_mode, mode, block, heap_no, index,
+                                 thr, ignore));
     default:
       ut_error;
   }
@@ -5105,16 +5133,16 @@ static void rec_queue_validate_latched(const buf_block_t *block,
   if (index == nullptr) {
     /* Nothing we can do */
 
-  } else if (index->is_clustered()) {
-    trx_id_t trx_id;
+  } else if (index->is_clustered() || index->is_panda()) {
+    txn_rec_t txn_rec;
 
     /* Unlike the non-debug code, this invariant can only succeed
     if the check and assertion are covered by the lock_sys latch. */
 
-    trx_id = lock_clust_rec_some_has_impl(rec, index, offsets);
-
+    lizard::lock_clust_or_panda_rec_some_has_impl(rec, index, offsets,
+                                                  &txn_rec);
     trx_sys->latch_and_execute_with_active_trx(
-        trx_id,
+        txn_rec.trx_id,
         [&](const trx_t *impl_trx) {
           if (impl_trx != nullptr) {
             ut_ad(owns_page_shard(block->get_page_id()));
@@ -5127,12 +5155,17 @@ static void rec_queue_validate_latched(const buf_block_t *block,
             const lock_t *other_lock = lock_rec_other_has_expl_req(
                 LOCK_S, block, true, heap_no, impl_trx);
 
+            bool active = false;
+            scn_list_mutex_enter();
+            active = impl_trx->txn_desc.cmmt.scn == SCN_NULL;
+            scn_list_mutex_exit();
+
             /* The impl_trx is holding an implicit lock on the given 'rec'.
             So there cannot be another explicit granted lock. Also, there can
             be another explicit waiting lock only if the impl_trx has an
             explicit granted lock. */
 
-            if (other_lock != nullptr) {
+            if (other_lock != nullptr && active) {
               ut_a(lock_get_wait(other_lock));
               ut_a(lock_rec_has_expl(LOCK_X | LOCK_REC_NOT_GAP, block, heap_no,
                                      impl_trx));
@@ -5470,10 +5503,12 @@ static void lock_rec_convert_impl_to_expl_for_trx(
     const rec_t *rec,         /*!< in: user record on page */
     dict_index_t *index,      /*!< in: index of record */
     const ulint *offsets,     /*!< in: rec_get_offsets(rec, index) */
-    trx_t *trx,               /*!< in/out: active transaction */
+    txn_rw_t &txn_rw,         /**!< in/out: active transaction */
     ulint heap_no)            /*!< in: rec heap number to lock */
 {
+  trx_t *trx = txn_rw.trx;
   ut_ad(trx_is_referenced(trx));
+  ut_ad(txn_rw.was_slot_fixed());
 
   DEBUG_SYNC_C("before_lock_rec_convert_impl_to_expl_for_trx");
   {
@@ -5496,15 +5531,19 @@ static void lock_rec_convert_impl_to_expl_for_trx(
     and avoid this whole shaky reasoning. */
     trx_mutex_enter(trx);
 
-    ut_ad(!index->is_clustered() ||
-          trx->id ==
-              lock_clust_rec_some_has_impl(
-                  rec, index,
-                  offsets ? offsets : Rec_offsets().compute(rec, index)));
+#ifdef UNIV_DEBUG
+    if (index->is_clustered() || index->is_panda()) {
+      txn_rec_t txn_rec;
+      lizard::lock_clust_or_panda_rec_some_has_impl(
+          rec, index, offsets ? offsets : Rec_offsets().compute(rec, index),
+          &txn_rec);
+      ut_a(trx->id == txn_rec.trx_id);
+    }
+#endif
 
     ut_ad(!trx_state_eq(trx, TRX_STATE_NOT_STARTED));
 
-    if (!trx_state_eq(trx, TRX_STATE_COMMITTED_IN_MEMORY) &&
+    if (!lizard::txn_rw_is_committed_in_memory(txn_rw) &&
         !lock_rec_has_expl(LOCK_X | LOCK_REC_NOT_GAP, block, heap_no, trx)) {
       ulint type_mode;
 
@@ -5517,49 +5556,55 @@ static void lock_rec_convert_impl_to_expl_for_trx(
   }
 
   trx_release_reference(trx);
+  txn_rw.release_slot();
 
   DEBUG_SYNC_C("after_lock_rec_convert_impl_to_expl_for_trx");
 }
 
 void lock_rec_convert_impl_to_expl(const buf_block_t *block, const rec_t *rec,
-                                   dict_index_t *index, const ulint *offsets) {
-  trx_t *trx;
+                                   dict_index_t *index, const ulint *offsets,
+                                   const trx_t *optional_trx) {
+  txn_rw_t txn_rw;
 
   ut_ad(!locksys::owns_exclusive_global_latch());
   ut_ad(page_rec_is_user_rec(rec));
   ut_ad(rec_offs_validate(rec, index, offsets));
   ut_ad(!page_rec_is_comp(rec) == !rec_offs_comp(offsets));
+  ut_ad(!index->table->is_temporary());
 
   DEBUG_SYNC_C("lock_rec_convert_impl_to_expl");
 
-  if (index->is_clustered()) {
-    trx_id_t trx_id;
-
-    trx_id = lock_clust_rec_some_has_impl(rec, index, offsets);
-
-    trx = trx_rw_is_active(trx_id, true);
+  if (index->is_clustered() || index->is_panda()) {
+    txn_rec_t txn_rec;
+    lizard::lock_clust_or_panda_rec_some_has_impl(rec, index, offsets,
+                                                  &txn_rec);
+    txn_rw = lizard::txn_rw_is_active(&txn_rec, true, optional_trx);
   } else {
     ut_ad(!dict_index_is_online_ddl(index));
 
-    trx = lock_sec_rec_some_has_impl(rec, index, offsets);
-    if (trx) {
+    txn_rw = lock_sec_rec_some_has_impl(rec, index, offsets);
+    if (txn_rw.trx) {
       DEBUG_SYNC_C("lock_rec_convert_impl_to_expl_will_validate");
-      ut_ad(!lock_rec_other_trx_holds_expl(LOCK_S | LOCK_REC_NOT_GAP, trx, rec,
-                                           block));
+      ut_ad(txn_rw.was_slot_fixed());
+      ut_ad(!lock_rec_other_trx_holds_expl(LOCK_S | LOCK_REC_NOT_GAP, txn_rw,
+                                           rec, block));
     }
   }
 
-  if (trx != nullptr) {
+  if (txn_rw.trx != nullptr) {
     ulint heap_no = page_rec_get_heap_no(rec);
 
-    ut_ad(trx_is_referenced(trx));
+    ut_ad(trx_is_referenced(txn_rw.trx));
+    ut_ad(txn_rw.was_slot_fixed());
 
     /* If the transaction is still active and has no
     explicit x-lock set on the record, set one for it.
     trx cannot be committed until the ref count is zero. */
 
-    lock_rec_convert_impl_to_expl_for_trx(block, rec, index, offsets, trx,
+    lock_rec_convert_impl_to_expl_for_trx(block, rec, index, offsets, txn_rw,
                                           heap_no);
+
+    ut_ad(!txn_rw.was_slot_fixed());
   }
 }
 
@@ -5582,6 +5627,7 @@ dberr_t lock_clust_rec_modify_check_and_lock(
 {
   dberr_t err;
   ulint heap_no;
+  lock_ignore_t ignore;
 
   ut_ad(rec_offs_validate(rec, index, offsets));
   ut_ad(index->is_clustered());
@@ -5598,14 +5644,14 @@ dberr_t lock_clust_rec_modify_check_and_lock(
   /* If a transaction has no explicit x-lock set on the record, set one
   for it */
 
-  lock_rec_convert_impl_to_expl(block, rec, index, offsets);
+  lock_rec_convert_impl_to_expl(block, rec, index, offsets, thr_get_trx(thr));
 
   {
     locksys::Shard_latch_guard guard{UT_LOCATION_HERE, block->get_page_id()};
     ut_ad(lock_table_has(thr_get_trx(thr), index->table, LOCK_IX));
 
     err = lock_rec_lock(true, SELECT_ORDINARY, LOCK_X | LOCK_REC_NOT_GAP, block,
-                        heap_no, index, thr);
+                        heap_no, index, thr, ignore);
 
     MONITOR_INC(MONITOR_NUM_RECLOCK_REQ);
   }
@@ -5638,8 +5684,8 @@ dberr_t lock_sec_rec_modify_check_and_lock(
 {
   dberr_t err;
   ulint heap_no;
+  lock_ignore_t ignore;
 
-  ut_ad(!index->is_clustered());
   ut_ad(!dict_index_is_online_ddl(index) || (flags & BTR_CREATE_FLAG));
   ut_ad(block->frame == page_align(rec));
 
@@ -5647,6 +5693,7 @@ dberr_t lock_sec_rec_modify_check_and_lock(
     return (DB_SUCCESS);
   }
   ut_ad(!index->table->is_temporary());
+  ut_ad(!index->is_clustered());
 
   heap_no = page_rec_get_heap_no(rec);
 
@@ -5660,7 +5707,7 @@ dberr_t lock_sec_rec_modify_check_and_lock(
     ut_ad(lock_table_has(thr_get_trx(thr), index->table, LOCK_IX));
 
     err = lock_rec_lock(true, SELECT_ORDINARY, LOCK_X | LOCK_REC_NOT_GAP, block,
-                        heap_no, index, thr);
+                        heap_no, index, thr, ignore);
 
     MONITOR_INC(MONITOR_NUM_RECLOCK_REQ);
   }
@@ -5683,7 +5730,8 @@ dberr_t lock_sec_rec_modify_check_and_lock(
 dberr_t lock_sec_rec_read_check_and_lock(
     const lock_duration_t duration, const buf_block_t *block, const rec_t *rec,
     dict_index_t *index, const ulint *offsets, const select_mode sel_mode,
-    const lock_mode mode, const ulint gap_mode, que_thr_t *thr) {
+    const lock_mode mode, const ulint gap_mode, que_thr_t *thr,
+    const lock_ignore_t &ignore) {
   dberr_t err;
   ulint heap_no;
 
@@ -5701,7 +5749,7 @@ dberr_t lock_sec_rec_read_check_and_lock(
   heap_no = page_rec_get_heap_no(rec);
 
   if (!page_rec_is_supremum(rec)) {
-    lock_rec_convert_impl_to_expl(block, rec, index, offsets);
+    lock_rec_convert_impl_to_expl(block, rec, index, offsets, thr_get_trx(thr));
   }
   {
     locksys::Shard_latch_guard guard{UT_LOCATION_HERE, block->get_page_id()};
@@ -5716,7 +5764,7 @@ dberr_t lock_sec_rec_read_check_and_lock(
           lock_table_has(thr_get_trx(thr), index->table, LOCK_IS));
 
     err = lock_rec_lock(false, sel_mode, mode | gap_mode, block, heap_no, index,
-                        thr);
+                        thr, ignore);
 
     MONITOR_INC(MONITOR_NUM_RECLOCK_REQ);
   }
@@ -5724,15 +5772,16 @@ dberr_t lock_sec_rec_read_check_and_lock(
 
   ut_d(locksys::rec_queue_latch_and_validate(block, rec, index, offsets));
   ut_ad(err == DB_SUCCESS || err == DB_SUCCESS_LOCKED_REC ||
-        err == DB_LOCK_WAIT || err == DB_DEADLOCK || err == DB_SKIP_LOCKED ||
-        err == DB_LOCK_NOWAIT);
+        err == DB_LOCK_IGNORE_CREATE || err == DB_LOCK_WAIT ||
+        err == DB_DEADLOCK || err == DB_SKIP_LOCKED || err == DB_LOCK_NOWAIT);
   return (err);
 }
 
 dberr_t lock_clust_rec_read_check_and_lock(
     const lock_duration_t duration, const buf_block_t *block, const rec_t *rec,
     dict_index_t *index, const ulint *offsets, const select_mode sel_mode,
-    const lock_mode mode, const ulint gap_mode, que_thr_t *thr) {
+    const lock_mode mode, const ulint gap_mode, que_thr_t *thr,
+    const lock_ignore_t &ignore) {
   dberr_t err;
   ulint heap_no;
   DEBUG_SYNC_C("before_lock_clust_rec_read_check_and_lock");
@@ -5750,7 +5799,7 @@ dberr_t lock_clust_rec_read_check_and_lock(
   heap_no = page_rec_get_heap_no(rec);
 
   if (heap_no != PAGE_HEAP_NO_SUPREMUM) {
-    lock_rec_convert_impl_to_expl(block, rec, index, offsets);
+    lock_rec_convert_impl_to_expl(block, rec, index, offsets, thr_get_trx(thr));
   }
 
   DEBUG_SYNC_C("after_lock_clust_rec_read_check_and_lock_impl_to_expl");
@@ -5767,7 +5816,7 @@ dberr_t lock_clust_rec_read_check_and_lock(
           lock_table_has(thr_get_trx(thr), index->table, LOCK_IS));
 
     err = lock_rec_lock(false, sel_mode, mode | gap_mode, block, heap_no, index,
-                        thr);
+                        thr, ignore);
 
     MONITOR_INC(MONITOR_NUM_RECLOCK_REQ);
   }
@@ -5776,8 +5825,8 @@ dberr_t lock_clust_rec_read_check_and_lock(
   ut_d(locksys::rec_queue_latch_and_validate(block, rec, index, offsets));
 
   ut_ad(err == DB_SUCCESS || err == DB_SUCCESS_LOCKED_REC ||
-        err == DB_LOCK_WAIT || err == DB_DEADLOCK || err == DB_SKIP_LOCKED ||
-        err == DB_LOCK_NOWAIT);
+        err == DB_LOCK_IGNORE_CREATE || err == DB_LOCK_WAIT ||
+        err == DB_DEADLOCK || err == DB_SKIP_LOCKED || err == DB_LOCK_NOWAIT);
   return (err);
 }
 /** Checks if locks of other transactions prevent an immediate read, or passing
@@ -5805,9 +5854,11 @@ dberr_t lock_clust_rec_read_check_and_lock_alt(
                              LOCK_REC_NOT_GAP */
     que_thr_t *thr)           /*!< in: query thread */
 {
+  lock_ignore_t ignore;
   dberr_t err = lock_clust_rec_read_check_and_lock(
       lock_duration_t::REGULAR, block, rec, index,
-      Rec_offsets().compute(rec, index), SELECT_ORDINARY, mode, gap_mode, thr);
+      Rec_offsets().compute(rec, index), SELECT_ORDINARY, mode, gap_mode, thr,
+      ignore);
 
   if (err == DB_SUCCESS_LOCKED_REC) {
     err = DB_SUCCESS;

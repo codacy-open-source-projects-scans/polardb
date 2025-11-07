@@ -1,3 +1,6 @@
+select @@force_print_utf8mb4_implicit_collation;
+set @@force_print_utf8mb4_implicit_collation=OFF;
+
 SELECT @@GLOBAL.default_collation_for_utf8mb4;
 SELECT @@SESSION.default_collation_for_utf8mb4;
 

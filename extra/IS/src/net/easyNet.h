@@ -52,7 +52,8 @@ extern easy_atomic_t easy_pool_alloc_byte;
  **/
 class EasyNet : public Net {
  public:
-  EasyNet(uint64_t num = 2, const uint64_t sessionTimeout = 300,
+  EasyNet(uint64_t num = 2, const uint64_t sendTimeout = 300,
+          const uint64_t connectTimeout = 300 / 4,
           bool memory_usage_count = false);
   ~EasyNet() override {}
 
@@ -63,7 +64,6 @@ class EasyNet : public Net {
 
   /* TODO here we should use a general handler. */
   easy_addr_t createConnection(const std::string &addr, NetServerRef server,
-                               uint64_t timeout = 1000,
                                uint64_t index = 0) override;
   void disableConnection(easy_addr_t addr) override;
   int sendPacket(easy_addr_t addr, const char *buf, uint64_t len,
@@ -87,7 +87,8 @@ class EasyNet : public Net {
   void delConnDataById(uint64_t id);
   NetServerRef getConnDataAndSetFail(easy_connection_t *c, bool isFail);
   uint64_t getConnCnt() { return connStatus_.size(); }
-  void setSessionTimeout(uint64_t t) { sessionTimeout_ = t; }
+  void setSendTimeout(uint64_t t) { sendTimeout_ = t; }
+  void setConnectTimeout(uint64_t t) { connectTimeout_ = t; }
 
   static void tryFreeMsg(NetPacket *np);
 
@@ -113,7 +114,8 @@ class EasyNet : public Net {
 
   uint64_t reciveCnt_;
   bool isShutdown_;
-  uint64_t sessionTimeout_;
+  uint64_t sendTimeout_;
+  uint64_t connectTimeout_;
 
  private:
   EasyNet(const EasyNet &other);                   // copy constructor

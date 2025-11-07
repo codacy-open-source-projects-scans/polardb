@@ -34,13 +34,17 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "lizard0gp.h"
 #include "lizard0row.h"
+#include "lizard0txn0rec.h"
 #include "lizard0undo.h"
+#include "lizard0btr0pcur.h"
+
 #include "page0page.h"
 #include "row0row.h"
 #include "srv0conc.h"
 #include "srv0srv.h"
 #include "srv0start.h"
 #include "trx0trx.h"
+#include "btr0pcur.h"
 
 class THD;
 
@@ -113,12 +117,12 @@ void gp_sys_destroy() {
      blocked to commit by reference, since we will build the blocking
      relationship.
 */
-std::pair<trx_t *, trx_state_t> trx_rw_is_prepared(trx_id_t trx_id) {
+std::pair<trx_t *, trx_state_t> trx_rw_is_prepared(trx_id_t trx_id,
+                                                   const trx_t *optional_trx) {
   trx_t *trx = nullptr;
   trx_state_t state = TRX_STATE_NOT_STARTED;
 
-  auto &shard = trx_sys->get_shard_by_trx_id(trx_id);
-  if (trx_id < shard.active_rw_trxs.peek().min_id()) {
+  if (optional_trx && trx_id < trx_load_min_active_tid(optional_trx)) {
     return std::make_pair(nullptr, TRX_STATE_COMMITTED_IN_MEMORY);
   }
 
@@ -459,46 +463,47 @@ void gp_wait_suspend_thread(trx_t *trx) {
 
   @param[in]      trx     global query trx context
   @param[in]      rec     user record which should be read
-  @param[in]      index   cluster index
+  @param[in]      index   index with transactional info
   @param[in]      offset  rec_get_offsets(rec, index)
-  @param[in]      pcur
+  @param[in]      pcur    used in cleanout
   @param[in]      vision  consistent read view
 
   @retval         true    visible = true
   @retval         false
 */
-bool gp_clust_rec_cons_read_sees(trx_t *trx, const rec_t *rec,
-                                 dict_index_t *index, const ulint *offsets,
-                                 btr_pcur_t *pcur, lizard::Vision *vision,
-                                 dberr_t *error) {
-  bool active;
+bool gp_clust_or_panda_rec_cons_read_sees(
+    trx_t *trx, const rec_t *rec, dict_index_t *index, const ulint *offsets,
+    btr_pcur_t *pcur, lizard::Vision *vision, dberr_t *error) {
 #ifdef UNIV_DEBUG
   bool looped = false;
 #endif
-  ut_ad(index->is_clustered());
+  ut_ad(!index->table->is_temporary());
+  ut_ad(index->is_clustered() || index->is_panda());
   ut_ad(page_rec_is_user_rec(rec));
   ut_ad(rec_offs_validate(rec, index, offsets));
+  ut_ad(vision->is_asof_gcn());
+  ut_ad(lizard::pcur_position_validate(pcur, rec, index));
 
-  /* Temp-tables are not shared across connections and multiple
-  transactions from different connections cannot simultaneously
-  operate on same temp-table and so read of temp-table is
-  always consistent read. */
-  if (srv_read_only_mode || index->table->is_temporary()) {
-    ut_ad(vision == 0 || !vision->is_active() || index->table->is_temporary());
-    return (true);
+  const txn_layout_t layout = dict_index_txn_layout(index);
+  ut_ad(txn_layout_is_arranged(layout));
+
+  txn_rec_t txn_rec(rec, index, offsets, layout);
+  Cleanout_ctx_t cctx(pcur);
+
+  /** Try to see optimistically. */
+  if (txn_rec_try_see(&txn_rec, layout, vision, cctx(MTR_LOG_NONE))) {
+    return true;
   }
 
-  ut_ad(vision->is_asof_gcn());
-
 retry:
-  txn_rec_t txn_rec;
-  lizard::row_get_txn_rec(rec, index, offsets, &txn_rec);
+  txn_rec_execute_when_query(&txn_rec, layout, vision->visible_by(),
+                             cctx(MTR_LOG_NO_REDO));
 
-  active = txn_rec_cleanout_state_by_misc(&txn_rec, pcur, rec, index, offsets);
   /** 1. Already committed; */
-  if (!active) {
+  if (txn_rec.is_committed()) {
     ut_a(txn_rec.gcn != GCN_NULL);
     ut_a(txn_rec.scn != SCN_NULL);
+    vision->valid_txn_rec_check(&txn_rec);
 
     return (vision->modifications_visible(&txn_rec, index->table->name));
   } else {
@@ -509,7 +514,8 @@ retry:
     ut_ad(txn_rec.gcn == GCN_NULL);
 
     /** Find the prepared trx to wait, others should judge visible directly */
-    std::pair<trx_t *, trx_state_t> result = trx_rw_is_prepared(txn_rec.trx_id);
+    std::pair<trx_t *, trx_state_t> result =
+        trx_rw_is_prepared(txn_rec.trx_id, trx);
 
     switch (result.second) {
         /** 2.1. Still active, judge it for whether itself or not */

@@ -262,6 +262,8 @@ enum dd_index_keys {
   DD_INDEX_SCN,
   /** GCN */
   DD_INDEX_GCN,
+  /** Root page type */
+  DD_INDEX_PAGE_TYPE,
   /** Sentinel */
   DD_INDEX__LAST
 };
@@ -269,7 +271,8 @@ enum dd_index_keys {
 /** InnoDB private key strings for dd::Index or dd::Partition_index.
 @see dd_index_keys */
 const char *const dd_index_key_strings[DD_INDEX__LAST] = {
-    "id", "space_id", "table_id", "root", "trx_id", "uba", "scn", "gcn"};
+    "id",  "space_id", "table_id", "root",     "trx_id",
+    "uba", "scn",      "gcn",      "page_type"};
 
 /** InnoDB private key strings for dd::Index or dd::Partition_index.
 @see dd_index_keys */
@@ -286,6 +289,8 @@ static const dd::String_type dd_partitions_name("mysql/table_partitions");
 static const dd::String_type dd_tablespaces_name("mysql/tablespaces");
 static const dd::String_type dd_indexes_name("mysql/indexes");
 static const dd::String_type dd_columns_name("mysql/columns");
+static const dd::String_type dd_partition_indexes_name(
+    "mysql/index_partitions");
 
 #ifdef UNIV_DEBUG
 
@@ -848,8 +853,7 @@ void dd_import_instant_add_columns(const dict_table_t *table,
 @param[in]      table           InnoDB table object */
 template <typename Table>
 void dd_write_table(dd::Object_id dd_space_id, Table *dd_table,
-                    const dict_table_t *table,
-                    const lizard::Ha_ddl_policy *ddl_policy);
+                    const dict_table_t *table);
 
 /** Set options of dd::Table according to InnoDB table object
 @tparam         Table           dd::Table or dd::Partition
@@ -1018,7 +1022,25 @@ const rec_t *dd_getnext_system_rec(btr_pcur_t *pcur, mtr_t *mtr);
 bool dd_process_dd_indexes_rec(mem_heap_t *heap, const rec_t *rec,
                                const dict_index_t **index, MDL_ticket **mdl,
                                dict_table_t **parent, MDL_ticket **parent_mdl,
-                               dict_table_t *dd_indexes, mtr_t *mtr);
+                               dict_table_t *dd_indexes, mtr_t *mtr,
+                               bool exclude_dd_table);
+
+/** Process one mysql.index_partitions record and get the dict_index_t
+@param[in]      heap            Temp memory heap
+@param[in,out]  rec             mysql.indexes record
+@param[in,out]  index           dict_index_t to fill
+@param[in]      mdl             MDL on index->table
+@param[in,out]  parent          Parent table if it's fts aux table.
+@param[in,out]  parent_mdl      MDL on parent if it's fts aux table.
+@param[in]      dd_indexes      dict_table_t obj of mysql.indexes
+@param[in]      mtr             Mini-transaction
+@retval true if index is filled */
+bool dd_process_dd_partition_indexes_rec(mem_heap_t *heap, const rec_t *rec,
+                                         const dict_index_t **index,
+                                         MDL_ticket **mdl,
+                                         dict_table_t **parent,
+                                         MDL_ticket **parent_mdl,
+                                         dict_table_t *dd_indexes, mtr_t *mtr);
 
 /** Process one mysql.indexes record and get brief info to dict_index_t
 @param[in]      heap            temp memory heap

@@ -1176,7 +1176,7 @@ bool reset_master(THD *thd, bool unlock_global_read_lock) {
     ret = mysql_bin_log.reset_logs(thd);
 
     //append empty log for crash recover
-    if (!ret && thd->variables.opt_consensus_safe_for_reset_master) {
+    if (!ret && thd->variables.opt_consensus_safe_for_reset_master && consensus_ptr) {
       alisql::LogEntry entry1;
       consensus_ptr->getLog()->getEmptyEntry(entry1);
       consensus_ptr->replicateLog(entry1);
@@ -1205,6 +1205,11 @@ end:
   */
   if (!ret)
     (void)RUN_HOOK(binlog_transmit, after_reset_master, (thd, 0 /* flags */));
+
+  if (!ret)
+    LogErr(SYSTEM_LEVEL, ER_DIAGNOSE_CMD_LOG,
+           thd->m_main_security_ctx.user().str,
+           thd->m_main_security_ctx.host_or_ip().str, thd->query().str);
   return ret;
 }
 

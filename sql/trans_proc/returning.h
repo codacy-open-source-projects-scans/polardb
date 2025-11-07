@@ -23,6 +23,9 @@
 #include "sql/trans_proc/common.h"
 #include "sql/trans_proc/returning_parse.h"
 
+#define RETURNING_ALL_PROC_NAME "returning_all"
+#define BACKFILL_RETURNING_PROC_NAME "backfill"
+
 /**
   Return the resultset when dml operation.
 
@@ -33,9 +36,13 @@ namespace im {
 
 class Sql_cmd_trans_proc_returning : public Sql_cmd_trans_proc {
  public:
+  /* Used for returning. */
   explicit Sql_cmd_trans_proc_returning(THD *thd, mem_root_deque<Item *> *list,
-                                        const Proc *proc)
-      : Sql_cmd_trans_proc(thd, list, proc) {}
+                                        const Proc *proc,
+                                        bool is_returning_all)
+      : Sql_cmd_trans_proc(thd, list, proc),
+      m_is_returning_all(is_returning_all) {}
+
   /**
     Implementation of Proc execution body.
 
@@ -57,6 +64,9 @@ class Sql_cmd_trans_proc_returning : public Sql_cmd_trans_proc {
 
   /* Override default send_result */
   virtual void send_result(THD *thd, bool error) override;
+
+ private:
+  bool m_is_returning_all;
 };
 
 class Trans_proc_returning : public Trans_proc_base {
@@ -96,10 +106,10 @@ class Trans_proc_returning : public Trans_proc_base {
   static Proc *instance();
 
   /**
-    Evoke the sql_cmd object for returning() proc.
+    Invoke the sql_cmd object for returning() proc.
   */
-  virtual Sql_cmd *evoke_cmd(THD *thd,
-                             mem_root_deque<Item *> *list) const override;
+  virtual Sql_cmd *invoke_cmd(THD *thd,
+                              mem_root_deque<Item *> *list) const override;
 
   ~Trans_proc_returning() override {}
 
@@ -126,6 +136,90 @@ class Thd_lex_returning_context {
   Lex_returning *m_old_lex_returning;
 };
 
+class Trans_proc_returning_all : public Trans_proc_base {
+  /* All the parameters */
+  enum enum_parameter {
+    RETURNING_PARAM_ITEMS = 0,
+    RETURNING_PARAM_STMT,
+    RETURNING_PARAM_LAST
+  };
+  /* Corresponding field type */
+  enum_field_types get_field_type(enum_parameter param) {
+    switch (param) {
+      case RETURNING_PARAM_ITEMS:
+      case RETURNING_PARAM_STMT:
+        return MYSQL_TYPE_VARCHAR;
+      case RETURNING_PARAM_LAST:
+        assert(0);
+    }
+    return MYSQL_TYPE_LONGLONG;
+  }
+
+ public:
+  explicit Trans_proc_returning_all(PSI_memory_key key) : Trans_proc_base(key) {
+    m_result_type = Result_type::RESULT_SET;
+    /* Init parameters */
+    for (size_t i = RETURNING_PARAM_ITEMS; i < RETURNING_PARAM_LAST; i++) {
+      m_parameters.assign_at(
+          i, get_field_type(static_cast<enum enum_parameter>(i)));
+    }
+  }
+  /* Singleton instance for returning */
+  static Proc *instance();
+
+  /**
+    Invoke the sql_cmd object for returning() proc.
+  */
+  virtual Sql_cmd *invoke_cmd(THD *thd,
+                              mem_root_deque<Item *> *list) const override;
+  virtual ~Trans_proc_returning_all() {}
+  /* Proc name */
+  virtual const std::string str() const override {
+    return std::string(RETURNING_ALL_PROC_NAME);
+  }
+};
+
+class Trans_proc_backfill_returning : public Trans_proc_base {
+  using Sql_cmd_type = Sql_cmd_trans_proc_returning;
+  /* All the parameters */
+  enum enum_parameter {
+    RETURNING_PARAM_ITEMS = 0,
+    RETURNING_PARAM_STMT,
+    RETURNING_PARAM_LAST
+  };
+  /* Corresponding field type */
+  enum_field_types get_field_type(enum_parameter param) {
+    switch (param) {
+      case RETURNING_PARAM_ITEMS:
+      case RETURNING_PARAM_STMT:
+        return MYSQL_TYPE_VARCHAR;
+      case RETURNING_PARAM_LAST:
+        assert(0);
+    }
+    return MYSQL_TYPE_LONGLONG;
+  }
+ public:
+  explicit Trans_proc_backfill_returning(PSI_memory_key key) : Trans_proc_base(key) {
+    m_result_type = Result_type::RESULT_SET;
+    /* Init parameters */
+    for (size_t i = RETURNING_PARAM_ITEMS; i < RETURNING_PARAM_LAST; i++) {
+      m_parameters.assign_at(
+          i, get_field_type(static_cast<enum enum_parameter>(i)));
+    }
+  }
+  /* Singleton instance for returning */
+  static Proc *instance();
+  /**
+    Invoke the sql_cmd object for returning() proc.
+  */
+  virtual Sql_cmd *invoke_cmd(THD *thd,
+                              mem_root_deque<Item *> *list) const override;
+  virtual ~Trans_proc_backfill_returning() {}
+  /* Proc name */
+  virtual const std::string str() const override {
+    return std::string(BACKFILL_RETURNING_PROC_NAME);
+  }
+};
 } /* namespace im */
 
 #endif

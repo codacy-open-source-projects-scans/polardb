@@ -132,6 +132,7 @@ void refresh_status();
 void reset_status_by_thd();
 bool is_secure_file_path(const char *path);
 ulong sql_rnd_with_mutex();
+extern void flush_gcov();
 
 struct System_status_var *get_thd_status_var(THD *thd, bool *aggregated);
 
@@ -343,6 +344,9 @@ extern ulong open_files_limit;
 extern bool clone_startup;
 extern bool clone_recovery_error;
 extern ulong binlog_cache_size, binlog_stmt_cache_size;
+extern bool opt_rds_audit_flush_thread_enabled;
+extern ulong opt_server_max_threads;
+extern ulong opt_error_log_ring_buffer_size;
 extern ulonglong max_binlog_cache_size, max_binlog_stmt_cache_size;
 extern int32 opt_binlog_max_flush_queue_time;
 extern long opt_binlog_group_commit_sync_delay;
@@ -359,6 +363,33 @@ extern uint32 gtid_executed_compression_period;
 extern bool binlog_gtid_simple_recovery;
 extern ulong binlog_error_action;
 extern ulong locked_account_connection_count;
+/* RDS Variables */
+extern bool ic_reduce_hint_enable;
+
+extern std::atomic<ulonglong> group_update_leader_count;
+extern std::atomic<ulonglong> group_update_follower_count;
+extern std::atomic<ulonglong> group_update_free_count;
+extern std::atomic<ulonglong> group_update_reuse_count;
+extern std::atomic<ulonglong> group_update_fail_count;
+extern std::atomic<ulonglong> group_update_assert_count;
+extern std::atomic<ulonglong> group_update_total_count;
+extern std::atomic<ulonglong> group_update_insert_dup;
+extern std::atomic<ulonglong> group_update_ignore_count;
+extern std::atomic<ulonglong> group_update_group_same_count;
+/* END: Variables for RDS */
+
+extern ulonglong sqb_max_trx_affected_rows;
+extern bool polarx_long_trans_external_check;
+extern ulonglong polarx_long_trans_external_threshold;
+
+extern char *sqb_user_pattern;
+
+extern ulong sqb_exec_timeout;
+extern ulong sqb_exec_timeout_for_cpu_exceed;
+extern ulong sqb_cpu_percent_threshold;
+extern bool sqb_enable_slow_query_block;
+extern ulong sqb_check_interval;
+
 enum enum_binlog_error_action {
   /// Ignore the error and let server continue without binlogging
   IGNORE_ERROR = 0,
@@ -421,6 +452,17 @@ extern ulong opt_keyring_migration_port;
 
 extern ulonglong global_conn_mem_limit;
 extern ulonglong global_conn_mem_counter;
+
+extern ulong writeset_current_history_size;
+extern ulong writeset_history_clear_count;
+extern ulong writeset_cannot_use_count;
+extern ulong writeset_exceeds_max_size_count;
+extern ulong writeset_has_missing_keys_count;
+extern ulong writeset_has_related_foreign_keys_count;
+extern ulong writeset_was_write_set_limit_reached_count;
+extern ulong writeset_max_size_in_trx;
+extern ulong writeset_max_size_in_history;
+
 /**
   Variable to check if connection related options are set
   as part of keyring migration.
@@ -489,6 +531,7 @@ extern PSI_mutex_key key_thd_timer_mutex;
 extern PSI_mutex_key key_monitor_info_run_lock;
 extern PSI_mutex_key key_LOCK_delegate_connection_mutex;
 extern PSI_mutex_key key_LOCK_group_replication_connection_mutex;
+extern PSI_mutex_key key_LOCK_tx_commit_pending_mutex;
 
 extern PSI_mutex_key key_commit_order_manager_mutex;
 extern PSI_mutex_key key_mutex_replica_worker_hash;
@@ -526,6 +569,10 @@ extern PSI_cond_key key_COND_thr_lock;
 extern PSI_cond_key key_cond_slave_worker_hash;
 extern PSI_cond_key key_commit_order_manager_cond;
 extern PSI_cond_key key_COND_group_replication_connection_cond_var;
+extern PSI_cond_key key_COND_tx_commit_pending_cond_var;
+#ifndef NDEBUG
+extern PSI_cond_key key_COND_bgc_preempt_cond_var;
+#endif
 extern PSI_thread_key key_thread_bootstrap;
 extern PSI_thread_key key_thread_handle_manager;
 extern PSI_thread_key key_thread_one_connection;
@@ -597,6 +644,7 @@ extern PSI_stage_info stage_flushing_relay_log_and_source_info_repository;
 extern PSI_stage_info stage_flushing_relay_log_info_file;
 extern PSI_stage_info stage_freeing_items;
 extern PSI_stage_info stage_fulltext_initialization;
+extern PSI_stage_info stage_hotspot_wait_for_commit;
 extern PSI_stage_info stage_init;
 extern PSI_stage_info stage_killing_replica;
 extern PSI_stage_info stage_logging_slow_query;
@@ -644,6 +692,7 @@ extern PSI_stage_info stage_statistics;
 extern PSI_stage_info stage_system_lock;
 extern PSI_stage_info stage_update;
 extern PSI_stage_info stage_updating;
+extern PSI_stage_info stage_updating_hotspot_collecting;
 extern PSI_stage_info stage_updating_main_table;
 extern PSI_stage_info stage_updating_reference_tables;
 extern PSI_stage_info stage_user_sleep;
@@ -750,6 +799,7 @@ extern mysql_mutex_t LOCK_admin_tls_ctx_options;
 extern mysql_mutex_t LOCK_rotate_binlog_master_key;
 extern mysql_mutex_t LOCK_partial_revokes;
 extern mysql_mutex_t LOCK_authentication_policy;
+extern mysql_mutex_t LOCK_diagnose_excluded_vars_list;
 extern mysql_mutex_t LOCK_global_conn_mem_limit;
 
 extern mysql_cond_t COND_server_started;

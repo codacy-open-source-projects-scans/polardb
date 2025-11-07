@@ -32,6 +32,7 @@
 #include "lizard0undo.h"
 #include "lizard0xa.h"
 #include "lizard0dict.h"
+#include "lizard0undo0retent.h"
 
 #include <sql_class.h>
 #include "sql/xa/lizard_xa_trx.h"
@@ -40,6 +41,7 @@
 
 #include "libbinlogevents/include/gcn_event.h"
 #include "sql/lizard/lizard_service.h"
+#include "sql/sql_class.h"
 
 extern trx_t *thd_to_trx_if_have(THD *thd);
 
@@ -87,13 +89,26 @@ static bool innobase_start_trx_for_xa(handlerton *hton, THD *thd, bool rw) {
 
   innobase_register_trx_only_trans(hton, thd, trx);
 
-  thd->get_ha_data(hton->slot)->ha_info[1].set_trx_read_write();
+  if (rw) thd->get_ha_data(hton->slot)->ha_info[1].set_trx_read_write();
 
   return false;
 }
 
-bool innobase_assign_slot_for_xa(THD *thd, slot_ptr_t *slot_ptr_arg,
-                                 trx_id_t *trx_id_arg) {
+static bool innobase_start_trx_for_gu(handlerton *hton, THD *thd) {
+  trx_t *trx = check_trx_exists(thd);
+
+  /** check_trx_exists will create trx if no trx. */
+  ut_ad(trx);
+
+  trx_start_if_not_started(trx, true, UT_LOCATION_HERE);
+
+  innobase_register_trx(hton, thd, trx);
+
+  return false;
+}
+
+bool innobase_assign_trans_slot(THD *thd, slot_ptr_t *slot_ptr_arg,
+                                trx_id_t *trx_id_arg) {
   slot_ptr_t *slot_ptr = static_cast<slot_ptr_t *>(slot_ptr_arg);
   trx_id_t *trx_id = static_cast<trx_id_t *>(trx_id_arg);
   trx_t *trx = check_trx_exists(thd);
@@ -104,6 +119,7 @@ bool innobase_assign_slot_for_xa(THD *thd, slot_ptr_t *slot_ptr_arg,
   /** The trx must have been started as rw mode. */
   if (!trx_is_registered_for_2pc(trx) || !trx_is_started(trx) || trx->id == 0 ||
       trx->read_only) {
+    ut_ad(thd->gu_ctx.is_not_gu());
     return true;
   }
 
@@ -119,33 +135,35 @@ bool innobase_assign_slot_for_xa(THD *thd, slot_ptr_t *slot_ptr_arg,
 
 static bool innobase_search_detach_prepare_trx_by_xid(const XID *xid,
                                                       MyXAInfo *info) {
-  return lizard::xa::trx_search_detach_prepare_by_xid(xid, info);
+  return lizard::trx_search_detach_prepare_by_xid(xid, info);
 }
 
 static bool innobase_search_rollback_background_trx_by_xid(const XID *xid,
                                                            MyXAInfo *info) {
-  return lizard::xa::trx_search_rollback_background_by_xid(xid, info);
+  return lizard::trx_search_rollback_background_by_xid(xid, info);
 }
 
-static bool innobase_search_history_trx_by_xid(const XID *xid, MyXAInfo *info) {
-  return lizard::xa::trx_search_history_by_xid(xid, info);
+static bool innobase_search_history_trx_by_xid(const XID *xid, MyXAInfo *info,
+                                               const slot_ptr_t slot_ptr_hint) {
+  return lizard::trx_search_history_by_xid(xid, info, slot_ptr_hint);
 }
 
 template <typename T>
-static trx_id_t innobase_search_up_limit_tid(const T &lhs) {
+static trx_id_t innobase_search_up_limit_tid(const T *lhs) {
   return static_cast<trx_id_t>(lizard::gcs_search_up_limit_tid<T>(lhs));
 }
 
 template trx_id_t innobase_search_up_limit_tid<lizard::Snapshot_scn_vision>(
-    const lizard::Snapshot_scn_vision &lhs);
+    const lizard::Snapshot_scn_vision *lhs);
 template trx_id_t innobase_search_up_limit_tid<lizard::Snapshot_gcn_vision>(
-    const lizard::Snapshot_gcn_vision &lhs);
+    const lizard::Snapshot_gcn_vision *lhs);
 
 /**
-  Copy server XA attributes into innobase.
-
-  @param[in]      thd       connection handler.
-*/
+ * Copy server XA attributes into innobase.
+ *
+ * @param[in]      thd       connection handler.
+ *
+ */
 static void innobase_register_xa_attributes(THD *thd) {
   trx_t *&trx = thd_to_trx(thd);
   ut_ad(trx != nullptr);
@@ -154,13 +172,61 @@ static void innobase_register_xa_attributes(THD *thd) {
     /** Note: Other session will compare trx group when assign readview. */
     trx_mutex_enter(trx);
 
-    thd_get_xid(thd, (MYSQL_XID *)trx->xad.my_xid());
-    trx->xad.build_group();
+    trx->xa_desc.copy_xid(thd->get_transaction()->xid_state()->get_xid());
 
-    ut_ad(!trx->xad.is_null());
+    ut_ad(!trx->xa_desc.is_xid_null());
 
     trx_mutex_exit(trx);
   }
+}
+
+/**
+ * Build xa group id for the trx, and try to reference the corresponding xa
+ * group. Create xa group if not exist. Notice: the xid does not meet the
+ * format requirement is allowed, but will be ignored, which means that no
+ * xa groups will be created or referenced.
+ *
+ * @param[in]     thd       connection handler.
+ * @return false if xa group has been closed, otherwise true.
+ */
+static bool innobase_register_xa_group(THD *thd) {
+  trx_t *&trx = thd_to_trx(thd);
+  ut_ad(trx != nullptr);
+  ut_ad(trx_is_registered_for_2pc(trx));
+
+  /** Note: Other session will compare trx group when assign readview. */
+  trx_mutex_enter(trx);
+
+  /* xid must have been set. */
+  ut_ad(!trx->xa_desc.is_xid_null());
+
+  /* 1. build xa group id. */
+  if (!trx->xa_desc.build_gid()) {
+    trx_mutex_exit(trx);
+    return true;
+  }
+
+  /* 2. create xa group if not exist, then fix it to avoid release. */
+  Xa_group *xa_group = nullptr;
+  bool closed;
+  trx_sys->xa_group_shards[trx_get_xa_group_shard_no(trx->xa_desc.gid())]
+      .xa_groups.latch_and_execute(
+          [&](Xa_group_by_id &xa_group_by_id) {
+            xa_group = xa_group_by_id.get(trx->xa_desc.gid(), true);
+            closed = xa_group->is_closed();
+            if (!closed) {
+              /** fix the xa group. */
+              xa_group->acquire();
+              trx->xa_desc.set_group(xa_group);
+            }
+          },
+          UT_LOCATION_HERE);
+
+  if (closed) trx->xa_desc.reset();
+
+  trx_mutex_exit(trx);
+
+  return !closed;
 }
 
 uint64 innobase_load_gcn() { return lizard::gcs_load_gcn(); }
@@ -212,75 +278,60 @@ void innobase_purge_status(lizard::purge_status_t &status) {
 }
 
 void innobase_flush_gpp_stat() {
-  lizard::lizard_stats.index_scan_guess_clust_hit.reset();
-  lizard::lizard_stats.index_scan_guess_clust_miss.reset();
-  lizard::lizard_stats.index_purge_guess_clust_hit.reset();
-  lizard::lizard_stats.index_purge_guess_clust_miss.reset();
-  lizard::lizard_stats.index_lock_guess_clust_hit.reset();
-  lizard::lizard_stats.index_lock_guess_clust_miss.reset();
+  lizard::generic_stats.index_scan_guess_clust_hit.reset();
+  lizard::generic_stats.index_scan_guess_clust_miss.reset();
+  lizard::generic_stats.index_purge_guess_clust_hit.reset();
+  lizard::generic_stats.index_purge_guess_clust_miss.reset();
+  lizard::generic_stats.index_lock_guess_clust_hit.reset();
+  lizard::generic_stats.index_lock_guess_clust_miss.reset();
   lizard::Gpp_index_stat_flusher flusher;
   dict_sys->for_each_table(flusher);
 }
 
-void innobase_decide_xa_when_prepare(MyGCN *gcn) {
-  lizard::decide_xa_when_prepare(gcn);
-}
+void innobase_flush_cleanout_stat() {
+  lizard::generic_stats.cleanout_cursor_restore_fail.reset();
 
-void innobase_decide_xa_when_commit(THD *thd, MyGCN *gcn,
-                                    xa_addr_t *master_addr) {
-  /* We request to stop master thread in srv_shutdown, which is invoked
-  after DD has been shut down. Since that point of time, we must not need
-  transaction objects for any reasons. */
-  ut_ad(srv_shutdown_state_matches([](auto state) {
-    return state < SRV_SHUTDOWN_MASTER_STOP ||
-           state == SRV_SHUTDOWN_EXIT_THREADS;
-  }));
-
-  trx_t *trx = thd_to_trx_if_have(thd);
-
-  lizard::decide_xa_when_commit(trx, gcn, master_addr);
-}
-
-void innobase_decide_xa_when_commit_by_xid(handlerton *hton, XID *xid,
-                                           MyGCN *gcn, xa_addr_t *master_addr) {
-  trx_t *trx = trx_get_trx_by_xid(xid);
-
-  if (trx != nullptr) {
-    /* Side effect of retrieving the transaction is XID being set to null */
-    *trx->xid = *xid;
-  }
-
-  lizard::decide_xa_when_commit(trx, gcn, master_addr);
+  lizard::generic_stats.scan_cleanout_txn_clean.reset();
+  lizard::generic_stats.scan_cleanout_gpp_clean.reset();
+  lizard::generic_stats.ddl_cleanout_clean.reset();
+  lizard::generic_stats.commit_cleanout_clean.reset();
 }
 
 /**
- * InnoDB storage copy external commit number (gcn) if assigned by user when
- * commit
- *
- * @param[in]		user context
- * @param[in/out]	innobase trx context */
-void innobase_copy_user_commit(THD *thd, trx_t *trx) {
-  ut_ad(trx->txn_desc.cmmt.gcn == GCN_NULL);
-  innobase_decide_xa_when_commit(thd, &thd->owned_commit_gcn,
-                                 &thd->owned_master_addr);
+ * Check if all transaction slots is reserved enough time.
+ * @return true if reserved enough time. */
+bool innobase_trx_slot_check_retention() {
+  DBUG_EXECUTE_IF("ac_not_care_txn_retention", return true;);
 
-  trx->txn_desc.copy_xa_when_commit(thd->owned_commit_gcn, thd->owned_master_addr);
+  return lizard::Undo_retention::retention_time || lizard::txn_retention_time;
 }
 
-/**
- * InnoDB storage copy external proposal number (gcn) if assigned by user when
- * prepare
- * @param[in/out]	user context
- * @param[in/out]	innobase trx context */
-void innobase_copy_user_prepare(THD *thd, trx_t *trx) {
-  ut_ad(trx->txn_desc.pmmt.is_null());
+trx_t *innobase_get_trx_by_thd(THD *thd) {
+  trx_t *trx;
+  auto xid_state = thd->get_transaction()->xid_state();
 
-  innobase_decide_xa_when_prepare(&thd->owned_commit_gcn);
+  ut_ad(xid_state->check_in_xa(false));
 
-  if (thd->owned_commit_gcn.is_pmmt_gcn()) {
-    trx->txn_desc.copy_xa_when_prepare(thd->owned_commit_gcn,
-                                       thd->owned_xa_branch);
+  if (!xid_state->is_detached()) {
+    ut_ad(srv_shutdown_state_matches([](auto state) {
+      return state < SRV_SHUTDOWN_MASTER_STOP ||
+             state == SRV_SHUTDOWN_EXIT_THREADS;
+    }));
+
+    trx = thd_to_trx_if_have(thd);
+  } else {
+    trx = trx_get_trx_by_xid(xid_state->get_xid());
+    if (trx != nullptr) {
+      /* Side effect of retrieving the transaction is XID being set to null */
+      *trx->xid = *xid_state->get_xid();
+    }
   }
+
+  return trx;
+}
+
+bool innobase_has_started_mysql_trx() {
+  return has_started_mysql_trx();
 }
 
 /**
@@ -290,6 +341,8 @@ void innobase_copy_user_prepare(THD *thd, trx_t *trx) {
 */
 void innobase_init_ext(handlerton *hton) {
   hton->ext.register_xa_attributes = innobase_register_xa_attributes;
+  hton->ext.register_xa_group = innobase_register_xa_group;
+
   hton->ext.load_gcn = innobase_load_gcn;
   hton->ext.load_scn = innobase_load_scn;
 
@@ -300,7 +353,8 @@ void innobase_init_ext(handlerton *hton) {
       innobase_snapshot_automatic_gcn_too_old;
   hton->ext.set_gcn_if_bigger = innobase_set_gcn_if_bigger;
   hton->ext.start_trx_for_xa = innobase_start_trx_for_xa;
-  hton->ext.assign_slot_for_xa = innobase_assign_slot_for_xa;
+  hton->ext.start_trx_for_gu = innobase_start_trx_for_gu;
+  hton->ext.assign_trans_slot = innobase_assign_trans_slot;
   hton->ext.search_detach_prepare_trx_by_xid =
       innobase_search_detach_prepare_trx_by_xid;
   hton->ext.search_rollback_background_trx_by_xid =
@@ -314,10 +368,9 @@ void innobase_init_ext(handlerton *hton) {
   hton->ext.trunc_status = innobase_trunc_status;
   hton->ext.purge_status = innobase_purge_status;
   hton->ext.flush_gpp_stat = innobase_flush_gpp_stat;
-  hton->ext.decide_xa_when_prepare = innobase_decide_xa_when_prepare;
-  hton->ext.decide_xa_when_commit = innobase_decide_xa_when_commit;
-  hton->ext.decide_xa_when_commit_by_xid =
-      innobase_decide_xa_when_commit_by_xid;
+  hton->ext.flush_cleanout_stat = innobase_flush_cleanout_stat;
+  hton->ext.trx_slot_check_retention = innobase_trx_slot_check_retention;
+  hton->ext.has_started_mysql_trx = innobase_has_started_mysql_trx;
 }
 
 enum_tx_isolation thd_get_trx_isolation(const THD *thd);

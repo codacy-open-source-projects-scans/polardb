@@ -16,15 +16,18 @@ create table t(id int);
 insert into t values(0);
 --replace_column 2 # 5 #
 show master status;
+--sleep 2
 select max(interval_end) from mysql.gtid_executed;
 --source include/wait_follower_catchup.inc
 
 --connection conn2
 --replace_column 2 # 5 #
 show master status;
+--sleep 2
 select max(interval_end) from mysql.gtid_executed;
 --connection conn1
 flush logs;
+--sleep 2
 select max(interval_end) from mysql.gtid_executed;
 drop table t;
 
@@ -149,12 +152,13 @@ show master status;
 #bug22962305 init gtid set scan all binlog files
 flush logs;
 insert into t values(2);
+drop table t;
 --exec echo "restart" > $MYSQLTEST_VARDIR/tmp/mysqld.1.expect
 --enable_reconnect
 --source include/wait_until_connected_again.inc
+--source include/wait_follower_catchup.inc
 --disable_reconnect
 
 #bug23162444 gtid error before the cluster has elected a leader
 --exec cat $MYSQLTEST_VARDIR/log/mysqld.1.err | grep "Can't find the log has the commit index 0" | wc -l
 
-drop table t;

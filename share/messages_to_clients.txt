@@ -10139,7 +10139,7 @@ ER_CONSENSUS_CONFIG_BAD
 ER_CONSENSUS_FOLLOWER_NOT_ALLOWED
   eng "The consensus follower is not allowed to to do current operation."
 
-ER_CONSENSUS_LEADERSHIP_CHANGE
+ER_CONSENSUS_LEADERSHIP_CHANGED
   eng "The cluster's leadership has already change, please relocate consensus leader and retry."
 
 ER_CONSENSUS_LOG_TOO_LARGE
@@ -10181,6 +10181,54 @@ ER_XA_PROC_INVALID_MASTER_INFO
 
 ER_XA_PROC_INVALID_XA_BRANCH_PARAM
   eng "Invalid xa branch parms. global branch: %d, local branch: %d."
+
+ER_CONSENSUS_LEADERSHIP_IS_CHANGING
+  eng "The cluster's leadership is changing with waiting from @@consensus_wait_milliseconds_before_change_leader, please relocate consensus leader and retry."
+
+ER_XA_PROC_RETENTION_NOT_SATISFIED
+  eng "Transaction slots may be cleaned up immediately because the retention time of transaction slots is not set. It is recommended to adjust innodb_txn_retention to a large enough value."
+
+ER_XA_GROUP_TRX_SLOT_ALLOC_ERROR
+  eng "Failed to allocate transaction slot when xa start."
+
+ER_XA_GROUP_CLOSE_ERROR
+  eng "Cannot start a new xa branch when enable transaction group, if there has been already one xa branch in prepared state."
+
+ER_EMPTY_XA_NOT_ALLOWED
+  eng "Empty XA transactions not allowed from @@consensus_disable_empty_xa."
+
+ER_PING_CHECK_FAILED
+  eng "PING check(%llu) failed with %s."
+
+ER_VARIABLE_CHANGE_FAIL
+  eng "Variable '%-.64s' cannot be enabled because '%-.64s' is enabled/disabled"
+
+ER_CONN_CONTROL_CONN_REFUSE_CONNECTION
+  eng "The authentication of user is denied for entering the wrong password multiple times with the period."
+
+ER_LICENSE_FILE_NOT_FOUND
+  eng "License file not found. Please check the file path in the configuration file."
+
+ER_LICENSE_FILE_CORRUPTED
+  eng "%s. Please check the license file or connect with support team."
+
+ER_LICENSE_FILE_INVALID
+  eng "License file is invalid(%s). Please check the license file or connect with support team."
+
+ER_LICENSE_FILE_RESTRICTION
+  eng "Beyond the authorization limits(%s). Please check the license file or connect with support team."
+
+ER_LICENSE_PROC_DISABLE
+  eng "DBMS_LICENSE is disabled for current version."
+
+ER_TRANSACTION_TOO_BIG
+  eng "Transaction is too big, please split it into smaller transactions."
+
+ER_SLOW_QUERY_EXCEED_TIME
+  eng "Slow query blocker, query killed bacause exceeding time limit, change variable polarx_slow_query_block_exec_timeout."
+
+ER_SLOW_QUERY_TIME_FOR_CPU_EXECEED
+  eng "Slow query blocker, query killed bacause cpu usage high and exceeding time limit, change variable polarx_slow_query_block_cpu_percent_threshold and polarx_slow_query_block_exec_timeout_for_cpu_exceed."
 
 #
 #  End of RDS error message.
@@ -10247,6 +10295,12 @@ ER_IC_NOT_ALLOWED_IN_AUTOCOMMIT
 
 ER_IC_NOT_MATCH_TARGET
   eng "Inventory conditional hints didn't match with result"
+
+ER_MYISAM_NOT_SUPPORT_ROLLBACK
+  eng "When disable_binlog_savepoint is on, don't use MyISAM table, because MyISAM table can't rollback"
+
+ER_NO_COLLATION_FOR_UTF8MB4_CHARSET 42000
+  eng "Need explicitly specified utf8mb4 COLLATE for '%s' from @@disable_default_collation_for_utf8mb4"
 
 #
 # End of PolarDB-X special error messages intended to be return to CN.

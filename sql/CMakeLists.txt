@@ -386,6 +386,7 @@ SET(SQL_SHARED_SOURCES
   filesort.cc
   filesort_utils.cc
   aggregate_check.cc
+  group_update.cc
   gstream.cc
   handler.cc
   histograms/equi_height.cc
@@ -647,6 +648,7 @@ SET(SQL_SHARED_SOURCES
   polarx_proc/changeset_manager.cc
   polarx_proc/changeset_proc.cc
   polarx_proc/thread_pool.cc
+  gh_slow_query_block/slow_query_block.cc
   package/package.cc
   package/package_cache.cc
   package/package_common.cc
@@ -658,6 +660,7 @@ SET(SQL_SHARED_SOURCES
   trans_proc/returning.cc
   trans_proc/returning_parse.cc
   package/proc_gpp.cc
+  package/proc_conn.cc
   trans_proc/implicit_savepoint.cc
   ccl/ccl_cache.cc
   ccl/ccl.cc
@@ -721,6 +724,7 @@ SET(SQL_SHARED_SOURCES
   sql_implicit_common.cc
   sql_implicit_element.cc
   xrpc/xrpc_proc.cc
+  proxy/proxy_proc.cc
   keyring/keyring_common.cc
   keyring/keyring_generate_key.cc
   keyring/keyring_current_key_id.cc
@@ -728,7 +732,10 @@ SET(SQL_SHARED_SOURCES
   inventory/inventory_hint.cc
   lizard/undo_proc.cc
   lizard_sql_class.cc
-  lizard/lizard_service.cc
+  pli/license_proc.cc
+  pli/pli.cc
+  pli/pli_noop.cc
+  package/proc_cleanout.cc
 )
 
 IF(BUILD_IS_SINGLE_CONFIG)
@@ -1225,6 +1232,10 @@ ENDIF()
 # build as static library
 SET (PPI_SOURCE ppi/ppi.cc ppi/ppi_noop.cc)
 ADD_CONVENIENCE_LIBRARY(ppi ${PPI_SOURCE})
+
+# build as static library
+SET (PLI_SOURCE pli/pli.cc pli/pli_noop.cc)
+ADD_CONVENIENCE_LIBRARY(pli ${PLI_SOURCE})
 
 IF(WIN32)
   SET(MYSQLD_SOURCE

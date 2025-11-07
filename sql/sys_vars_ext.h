@@ -34,6 +34,7 @@
 #include "my_inttypes.h"
 #include "my_sharedlib.h"
 #include "mysql_com.h"
+#include "sql_const.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -45,11 +46,21 @@ extern "C" MYSQL_PLUGIN_IMPORT char innodb_version[SERVER_VERSION_LENGTH];
 static constexpr uint DEFAULT_RPC_PORT = 33660;
 extern int32 opt_rpc_port;
 extern bool opt_enable_polarx_rpc;
+extern ulonglong opt_changeset_threads;
+
 
 static constexpr ulonglong DEFAULT_IMPORT_TABLESPACE_ITERATOR_INTERVAL = 0;
 extern ulonglong opt_import_tablespace_iterator_interval_ms;
+extern bool opt_enable_binlog_wait_if_full;
 
 extern void customize_server_version();
 
 extern void print_build_info();
+
+namespace lizard {
+extern SHOW_COMP_OPTION have_xa_prepare_with_trx_slot;
+extern SHOW_COMP_OPTION have_xa_async_commit;
+extern SHOW_COMP_OPTION have_xa_find_by_xid_with_hint;
+}  // namespace lizard
+
 #endif /* SYS_VARS_EXT_INCLUDED */

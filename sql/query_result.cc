@@ -106,6 +106,30 @@ bool Query_result_send::send_data(THD *thd,
   return protocol->end_row();
 }
 
+bool Query_result_send::send_returning_data(THD *thd,
+                                            const mem_root_deque<Item *> &items,
+                                            bool is_before, ptrdiff_t diff) {
+  Protocol *protocol = thd->get_protocol();
+  DBUG_TRACE;
+
+  protocol->start_row();
+  
+  /* 0 - before, 1 - after  */
+  if (is_before) {
+    thd->get_protocol()->store(longlong{0});
+  } else {
+    thd->get_protocol()->store(longlong{1});
+  }
+
+  if (thd->send_returning_result_set_row(items, diff, is_before)) {
+    protocol->abort_row();
+    return true;
+  }
+
+  thd->inc_sent_row_count(1);
+  return protocol->end_row();
+}
+
 bool Query_result_send::send_eof(THD *thd) {
   /*
     Don't send EOF if we're in error condition (which implies we've already
@@ -154,7 +178,7 @@ bool Query_result_to_file::send_eof(THD *thd) {
   if (mysql_file_close(file, MYF(MY_WME)) || thd->is_error()) error = true;
 
   if (!error) {
-    ::my_ok(thd, row_count);
+    error = ::set_my_ok(thd, row_count);
   }
   file = -1;
   return error;
@@ -745,6 +769,6 @@ bool Query_dumpvar::send_eof(THD *thd) {
   */
   if (thd->is_error()) return true;
 
-  ::my_ok(thd, row_count);
+  if(::set_my_ok(thd, row_count)) return true;
   return false;
 }

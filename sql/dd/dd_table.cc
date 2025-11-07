@@ -1070,6 +1070,8 @@ static void fill_dd_indexes_from_keyinfo(
 
     idx_obj->set_engine_attribute(key->engine_attribute);
     idx_obj->set_secondary_engine_attribute(key->secondary_engine_attribute);
+    assert(key->secondary_engine_attribute.length == 0);
+    idx_obj->set_se_attr_hint(key->se_attr_hint);
     //
     // Set options
     //
@@ -2293,7 +2295,7 @@ static bool get_se_private_data(THD *thd, dd::Table *tab_obj) {
   int count = 0;
   for (auto idx : *tab_obj->indexes()) {
     std::stringstream ss;
-    ss << DD_properties::dd_key(DD_properties::DD_property::IDX) << count++;
+    ss << DD_properties::dd_key(DD_properties::DD_property::IDX) << count;
     if (tbl_props->get(ss.str().c_str(), &se_data)) {
       my_error(ER_DD_METADATA_NOT_FOUND, MYF(0), tab_obj->name().c_str());
       return true;
@@ -2301,11 +2303,11 @@ static bool get_se_private_data(THD *thd, dd::Table *tab_obj) {
     idx->set_se_private_data(se_data);
 
     /* Deal with IFT option. */
-    ulonglong IFT_option;
+    ulonglong IFT_option = 0;
     String_type options_raw;
     std::stringstream options_ss;
-    ss << DD_properties::dd_key(DD_properties::DD_property::IDX) << count
-       << "options";
+    options_ss << DD_properties::dd_key(DD_properties::DD_property::IDX)
+               << count << "options";
 
     /* For compatibility, no idx${count}options is ok. */
     if (tbl_props->exists(options_ss.str().c_str())) {
@@ -2320,8 +2322,16 @@ static bool get_se_private_data(THD *thd, dd::Table *tab_obj) {
       idx->options().set(lizard::OPTION_IFT, IFT_option);
     }
 
+    /* Check dd table not contains panda */
+    if (idx->se_private_data().exists(lizard::PAGE_TYPE_STR)) {
+      uint16_t page_type = 0;
+      idx->se_private_data().get(lizard::PAGE_TYPE_STR, &page_type);
+      assert(page_type != lizard::PANDA_PAGE_TYPE);
+    }
+
     // Assign the same tablespace id for the indexes as for the table.
     idx->set_tablespace_id(space_id);
+    count++;
   }
 
   // Assign SE private data for columns.

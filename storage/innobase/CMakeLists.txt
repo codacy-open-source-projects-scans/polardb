@@ -66,7 +66,8 @@ SET(INNOBASE_ZIP_DECOMPRESS_SOURCES
   rem/rem0wrec.cc
   ut/crc32.cc
   ut/ut.cc
-  ut/ut0new.cc)
+  ut/ut0new.cc
+  dict/lizard0dict0mem.cc )
 
 SET(INNOBASE_SOURCES
   api/api0api.cc
@@ -266,7 +267,7 @@ SET(INNOBASE_SOURCES
   dict/lizard0dict.cc
   fil/lizard0fil.cc
   fsp/lizard0fsp.cc
-  trx/lizard0txn.cc
+  fsp/lizard0txn0space.cc
   trx/lizard0undo.cc
   mtr/lizard0mtr.cc
   row/lizard0row.cc
@@ -278,18 +279,45 @@ SET(INNOBASE_SOURCES
   ut/lizard0ut.cc
   page/lizard0page.cc
   read/lizard0read.cc
+  read/lizard0read0xa.cc
   trx/lizard0trx.cc
   dict/lizard0gcs0hist.cc
   row/lizard0mysql.cc
+  row/lizard0row0gpp.cc
   trx/lizard0gp.cc
   trx/lizard0xa.cc
   trx/lizard0tcn.cc
-  ut/lizard0iv.cc
+  trx/lizard0txn.cc
+  trx/lizard0txn0rec.cc
+  trx/lizard0undo0types.cc
   dict/lizard0dict0mem.cc
   data/lizard0data0data.cc
   mtr/lizard0mtr0log.cc
   dict/lizard0dd0policy.cc
   btr/lizard0cleanout0safe.cc
+  trx/lizard0cmmt0policy.cc
+  trx/lizard0undo0retent.cc
+  trx/lizard0service.cc
+  trx/lizard0txn0service.cc
+  row/lizard0row0vers.cc
+  btr/lizard0btr0btr.cc
+  row/lizard0row0upd.cc
+  lock/lizard0lock0lock.cc
+  trx/lizard0row0purge.cc
+  row/lizard0row0uins.cc
+  row/lizard0row0ins.cc
+  row/lizard0row0umod.cc
+  trx/lizard0trx0rec.cc
+  dict/lizard0dict0gpp.cc
+  row/lizard0row0clover.cc
+  row/lizard0row0bamboo.cc
+  trx/lizard0trx0rec0clover.cc
+  trx/lizard0trx0rec0bamboo.cc
+  btr/lizard0btr0cur0clover.cc
+  btr/lizard0btr0cur0bamboo.cc
+  btr/lizard0btr0cur0gpp.cc
+  btr/lizard0btr0pcur.cc
+  row/lizard0row0undo.cc
   )
 
 # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=98753
@@ -374,7 +402,7 @@ MYSQL_ADD_PLUGIN(innobase
   ${INNOBASE_SOURCES} ${INNOBASE_ZIP_DECOMPRESS_SOURCES} STORAGE_ENGINE
   MANDATORY
   MODULE_OUTPUT_NAME ha_innodb
-  LINK_LIBRARIES sql_dd sql_gis ${ZLIB_LIBRARY} ${LZ4_LIBRARY} ${NUMA_LIBRARY})
+  LINK_LIBRARIES sql_dd sql_gis mysys ${ZLIB_LIBRARY} ${LZ4_LIBRARY} ${NUMA_LIBRARY})
 
 # On linux: /usr/include/stdio.h:#define BUFSIZ 8192
 # On Solaris: /usr/include/iso/stdio_iso.h:#define    BUFSIZ  1024

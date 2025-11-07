@@ -2775,8 +2775,10 @@ class PT_check_constraint final : public PT_table_constraint_def {
 class PT_column_def : public PT_table_element {
   typedef PT_table_element super;
 
+public:
   const LEX_STRING field_ident;
   PT_field_def_base *field_def;
+private:
   // Currently we ignore that constraint in the executor.
   PT_table_constraint_def *opt_column_constraint;
 
@@ -3284,15 +3286,25 @@ class PT_show_create_procedure final : public PT_show_base {
 
 /// Parse tree node for SHOW CREATE TABLE and VIEW statements
 
-class PT_show_create_table final : public PT_show_base {
+class PT_show_create_table : public PT_show_base {
  public:
-  PT_show_create_table(const POS &pos, Table_ident *table_ident)
-      : PT_show_base(pos, SQLCOM_SHOW_CREATE), m_sql_cmd(false, table_ident) {}
+  PT_show_create_table(const POS &pos, Table_ident *table_ident,
+                       bool for_export = false)
+      : PT_show_base(pos, SQLCOM_SHOW_CREATE),
+        m_sql_cmd(false, table_ident, for_export) {}
 
   Sql_cmd *make_cmd(THD *thd) override;
 
  private:
   Sql_cmd_show_create_table m_sql_cmd;
+};
+
+/// Parse tree node for SHOW CREATE TABLE FOR EXPORT statement
+
+class PT_show_create_table_for_export final : public PT_show_create_table {
+ public:
+  PT_show_create_table_for_export(const POS &pos, Table_ident *table_ident)
+      : PT_show_create_table(pos, table_ident, true) {}
 };
 
 /// Parse tree node for SHOW CREATE TRIGGER statement
@@ -3330,7 +3342,8 @@ class PT_show_create_user final : public PT_show_base {
 class PT_show_create_view final : public PT_show_base {
  public:
   PT_show_create_view(const POS &pos, Table_ident *table_ident)
-      : PT_show_base(pos, SQLCOM_SHOW_CREATE), m_sql_cmd(true, table_ident) {}
+      : PT_show_base(pos, SQLCOM_SHOW_CREATE),
+        m_sql_cmd(true, table_ident, false) {}
 
   Sql_cmd *make_cmd(THD *thd) override;
 
@@ -5273,4 +5286,8 @@ PT_column_attr_base *make_column_secondary_engine_attribute(MEM_ROOT *,
 PT_base_index_option *make_index_engine_attribute(MEM_ROOT *, LEX_CSTRING);
 PT_base_index_option *make_index_secondary_engine_attribute(MEM_ROOT *,
                                                             LEX_CSTRING);
+
+bool check_implicit_collation_for_utf8mb4(THD *thd, const CHARSET_INFO *cs, 
+                                          const bool collation_used,
+                                          const char *name);
 #endif /* PARSE_TREE_NODES_INCLUDED */

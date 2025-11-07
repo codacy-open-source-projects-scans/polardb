@@ -207,10 +207,10 @@ Relay_log_info::Relay_log_info(bool is_slave_recovery,
 #ifdef HAVE_PSI_INTERFACE
   relay_log.set_psi_keys(
       key_RELAYLOG_LOCK_index, key_RELAYLOG_LOCK_commit, PSI_NOT_INSTRUMENTED,
-      PSI_NOT_INSTRUMENTED, PSI_NOT_INSTRUMENTED, key_RELAYLOG_LOCK_log,
+      PSI_NOT_INSTRUMENTED, /* PSI_NOT_INSTRUMENTED, */ key_RELAYLOG_LOCK_log,
       key_RELAYLOG_LOCK_log_end_pos, key_RELAYLOG_LOCK_sync,
       PSI_NOT_INSTRUMENTED, key_RELAYLOG_LOCK_xids, key_RELAYLOG_LOCK_rotate,
-      PSI_NOT_INSTRUMENTED, PSI_NOT_INSTRUMENTED, PSI_NOT_INSTRUMENTED,
+      PSI_NOT_INSTRUMENTED, /* PSI_NOT_INSTRUMENTED, */ PSI_NOT_INSTRUMENTED,
       key_RELAYLOG_update_cond, PSI_NOT_INSTRUMENTED, PSI_NOT_INSTRUMENTED,
       key_file_relaylog, key_file_relaylog_index, key_file_relaylog_cache,
       key_file_relaylog_index_cache);
@@ -425,6 +425,13 @@ void Relay_log_info::reset_notified_checkpoint(ulong shift, time_t new_ts,
   if (update_timestamp) {
     mysql_mutex_lock(&data_lock);
     last_master_timestamp = new_ts;
+
+    if (consensus_ptr) {
+      long time_diff = ((long)(time(nullptr) - last_master_timestamp) - mi->clock_diff_with_master);
+      time_diff = (last_master_timestamp ? max(0L, time_diff) : 0);
+      consensus_ptr->updateApplyDelaySeconds(time_diff);
+    }
+
     mysql_mutex_unlock(&data_lock);
   }
 }
@@ -2338,7 +2345,8 @@ bool Relay_log_info::read_info(Rpl_info_handler *from) {
   //    ->create_slave_info_objects->load_mi_and_rli_from_repositories
   //    ->rli_init_info->read_info->set_privilege_checks_user
   //move set_privilege_checks_user into xpaxos_set_privilege_checks_user()
-  if (consensus_ptr == nullptr
+  if (ConsensusLogManager::enable_consensus()
+      && consensus_ptr == nullptr
       && username != nullptr
       && hostname != nullptr
       && (strlen(username) > 0 || strlen(hostname) > 0)) {

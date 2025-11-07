@@ -109,7 +109,7 @@ let $DELAY_STATS=3;
 --source ../inc/check_connection_delay.inc
 
 --sorted_result
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
 
 let $USER=u3;
 let $PASSWORD=abcd;
@@ -130,7 +130,7 @@ let $DELAY_STATS=6;
 --source ../inc/check_connection_delay.inc
 
 --sorted_result
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
 
 --echo
 --echo # ----------------------------------------------------------------------

@@ -449,6 +449,16 @@ int mysql_audit_notify(THD *thd, mysql_event_connection_subclass_t subclass,
 
     return handler.get_result(event_class_dispatch_error(
         thd, MYSQL_AUDIT_CONNECTION_CLASS, subclass_name, &event));
+  } else if (subclass == MYSQL_AUDIT_CONNECTION_CONNECT ||
+             subclass == MYSQL_AUDIT_CONNECTION_CHANGE_USER) {
+    int result = event_class_dispatch_error(thd, MYSQL_AUDIT_CONNECTION_CLASS,
+                                            subclass_name, &event);
+    if (errcode && (thd->get_stmt_da()->mysql_errno() ==
+                    ER_CONN_CONTROL_CONN_REFUSE_CONNECTION)) {
+      /** Connection delay plugin has changed the error code. */
+      return ER_CONN_CONTROL_CONN_REFUSE_CONNECTION;
+    }
+    return result;
   }
 
   return event_class_dispatch_error(thd, MYSQL_AUDIT_CONNECTION_CLASS,
@@ -1030,6 +1040,7 @@ int mysql_audit_notify(THD *thd, mysql_event_rds_connection_subclass_t subclass,
   assert(event.user.length <= USERNAME_LENGTH);
   event.host = sctx->host();
   event.ip = sctx->ip();
+  event.port = thd->peer_port;
   event.db = thd->db();
   event.connection_type = thd->get_vio_type();
   event.start_utime = thd->start_utime;
@@ -1043,6 +1054,9 @@ int mysql_audit_notify(THD *thd, mysql_event_rds_connection_subclass_t subclass,
   if (subclass == MYSQL_AUDIT_RDS_CONNECTION_CONNECT) {
     if (event.error_code == 0) {
       event.message = {C_STRING_WITH_LEN("login success!")};
+    } else if (event.error_code == ER_CONN_CONTROL_CONN_REFUSE_CONNECTION) {
+      event.message = {C_STRING_WITH_LEN(
+          "login refuse because of too much failure with period")};
     } else {
       event.message = {C_STRING_WITH_LEN("login failed!")};
     }
@@ -1089,6 +1103,7 @@ int mysql_audit_notify(THD *thd, mysql_event_rds_query_subclass_t subclass,
   assert(event.user.length <= USERNAME_LENGTH);
   event.external_user = sctx->external_user();
   event.ip = sctx->ip();
+  event.port = thd->peer_port;
   event.host = sctx->host();
   event.db = thd->db();
   event.command = thd->get_command();
@@ -1098,7 +1113,7 @@ int mysql_audit_notify(THD *thd, mysql_event_rds_query_subclass_t subclass,
 
   thd_get_audit_query(thd, &event.query);
 
-  event.lock_utime = (thd->get_lock_usec() - thd->start_utime);
+  event.lock_utime = thd->get_lock_usec();
   event.cost_utime = (current_utime - thd->start_utime);
   event.examined_rows = (ulonglong)thd->get_examined_row_count();
 

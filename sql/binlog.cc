@@ -22,6 +22,7 @@
 
 #include "sql/binlog.h"
 
+#include "consensus_log_manager.h"
 #include "my_config.h"
 
 #include <errno.h>
@@ -93,6 +94,7 @@
 #include "sql/derror.h"      // ER_THD
 #include "sql/discrete_interval.h"
 #include "sql/field.h"
+#include "sql/group_update.h"  // GroupUpdate
 #include "sql/handler.h"
 #include "sql/item_func.h"  // user_var_entry
 #include "sql/key.h"
@@ -145,6 +147,7 @@
 #include "sql/consensus_log_manager.h"
 #include "sql/gcn_log_event.h"
 #include "sql/lizard_binlog.h"
+#include "sql/consensus_admin.h"
 
 #include "polarx_proc/changeset_manager.h"
 
@@ -224,6 +227,7 @@ static int binlog_prepare(handlerton *hton, THD *thd, bool all);
 */
 static int binlog_set_prepared_in_tc(handlerton *hton, THD *thd);
 static void exec_binlog_error_action_abort(const char *err_string);
+static void exec_binlog_error_action_exit(const char *err_string);
 static void binlog_prepare_row_images(const THD *thd, TABLE *table);
 static bool is_loggable_xa_prepare(THD *thd);
 static int check_instance_backup_locked();
@@ -240,9 +244,7 @@ namespace {
   @param run_after_commit In the case of a commit being issued, whether or
                           not to run the `after_commit` hook.
  */
-void finish_transaction_in_engines(
-    THD *thd, bool all, bool run_after_commit,
-    bool need_check_transaction_rollback_request = false);
+void finish_transaction_in_engines(THD *thd, bool all, bool run_after_commit);
 }  // namespace
 
 bool normalize_binlog_name(char *to, const char *from, bool is_relay_log) {
@@ -1554,7 +1556,7 @@ static int binlog_close_connection(handlerton *, THD *thd) {
 
 int binlog_cache_data::write_event(Log_event *ev) {
   DBUG_TRACE;
-  my_off_t oldpos = get_byte_position();
+  const my_off_t oldpos = get_byte_position();
 
   if (ev != nullptr) {
     DBUG_EXECUTE_IF("simulate_disk_full_at_flush_pending",
@@ -1591,19 +1593,40 @@ int binlog_cache_data::write_event(Log_event *ev) {
     event_counter++;
     DBUG_PRINT("debug",
                ("event_counter= %lu", static_cast<ulong>(event_counter)));
-  }
 
-  /* X-Cluster do not allow a log event larger than
-   * opt_consensus_large_event_size_limit */
-  my_off_t newpos = get_byte_position();
-  if (opt_consensus_check_large_event) {
-    if (newpos - oldpos > opt_consensus_large_event_size_limit ||
-        DBUG_EVALUATE_IF("force_large_event", 1, 0)) {
-      xp::warn(ER_XP_COMMIT)
-          << "Log event too large, event type " << ev->get_type_str()
-          << ", event size " << newpos - oldpos;
-      mark_as_rollback = true;
-      return 1;
+    /* X-Cluster do not allow a log event larger than
+    * opt_consensus_large_event_size_limit */
+    const my_off_t newpos = get_byte_position();
+    if (ConsensusLogManager::enable_consensus() && opt_consensus_check_large_event) {
+      const char *query_str = 
+        (ev->thd->query().str && ev->thd->query().length > 0)
+          ? ev->thd->query().str
+          : "";
+
+      if (newpos - oldpos > opt_consensus_large_event_size_limit ||
+          DBUG_EVALUATE_IF("force_large_event", 1, 0)) {
+        char local_time_buff[iso8601_size];
+        make_iso8601_timestamp(local_time_buff, ev->thd->start_utime,
+                              iso8601_sysvar_logtimestamps);
+        xp::warn(ER_XP_COMMIT)
+            << "Log event too large, event type " << ev->get_type_str()
+            << ", event size " << newpos - oldpos
+            << ", begin time: " << local_time_buff
+            << ", sql: " << std::string(query_str, 512);
+        mark_as_rollback = true;
+        return 1;
+      }
+
+      if (oldpos <= opt_consensus_max_log_size
+          && newpos > opt_consensus_max_log_size
+          && !opt_consensus_large_trx) {
+        char local_time_buff[iso8601_size];
+        make_iso8601_timestamp(local_time_buff, ev->thd->start_utime,
+                              iso8601_sysvar_logtimestamps);
+        xp::warn(ER_XP_COMMIT) << "Trx is too large trx, but @@consensus_large_trx disabled"
+          << ", begin time: " << local_time_buff
+          << ", sql: " << std::string(query_str, 512);
+      }
     }
   }
   return 0;
@@ -1829,6 +1852,7 @@ int MYSQL_BIN_LOG::gtid_end_transaction(THD *thd) {
     assert(thd->variables.gtid_next.type == ASSIGNED_GTID);
 
     if (!opt_bin_log ||
+        !thd->variables.sql_log_bin ||
         (thd->slave_thread &&
          (!opt_log_replica_updates || thd->xpaxos_replication_channel))) {
       /*
@@ -1842,11 +1866,16 @@ int MYSQL_BIN_LOG::gtid_end_transaction(THD *thd) {
         table and release ownership inside ha_commit_trans.)
       */
       /*
-        Revision:
-        xpaxos_replication_channel = true only it's worker thread and sql thread.
-        Allow follower to save gtid for non-transactional operations.
+        Allow the followers to save gtid:
+        1. xpaxos_replication_channel = true,only it's worker thread and sql thread.
+        2. force_revise=1 && sql_log_bin=0 for apply correct
       */
-      if (thd->xpaxos_replication_channel && gtid_state->save(thd) != 0) {
+      const bool need_save_gtid = (!ConsensusLogManager::enable_consensus()
+                                  || thd->xpaxos_replication_channel
+                                  || (opt_bin_log
+                                      && !thd->variables.sql_log_bin
+                                      && thd->variables.opt_force_revise));
+      if (need_save_gtid && gtid_state->save(thd, false) != 0) {
         gtid_state->update_on_rollback(thd);
         return 1;
       } else if (!has_commit_order_manager(thd)) {
@@ -1937,7 +1966,6 @@ int MYSQL_BIN_LOG::gtid_end_transaction(THD *thd) {
                because its binlog transaction cache is empty.
              */
              thd->has_gtid_consistency_violation)
-
   {
     gtid_state->update_on_commit(thd);
   } else if (thd->variables.gtid_next.type == ASSIGNED_GTID &&
@@ -2510,6 +2538,43 @@ static void exec_binlog_error_action_abort(const char *err_string) {
   my_abort();
 }
 
+static void exec_binlog_error_action_exit(const char *err_string) {
+  THD *thd = current_thd;
+  /*
+    When the code enters here it means that there was an error at higher layer
+    and my_error function could have been invoked to let the client know what
+    went wrong during the execution.
+
+    But these errors will not let the client know that the server is going to
+    abort. Even if we add an additional my_error function call at this point
+    client will be able to see only the first error message that was set
+    during the very first invocation of my_error function call.
+
+    The advantage of having multiple my_error function calls are visible when
+    the server is up and running and user issues SHOW WARNINGS or SHOW ERROR
+    calls. In this special scenario server will be immediately aborted and
+    user will not be able execute the above SHOW commands.
+
+    Hence we clear the previous errors and push one critical error message to
+    clients.
+   */
+  if (thd) {
+    if (thd->is_error()) thd->clear_error();
+    /*
+      Send error to both client and to the server error log.
+    */
+    my_error(ER_BINLOG_LOGGING_IMPOSSIBLE, MYF(ME_FATALERROR), err_string);
+  }
+
+  LogErr(ERROR_LEVEL, ER_BINLOG_LOGGING_NOT_POSSIBLE, err_string);
+  flush_error_log_messages();
+  flush_gcov();
+
+  if (thd) thd->send_statement_status();
+  _exit(MYSQLD_FAILURE_EXIT);  // Using _exit(), since exit() is not async
+                               // signal safe
+}
+
 /**
   This function is called once after each statement.
 
@@ -2832,6 +2897,21 @@ end:
 }
 
 /**
+  This function is used to handle special testcase. It will
+  set stmt end flag and flush pending events to the binary log. 
+  More information, see the remarks in function write_event.
+  @return true if error.
+ */
+static bool binlog_savepoint_end_stmt_and_flush(THD *thd) {
+    bool const end_stmt =
+      (thd->in_sub_stmt && thd->lex->sql_command == SQLCOM_SAVEPOINT)
+          ? true
+          : (thd->locked_tables_mode && thd->lex->requires_prelocking());
+    if (thd->binlog_flush_pending_rows_event(end_stmt, true))
+      return true;
+    return false;
+} 
+/**
   @note
   How do we handle this (unlikely but legal) case:
   @verbatim
@@ -2855,39 +2935,46 @@ end:
   that case there is no need to have it in the binlog).
 */
 
-static int binlog_savepoint_set(handlerton *, THD *thd, void *sv) {
+static int binlog_savepoint_set(handlerton *ht, THD *thd, void *sv) {
   DBUG_TRACE;
-  int error = 1;
-
-  String log_query;
-  if (log_query.append(STRING_WITH_LEN("SAVEPOINT ")))
-    return error;
-  else
-    append_identifier(thd, &log_query, thd->lex->ident.str,
-                      thd->lex->ident.length);
-
-  int errcode = query_error_code(thd, thd->killed == THD::NOT_KILLED);
-  Query_log_event qinfo(thd, log_query.c_ptr_safe(), log_query.length(), true,
-                        false, true, errcode);
-  /*
-    We cannot record the position before writing the statement
-    because a rollback to a savepoint (.e.g. consider it "S") would
-    prevent the savepoint statement (i.e. "SAVEPOINT S") from being
-    written to the binary log despite the fact that the server could
-    still issue other rollback statements to the same savepoint (i.e.
-    "S").
-    Given that the savepoint is valid until the server releases it,
-    ie, until the transaction commits or it is released explicitly,
-    we need to log it anyway so that we don't have "ROLLBACK TO S"
-    or "RELEASE S" without the preceding "SAVEPOINT S" in the binary
-    log.
-  */
-  if (!(error = mysql_bin_log.write_event(&qinfo)))
+  /* Compute savpoint place. Variable sv is from ha_savepoint. */
+  auto sv_diff = static_cast<uchar*>(sv) - ht->savepoint_offset;
+  auto sv_ptr = reinterpret_cast<SAVEPOINT*>(sv_diff) - 1;
+  if (sv_ptr->binlog_savepoint_disabled) {
+    int error = binlog_savepoint_end_stmt_and_flush(thd);
     binlog_trans_log_savepos(thd, (my_off_t *)sv);
+    return error;
+  } else {
+    int error = 1;
 
-  im::gChangesetManager.set_save_point(thd, *(my_off_t *)sv);
+    String log_query;
+    if (log_query.append(STRING_WITH_LEN("SAVEPOINT ")))
+      return error;
+    else
+      append_identifier(thd, &log_query, thd->lex->ident.str,
+                        thd->lex->ident.length);
 
-  return error;
+    int errcode = query_error_code(thd, thd->killed == THD::NOT_KILLED);
+    Query_log_event qinfo(thd, log_query.c_ptr_safe(), log_query.length(), true,
+                          false, true, errcode);
+    /*
+      We cannot record the position before writing the statement
+      because a rollback to a savepoint (.e.g. consider it "S") would
+      prevent the savepoint statement (i.e. "SAVEPOINT S") from being
+      written to the binary log despite the fact that the server could
+      still issue other rollback statements to the same savepoint (i.e.
+      "S").
+      Given that the savepoint is valid until the server releases it,
+      ie, until the transaction commits or it is released explicitly,
+      we need to log it anyway so that we don't have "ROLLBACK TO S"
+      or "RELEASE S" without the preceding "SAVEPOINT S" in the binary
+      log.
+    */
+    if (!(error = mysql_bin_log.write_event(&qinfo)))
+      binlog_trans_log_savepos(thd, (my_off_t *)sv);
+
+    return error;
+  }
 }
 
 bool MYSQL_BIN_LOG::is_current_stmt_binlog_enabled_and_caches_empty(
@@ -2905,51 +2992,61 @@ bool MYSQL_BIN_LOG::is_current_stmt_binlog_enabled_and_caches_empty(
   return cache_mngr->is_binlog_empty();
 }
 
-static int binlog_savepoint_rollback(handlerton *, THD *thd, void *sv) {
+static int binlog_savepoint_rollback(handlerton *ht, THD *thd, void *sv) {
   DBUG_TRACE;
   binlog_cache_mngr *const cache_mngr = thd_get_cache_mngr(thd);
   my_off_t pos = *(my_off_t *)sv;
   assert(pos != ~(my_off_t)0);
 
-  /*
-    Write ROLLBACK TO SAVEPOINT to the binlog cache if we have updated some
-    non-transactional table. Otherwise, truncate the binlog cache starting
-    from the SAVEPOINT command.
-  */
-  if (trans_cannot_safely_rollback(thd)) {
-    String log_query;
-    if (log_query.append(STRING_WITH_LEN("ROLLBACK TO ")))
-      return 1;
-    else {
-      /*
-        Before writing identifier to the binlog, make sure to
-        quote the identifier properly so as to prevent any SQL
-        injection on the slave.
-      */
-      append_identifier(thd, &log_query, thd->lex->ident.str,
-                        thd->lex->ident.length);
+  auto sv_diff = static_cast<uchar*>(sv) - ht->savepoint_offset;
+  auto sv_ptr = reinterpret_cast<SAVEPOINT*>(sv_diff) - 1;
+
+  if (sv_ptr->binlog_savepoint_disabled) {
+    if (trans_cannot_safely_rollback(thd)) {
+      my_error(ER_MYISAM_NOT_SUPPORT_ROLLBACK, MYF(0));
+      return 0;
     }
+    cache_mngr->trx_cache.restore_savepoint(pos);
+    if (thd->in_sub_stmt) thd->clear_binlog_table_maps();
+    return 0;
+  } else {
+    /*
+      Write ROLLBACK TO SAVEPOINT to the binlog cache if we have updated some
+      non-transactional table. Otherwise, truncate the binlog cache starting
+      from the SAVEPOINT command.
+    */
+    if (trans_cannot_safely_rollback(thd)) {
+      String log_query;
+      if (log_query.append(STRING_WITH_LEN("ROLLBACK TO ")))
+        return 1;
+      else {
+        /*
+          Before writing identifier to the binlog, make sure to
+          quote the identifier properly so as to prevent any SQL
+          injection on the slave.
+        */
+        append_identifier(thd, &log_query, thd->lex->ident.str,
+                          thd->lex->ident.length);
+      }
 
-    int errcode = query_error_code(thd, thd->killed == THD::NOT_KILLED);
-    Query_log_event qinfo(thd, log_query.c_ptr_safe(), log_query.length(), true,
-                          false, true, errcode);
-    return mysql_bin_log.write_event(&qinfo);
+      int errcode = query_error_code(thd, thd->killed == THD::NOT_KILLED);
+      Query_log_event qinfo(thd, log_query.c_ptr_safe(), log_query.length(),
+                            true, false, true, errcode);
+      return mysql_bin_log.write_event(&qinfo);
+    }
+    // Otherwise, we truncate the cache
+    cache_mngr->trx_cache.restore_savepoint(pos);
+    /*
+      When a SAVEPOINT is executed inside a stored function/trigger we force the
+      pending event to be flushed with a STMT_END_F flag and clear the table
+      maps as well to ensure that following DMLs will have a clean state to
+      start with. ROLLBACK inside a stored routine has to finalize possibly
+      existing current row-based pending event with cleaning up table maps. That
+      ensures that following DMLs will have a clean state to start with.
+     */
+    if (thd->in_sub_stmt) thd->clear_binlog_table_maps();
+    return 0;
   }
-  // Otherwise, we truncate the cache
-  cache_mngr->trx_cache.restore_savepoint(pos);
-
-  // changeset truncate the cache
-  im::gChangesetManager.rollback_to_save_point(thd, pos);
-  /*
-    When a SAVEPOINT is executed inside a stored function/trigger we force the
-    pending event to be flushed with a STMT_END_F flag and clear the table maps
-    as well to ensure that following DMLs will have a clean state to start
-    with. ROLLBACK inside a stored routine has to finalize possibly existing
-    current row-based pending event with cleaning up table maps. That ensures
-    that following DMLs will have a clean state to start with.
-   */
-  if (thd->in_sub_stmt) thd->clear_binlog_table_maps();
-  return 0;
 }
 
 /**
@@ -3156,6 +3253,14 @@ bool is_empty_transaction_in_binlog_cache(const THD *thd) {
   }
 
   return false;
+}
+
+bool is_empty_xa_prepare(const THD *thd) {
+  DBUG_TRACE;
+  binlog_cache_mngr *const cache_mngr = thd_get_cache_mngr(thd);
+  return (thd->lex
+          && SQLCOM_XA_PREPARE == thd->lex->sql_command
+          && (cache_mngr == nullptr || cache_mngr->is_binlog_empty()));
 }
 
 /**
@@ -3684,7 +3789,7 @@ void MYSQL_BIN_LOG::init_pthread_objects() {
   if (!is_relay_log) {
     Commit_stage_manager::get_instance().init(
         m_key_LOCK_flush_queue, m_key_LOCK_sync_queue, m_key_LOCK_commit_queue,
-        m_key_LOCK_done, m_key_LOCK_wait_for_group_turn, m_key_COND_done,
+        /* m_key_LOCK_done, */ m_key_LOCK_wait_for_group_turn, /* m_key_COND_done, */
         m_key_COND_flush_queue, m_key_COND_wait_for_group_turn);
   }
 }
@@ -3899,7 +4004,10 @@ bool MYSQL_BIN_LOG::open(PSI_file_key log_file_key, const char *log_name,
   bool ret = false;
 
   write_error = false;
-  myf flags = MY_WME | MY_NABP | MY_WAIT_IF_FULL;
+  myf flags = MY_WME | MY_NABP;
+  if (opt_enable_binlog_wait_if_full) {
+    flags = flags | MY_WAIT_IF_FULL;
+  }
   if (is_relay_log && !is_xpaxos_log) flags = flags | MY_REPORT_WAITING_IF_FULL;
 
   if (!(name = my_strdup(key_memory_MYSQL_LOG_name, log_name, MYF(MY_WME)))) {
@@ -5056,15 +5164,13 @@ bool MYSQL_BIN_LOG::open_binlog(
       binlog_checksum_options. The binlog_checksum_options of Leader and
       Follower must be set to a same value.
       */
-      relay_log_checksum_alg =
-          static_cast<enum_binlog_checksum_alg>(binlog_checksum_options);
-      // /* inherit master's A descriptor if one has been received */
-      // if (opt_replica_sql_verify_checksum == 0)
-      //   /* otherwise use slave's local preference of RL events verification
-      //   */ relay_log_checksum_alg = binary_log::BINLOG_CHECKSUM_ALG_OFF;
-      // else
-      //   relay_log_checksum_alg =
-      //       static_cast<enum_binlog_checksum_alg>(binlog_checksum_options);
+      /* inherit master's A descriptor if one has been received */
+      if (!is_xpaxos_log && opt_replica_sql_verify_checksum == 0)
+        /* otherwise use slave's local preference of RL events verification
+        */ relay_log_checksum_alg = binary_log::BINLOG_CHECKSUM_ALG_OFF;
+      else
+        relay_log_checksum_alg =
+            static_cast<enum_binlog_checksum_alg>(binlog_checksum_options);
     }
   }
 
@@ -5079,17 +5185,19 @@ bool MYSQL_BIN_LOG::open_binlog(
   if (write_event_to_binlog(&s)) goto err;
 
   // write previous consensus index event
-  if (is_xpaxos_log) {
+  {
     Previous_consensus_index_log_event prev_consensus_index_ev(
         consensus_log_manager.get_current_index());
     if (opt_consensuslog_revise && is_relay_log)
       prev_consensus_index_ev.consensus_extra_time =
           consensus_log_manager.get_event_timestamp();
     if (write_event_to_binlog(&prev_consensus_index_ev)) goto err;
-    std::string file_name(log_file_name);
-    consensus_log_manager.get_log_file_index()->add_to_index_list(
-        consensus_log_manager.get_current_index(),
-        prev_consensus_index_ev.common_header->when.tv_sec, file_name);
+    if (is_xpaxos_log || !is_relay_log) {
+      std::string file_name(log_file_name);
+      consensus_log_manager.get_log_file_index()->add_to_index_list(
+          consensus_log_manager.get_current_index(),
+          prev_consensus_index_ev.common_header->when.tv_sec, file_name);
+    }
   }
 
   /*
@@ -5242,7 +5350,9 @@ bool MYSQL_BIN_LOG::open_binlog(
     At every rotate memorize the last transaction counter state to use it as
     offset at logging the transaction logical timestamps.
   */
+  mysql_mutex_lock(&LOCK_replica_trans_dep_tracker);
   m_dependency_tracker.rotate();
+  mysql_mutex_unlock(&LOCK_replica_trans_dep_tracker);
 
   close_purge_index_file();
 
@@ -5778,7 +5888,7 @@ bool MYSQL_BIN_LOG::reset_logs(THD *thd, bool delete_only) {
   }
   thd->clear_log_reset();
 
-  if (!is_relay_log) ha_reset_logs(thd);
+  if (!is_xpaxos_log || !is_relay_log) ha_reset_logs(thd);
 
   /*
     We need to get both locks to be sure that no one is trying to
@@ -6167,6 +6277,7 @@ int MYSQL_BIN_LOG::purge_logs(const char *to_log, bool included,
   // truncate consensus log file index
   file_name = std::string(log_info.log_file_name);
   consensus_log_manager.get_log_file_index()->truncate_before(file_name);
+  xp::system(ER_XP_0) << "binlog will be purged before " << log_info.log_file_name;
 
   DBUG_EXECUTE_IF("crash_purge_before_update_index_after_truncate",
                   DBUG_SUICIDE(););
@@ -6462,7 +6573,8 @@ err:
                                 mysql_file_stat() or mysql_file_delete()
 */
 
-int MYSQL_BIN_LOG::purge_logs_before_date(time_t purge_time, bool auto_purge) {
+int MYSQL_BIN_LOG::purge_logs_before_date(time_t purge_time, bool auto_purge,
+                                          bool need_lock/*  = true */) {
   int error;
   int no_of_threads_locking_log = 0, no_of_log_files_purged = 0;
   bool log_is_active = false, log_is_in_use = false;
@@ -6470,14 +6582,24 @@ int MYSQL_BIN_LOG::purge_logs_before_date(time_t purge_time, bool auto_purge) {
   LOG_INFO log_info;
   MY_STAT stat_area;
   THD *thd = current_thd;
+  uint64 consenus_minmatchindex;
+  std::string consensus_min_filename;
 
   DBUG_TRACE;
 
-  mysql_mutex_lock(&LOCK_index);
+  if (need_lock) mysql_mutex_lock(&LOCK_index);
   to_log[0] = 0;
 
   if ((error = find_log_pos(&log_info, NullS, false /*need_lock_index=false*/)))
     goto err;
+
+  if (consensus_ptr
+      && (consenus_minmatchindex = consensus_ptr->getSafetyIndexForPurge()) > 0
+      && find_log_by_consensus_index(consenus_minmatchindex, consensus_min_filename)) {
+    xp::error(ER_XP_COMMIT)
+        << "failed to find_log_by_consensus_index " << consenus_minmatchindex;
+    goto err;
+  }
 
   while (!(log_is_active = is_active(log_info.log_file_name))) {
     if (!mysql_file_stat(m_key_file_log, log_info.log_file_name, &stat_area,
@@ -6519,6 +6641,11 @@ int MYSQL_BIN_LOG::purge_logs_before_date(time_t purge_time, bool auto_purge) {
         }
         break;
       }
+      //binlog is used by consensus
+      if (!consensus_min_filename.empty()
+          && strcmp(consensus_min_filename.c_str(), log_info.log_file_name) <= 0)
+        break;
+
       strmake(to_log, log_info.log_file_name,
               sizeof(log_info.log_file_name) - 1);
       no_of_log_files_purged++;
@@ -6563,7 +6690,7 @@ int MYSQL_BIN_LOG::purge_logs_before_date(time_t purge_time, bool auto_purge) {
                      : 0);
 
 err:
-  mysql_mutex_unlock(&LOCK_index);
+  if (need_lock) mysql_mutex_unlock(&LOCK_index);
   return error;
 }
 
@@ -7347,7 +7474,7 @@ void MYSQL_BIN_LOG::auto_purge_at_server_startup() {
 /**
   The method executes logs purging routine.
 */
-void MYSQL_BIN_LOG::auto_purge() {
+void MYSQL_BIN_LOG::auto_purge(bool need_lock/*  = true */) {
   // first run the auto purge validations
   if (check_auto_purge_conditions()) return;
 
@@ -7377,7 +7504,7 @@ void MYSQL_BIN_LOG::auto_purge() {
     is persisted inside storage engines.
   */
   ha_flush_logs();
-  purge_logs_before_date(purge_time, auto_purge);
+  purge_logs_before_date(purge_time, auto_purge, need_lock);
 }
 
 /**
@@ -7516,7 +7643,7 @@ bool MYSQL_BIN_LOG::do_write_cache(Binlog_cache_storage *cache,
   @retval true success
 */
 // FIXME: write incident event will crash
-bool MYSQL_BIN_LOG::write_incident(Incident_log_event *, THD *thd,
+bool MYSQL_BIN_LOG::write_incident(Incident_log_event *ev, THD *thd,
                                    bool need_lock_log, const char *err_msg,
                                    bool do_flush_and_sync) {
   uint error = 0;
@@ -7590,8 +7717,8 @@ bool MYSQL_BIN_LOG::write_incident(Incident_log_event *, THD *thd,
       wait_xid_disappear();
       mysql_mutex_lock(&LOCK_log);
     }
-    // /* Write an incident event into binlog directly. */
-    // error = write_event_to_binlog(ev);
+    /* Write an incident event into binlog directly. */
+    if (!is_xpaxos_log) error = write_event_to_binlog(ev);
     /*
       Write an error to log. So that user might have a chance
       to be alerted and explore incident details.
@@ -7608,16 +7735,19 @@ bool MYSQL_BIN_LOG::write_incident(Incident_log_event *, THD *thd,
       /* The trx_cache contains corruption data, so we can reset it. */
       cache_mngr->trx_cache.reset();
     }
-    // /*
-    //   Write the incident event into stmt_cache, so that a GTID is generated
-    //   and written for it prior to flushing the stmt_cache.
-    // */
-    // binlog_cache_data *cache_data = cache_mngr->get_binlog_cache_data(false);
-    // if ((error = cache_data->write_event(ev))) {
-    //   LogErr(ERROR_LEVEL, ER_BINLOG_EVENT_WRITE_TO_STMT_CACHE_FAILED);
-    //   cache_mngr->stmt_cache.reset();
-    //   return error;
-    // }
+
+    if (!is_xpaxos_log) {
+      /*
+        Write the incident event into stmt_cache, so that a GTID is generated
+        and written for it prior to flushing the stmt_cache.
+      */
+      binlog_cache_data *cache_data = cache_mngr->get_binlog_cache_data(false);
+      if ((error = cache_data->write_event(ev))) {
+        LogErr(ERROR_LEVEL, ER_BINLOG_EVENT_WRITE_TO_STMT_CACHE_FAILED);
+        cache_mngr->stmt_cache.reset();
+        return error;
+      }
+    }
 
     if (need_lock_log) {
       mysql_mutex_lock(consensus_log_manager.get_sequence_stage1_lock());
@@ -8079,7 +8209,8 @@ int MYSQL_BIN_LOG::open_binlog(const char *opt_name) {
     // RELAY_LOG_WORKING
     if ((ev = binlog_file_reader.read_event_object()) &&
         ev->get_type_code() == binary_log::FORMAT_DESCRIPTION_EVENT &&
-        (/*ev->common_header->flags & LOG_EVENT_BINLOG_IN_USE_F*/ true ||
+        (ev->common_header->flags & LOG_EVENT_BINLOG_IN_USE_F ||
+         is_xpaxos_log ||
          DBUG_EVALUATE_IF("eval_force_bin_log_recovery", true, false))) {
       LogErr(INFORMATION_LEVEL, ER_BINLOG_RECOVERING_AFTER_CRASH_USING,
              opt_name);
@@ -8228,7 +8359,9 @@ int MYSQL_BIN_LOG::prepare(THD *thd, bool all) {
   CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("after_ha_prepare_low");
   // Invoke `commit` if we're dealing with `XA PREPARE` in order to use BCG
   // to write the event to file.
-  if (!error && all && is_xa_prepare(thd)) return this->commit(thd, true);
+  if (!error && all && is_xa_prepare(thd)) {
+    return this->commit(thd, true);
+  }
 
   return error;
 }
@@ -8302,6 +8435,14 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
       if (trx_coordinator::commit_in_engines(thd, all)) return RESULT_ABORTED;
       return RESULT_SUCCESS;
     }
+
+    /** When sql_log_bin is set as false for the current session before
+     * executing any statement, cache_mngr would haven't been allocated.
+     * For Xa prepare, @func:set_prepared_in_tc_in_engines will be skipped.
+     * However, we still need to call @func:commit_policy_decide to make sure
+     * that proper GCN is generated.
+     */
+    lizard::commit_policy_decide(thd);
 
     // xpaxos apply not use 2pc for xa prepare, no prepare undo saved. we need
     // fix it
@@ -8499,28 +8640,7 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
       return RESULT_ABORTED;
     }
 
-    if (ordered_commit(thd, all, skip_commit)) {
-      /*
-        If xa commit error, we can not simply roll back the trx of this THD.
-        Because the trx is prepared by 'xa prepare' and its consensus index
-        may reach a majority in the cluster. It must not be rolled back.
-
-      Currently, we crash the server to handle the consistency by recovery.
-                         */
-      if (thd && thd->lex &&
-          (thd->lex->sql_command == SQLCOM_XA_COMMIT ||
-           thd->lex->sql_command == SQLCOM_XA_ROLLBACK)) {
-        xp::warn(ER_XP_COMMIT) << "xa commit/rollback fail, restart to recover";
-        flush_error_log_messages();
-        abort();
-      }
-
-      // if consensus commit failed, transaction should rollback
-      if (thd->transaction_rollback_request) {
-        ha_rollback_low(thd, all);
-      }
-      return RESULT_INCONSISTENT;
-    }
+    if (ordered_commit(thd, all, skip_commit)) return RESULT_INCONSISTENT;
 
     DBUG_EXECUTE_IF("ensure_binlog_cache_is_reset", {
       /* Assert that binlog cache is reset at commit time. */
@@ -8545,6 +8665,14 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
   } else if (!skip_commit) {
     if (trx_coordinator::commit_in_engines(thd, all))
       return RESULT_INCONSISTENT;
+  } else {
+    /** When sql_log_bin is set as false for the current session, no binlog will
+     * be written (cache_mngr may not be nullptr). Ordered_commit will not be
+     * called for this case. As a result, @func:set_prepared_in_tc_in_engines
+     * will be skipped when exectuing XA Prepare. However, we still need to call
+     * @func:commit_policy_decide to make sure that proper GCN is generated.
+     */
+    lizard::commit_policy_decide(thd);
   }
 
   return RESULT_SUCCESS;
@@ -8612,7 +8740,9 @@ void MYSQL_BIN_LOG::init_thd_variables(THD *thd, bool all, bool skip_commit) {
   */
   thd->tx_commit_pending = true;
   thd->commit_error = THD::CE_NONE;
-  thd->next_to_commit = nullptr;
+  if (thd->gu_ctx.is_not_gu()) {
+    thd->next_to_commit = nullptr;
+  }
   thd->durability_property = HA_IGNORE_DURABILITY;
   thd->get_transaction()->m_flags.real_commit = all;
   thd->get_transaction()->m_flags.xid_written = false;
@@ -8632,7 +8762,7 @@ void MYSQL_BIN_LOG::init_thd_variables(THD *thd, bool all, bool skip_commit) {
 }
 
 THD *MYSQL_BIN_LOG::fetch_and_process_flush_stage_queue(
-    const bool no_process, const bool check_and_skip_flush_logs) {
+    const bool check_and_skip_flush_logs) {
   /*
     Fetch the entire flush queue and empty it, so that the next batch
     has a leader. We must do this before invoking ha_flush_logs(...)
@@ -8646,12 +8776,6 @@ THD *MYSQL_BIN_LOG::fetch_and_process_flush_stage_queue(
       Commit_stage_manager::get_instance().fetch_queue_skip_acquire_lock(
           Commit_stage_manager::BINLOG_FLUSH_STAGE);
   assert(first_seen != nullptr);
-
-  if (no_process) {
-    Commit_stage_manager::get_instance().unlock_queue(
-        Commit_stage_manager::BINLOG_FLUSH_STAGE);
-    return first_seen;
-  }
 
   THD *commit_order_thd =
       Commit_stage_manager::get_instance().fetch_queue_skip_acquire_lock(
@@ -8694,7 +8818,7 @@ int MYSQL_BIN_LOG::process_flush_stage_queue(my_off_t *total_bytes_var,
 
   // check if could write binlog according to consenesus layer
   uint64 term = 0;
-  if (!opt_initialize) {
+  if (!opt_initialize && consensus_ptr) {
     alisql::LogEntry log_entry;
     // use fake buf_size, tell consenesus layer, the entry is not noop
     BLConsensusLog::packLogEntry((uchar *)const_cast<char *>("any"), 3, term, 0,
@@ -8703,23 +8827,33 @@ int MYSQL_BIN_LOG::process_flush_stage_queue(my_off_t *total_bytes_var,
     term = log_entry.term();
   }
 
-  THD *first_seen = fetch_and_process_flush_stage_queue(true, false);
+  THD *first_seen = fetch_and_process_flush_stage_queue(false);
 
-  mysql_mutex_lock(&LOCK_log);//will unlock in change_stage(Commit_stage_manager::SYNC_STAGE)
+  //TODO::@yanhua remove later
+  if (mysql_bin_log.is_rotating_caused_by_incident) {
+    mysql_mutex_assert_owner(&LOCK_log);
+  } else {
+    //will unlock in change_stage(Commit_stage_manager::SYNC_STAGE)
+    mysql_mutex_lock(&LOCK_log);
+  }
   mysql_mutex_lock(consensus_log_manager.get_term_lock());
 
   // before flush do consensus check
-  if (term == 0 || consensus_log->getCurrentTerm() != term ||
-      term != consensus_log_manager.get_current_term()) {
+  if (consensus_ptr
+      && (term == 0
+          || consensus_log->getCurrentTerm() != term
+          || DBUG_EVALUATE_IF("force_after_leader_transfer", true, false)
+          || term != consensus_log_manager.get_current_term())) {
+    xp::warn(ER_XP_COMMIT) << "Failed to flush, because leadership changing"
+                              "replicate log or check term failed"
+                           << ", consensus_term: " << consensus_log->getCurrentTerm() 
+                           << ", term: " << term 
+                           << ", current term: " << consensus_log_manager.get_current_term()
+                           << ", leader_transfer_state: " << consensus_log_manager.get_leader_transfer_state();
+
     for (THD *head = first_seen; head; head = head->next_to_commit) {
-      binlog_cache_mngr *cache_mngr = thd_get_cache_mngr(head);
-      cache_mngr->reset();
-      xp::warn(ER_XP_COMMIT) << "Failed to commit ,because leadership changed, "
-                                "replicate log or check term failed";
-      head->mark_transaction_to_rollback(true);
       head->commit_error = THD::CE_COMMIT_ERROR;
-      head->get_transaction()->m_flags.commit_low = false;
-      head->consensus_error = THD::CSS_LEADERSHIP_CHANGE;
+      head->consensus_error = THD::CSS_LEADERSHIP_CHANGING;
     }
     mysql_mutex_unlock(consensus_log_manager.get_term_lock());
     mysql_mutex_unlock(consensus_log_manager.get_sequence_stage1_lock());
@@ -8727,12 +8861,6 @@ int MYSQL_BIN_LOG::process_flush_stage_queue(my_off_t *total_bytes_var,
     return 0;
   }
 
-  /*
-    We flush prepared records of transactions to the log of storage
-    engine (for example, InnoDB redo log) in a group right before
-    flushing them to binary log.
-  */
-  ha_flush_logs(true);
   DBUG_EXECUTE_IF("crash_after_flush_engine_log", DBUG_SUICIDE(););
   CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("before_write_binlog");
   assign_automatic_gtids_to_flush_group(first_seen);
@@ -8767,7 +8895,9 @@ int MYSQL_BIN_LOG::process_flush_stage_queue(my_off_t *total_bytes_var,
   // must unlock after fetch_queue_for() because we should not make stage queue
   // chaos
   mysql_mutex_unlock(consensus_log_manager.get_term_lock());
-  mysql_mutex_unlock(consensus_log_manager.get_sequence_stage1_lock());
+  //TODO::@yanhua remove later
+  if (!mysql_bin_log.is_rotating_caused_by_incident)
+    mysql_mutex_unlock(consensus_log_manager.get_sequence_stage1_lock());
   return flush_error;
 }
 
@@ -8800,6 +8930,16 @@ void MYSQL_BIN_LOG::process_commit_stage_queue(THD *thd, THD *first) {
     DBUG_EXECUTE_IF(
         "block_leader_after_delete",
         if (thd != head) { DBUG_SET("+d,after_delete_wait"); };);
+
+    if (thd->consensus_error == THD::CSS_NONE) {
+      /* Wait until the logs are received by more than half of the nodes */
+      MYSQL_BIN_LOG::consensus_wait_commit(head);
+      ut_a(head->consensus_error == THD::CSS_NONE);
+    } else {
+      consensus_rollback_with_flush_nothing(head, thd == head);
+      continue;
+    }
+
     /*
       If flushing failed, set commit_error for the session, skip the
       transaction and proceed with the next transaction instead. This
@@ -8811,8 +8951,7 @@ void MYSQL_BIN_LOG::process_commit_stage_queue(THD *thd, THD *first) {
 #ifndef NDEBUG
     Commit_stage_manager::get_instance().clear_preempt_status(head);
 #endif
-    if (head->get_transaction()->sequence_number != SEQ_UNINIT &&
-        head->consensus_error == THD::CSS_NONE) {
+    if (head->get_transaction()->sequence_number != SEQ_UNINIT) {
       mysql_mutex_lock(&LOCK_replica_trans_dep_tracker);
       m_dependency_tracker.update_max_committed(head);
       mysql_mutex_unlock(&LOCK_replica_trans_dep_tracker);
@@ -8826,15 +8965,12 @@ void MYSQL_BIN_LOG::process_commit_stage_queue(THD *thd, THD *first) {
     Thd_backup_and_restore switch_thd(thd, head);
     bool all = head->get_transaction()->m_flags.real_commit;
 
-    // xa prepare and normal commit both should wait commit index update
-    MYSQL_BIN_LOG::consensus_before_commit(head);
-
     bool save_gtid_for_non_trans =
         head->save_gtid_for_non_transactional_ops();
 
     assert(!head->get_transaction()->m_flags.commit_low ||
            head->get_transaction()->m_flags.ready_preempt);
-    ::finish_transaction_in_engines(head, all, false, true);
+    ::finish_transaction_in_engines(head, all, false);
     DBUG_PRINT("debug", ("commit_error: %d, commit_pending: %s",
                          head->commit_error, YESNO(head->tx_commit_pending)));
 
@@ -8852,9 +8988,15 @@ void MYSQL_BIN_LOG::process_commit_stage_queue(THD *thd, THD *first) {
 
   for (THD *head = first; head; head = head->next_to_commit) {
     Thd_backup_and_restore switch_thd(thd, head);
-    auto all = head->get_transaction()->m_flags.real_commit;
-    // Mark transaction as prepared in TC, if applicable
-    trx_coordinator::set_prepared_in_tc_in_engines(head, all);
+
+    // if consensus error, continue next one
+    if (head->consensus_error == THD::CSS_NONE) {
+      auto all = head->get_transaction()->m_flags.real_commit;
+      // Mark transaction as prepared in TC, if applicable
+      trx_coordinator::set_prepared_in_tc_in_engines(head, all);
+    }
+    ut_a(head->get_transaction()->m_flags.xid_written == (head->consensus_error == THD::CSS_NONE));
+
     /*
       Decrement the prepared XID counter after storage engine commit.
       We also need decrement the prepared XID when encountering a
@@ -9002,17 +9144,19 @@ int MYSQL_BIN_LOG::finish_commit(THD *thd) {
     if (cache_mngr) cache_mngr->reset();
   }
 
-  if (thd->get_transaction()->sequence_number != SEQ_UNINIT &&
-      thd->consensus_error == THD::CSS_NONE) {
+  if (thd->consensus_error == THD::CSS_NONE) {
+    /* Wait until the logs are received by more than half of the nodes */
+    MYSQL_BIN_LOG::consensus_wait_commit(thd);
+    ut_a(thd->consensus_error == THD::CSS_NONE);
+  } else {
+    consensus_rollback_with_flush_nothing(thd, true);
+    return 1;
+  }
+
+  if (thd->get_transaction()->sequence_number != SEQ_UNINIT) {
     mysql_mutex_lock(&LOCK_replica_trans_dep_tracker);
     m_dependency_tracker.update_max_committed(thd);
     mysql_mutex_unlock(&LOCK_replica_trans_dep_tracker);
-  }
-
-  if (!opt_binlog_order_commits || thd->get_transaction()->m_flags.commit_low ||
-      thd->consensus_error != THD::CSS_NONE) {
-    /* Wait until the logs are received by more than half of the nodes */
-    MYSQL_BIN_LOG::consensus_before_commit(thd);
   }
 
   DBUG_EXECUTE_IF("crash_before_large_trx_commit_late", {
@@ -9024,11 +9168,11 @@ int MYSQL_BIN_LOG::finish_commit(THD *thd) {
   auto committed_low = thd->get_transaction()->m_flags.commit_low;
   bool save_gtid_for_non_trans = thd->save_gtid_for_non_transactional_ops();
 
-  assert(thd->commit_error != THD::CE_COMMIT_ERROR ||
-         thd->consensus_error != THD::CSS_NONE);
+  assert(thd->commit_error != THD::CE_COMMIT_ERROR);
   ::finish_transaction_in_engines(thd, all, false);
 
   if (save_gtid_for_non_trans) {
+    ut_ad(thd->gu_ctx.is_not_gu());
     gtid_state->save_by_write_table(thd);
   }
 
@@ -9049,16 +9193,11 @@ int MYSQL_BIN_LOG::finish_commit(THD *thd) {
     dec_prep_xids(thd);
   }
 
-  // FIXME: ordered commit need it
-  if (opt_enable_appliedindex_checker)
-    appliedindex_checker.commit(thd->consensus_index);
-  else {
-    uint64 commitIndex = consensus_ptr->getCommitIndex();
-    uint64 tmpi = opt_appliedindex_force_delay >= commitIndex
-                      ? 0
-                      : commitIndex - opt_appliedindex_force_delay;
-    consensus_ptr->updateAppliedIndex(tmpi);
-    replica_read_manager.update_lsn(tmpi);
+  if (consensus_ptr) {
+    if (opt_enable_appliedindex_checker)
+      appliedindex_checker.commit(thd->consensus_index);
+    else
+      update_applied_index(consensus_ptr->getCommitIndex());
   }
 
   if (thd->session_tracker.get_tracker(SESSION_INDEX_TRACKER)->is_enabled())
@@ -9076,6 +9215,8 @@ int MYSQL_BIN_LOG::finish_commit(THD *thd) {
     const char act[] = "now SIGNAL signal_leaving_finish_commit";
     assert(!debug_sync_set_action(current_thd, STRING_WITH_LEN(act)));
   };);
+
+  gu_finish_commit(thd);
 
   assert(thd->commit_error || !thd->get_transaction()->m_flags.run_hooks);
   assert(!thd_get_cache_mngr(thd)->dbug_any_finalized());
@@ -9199,21 +9340,60 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
                        YESNO(thd->tx_commit_pending), thd->commit_error,
                        thd->thread_id()));
 
+  /* Stage: group update */
+  if (thd->gu_ctx.is_follower()) {
+#ifndef NDEBUG
+    Commit_stage_manager::get_instance().dbug_preempt(thd);
+#endif
+    if (thd->gu_ctx.get_gu()->follower_wait_all_done(thd)) {
+      thd->commit_error = THD::CE_COMMIT_ERROR;
+      return (thd->commit_error);
+    }
+    return (finish_commit(thd));
+  } else if (thd->gu_ctx.is_leader()) {
+    if (thd->gu_ctx.get_gu()->leader_enter_commit(thd)) {
+      thd->commit_error = THD::CE_COMMIT_ERROR;
+      return (thd->commit_error);
+    }
+    DEBUG_SYNC(thd, "leader_enter_commit_done");
+  }
+
   DEBUG_SYNC(thd, "bgc_before_flush_stage");
 
   auto consensus_guard = create_lock_guard(
     [&] { consensus_log_manager.rdlock_consensus_status(); },
     [&] { consensus_log_manager.unlock_consensus_status(); }
   );
+
+  XID empty_xid;
   // check this function should return early
-  if ((!opt_initialize && consensus_log_manager.get_status() !=
-                              Consensus_Log_System_Status::BINLOG_WORKING) ||
-      opt_cluster_log_type_instance) {
-    thd_get_cache_mngr(thd)->reset();
-    thd->mark_transaction_to_rollback(true);
+  if ((!opt_initialize
+        && consensus_log_manager.get_status() != Consensus_Log_System_Status::BINLOG_WORKING)
+      || opt_cluster_log_type_instance
+      || DBUG_EVALUATE_IF("force_in_leader_transfer", true, false)
+      || (opt_consensus_disable_commit_before_change_leader
+          && consensus_log_manager.is_in_limit_all())) {
     thd->commit_error = THD::CE_COMMIT_ERROR;
-    my_error(ER_CONSENSUS_SERVER_NOT_READY, MYF(0));
-    return thd->commit_error;
+    if (DBUG_EVALUATE_IF("force_in_leader_transfer", true, false)
+        || (opt_consensus_disable_commit_before_change_leader
+            && consensus_log_manager.is_in_limit_all())) {
+      thd->consensus_error = THD::CSS_LEADERSHIP_CHANGING;
+      xp::warn(ER_XP_COMMIT) << "Failed to ordered_commit, because leadership changing"
+                            << ", leader_transfer_state: " << consensus_log_manager.get_leader_transfer_state()
+                            << ", sql_command: " << thd->lex->sql_command
+                            << ", xid " 
+                            << (thd->get_transaction()->xid_state()
+                              && thd->get_transaction()->xid_state()->get_xid()
+                                ? *thd->get_transaction()->xid_state()->get_xid()
+                                : empty_xid)
+                            << ", status " << (thd->get_transaction()->xid_state()
+                              ? thd->get_transaction()->xid_state()->state_name()
+                              : "null");
+    } else {
+      thd->consensus_error = THD::CSS_SERVER_NOT_READY;
+    }
+    consensus_rollback_with_flush_nothing(thd, true);
+    return RESULT_ABORTED;
   }
 
   /*
@@ -9255,7 +9435,7 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
   my_off_t flush_end_pos = 0;
   bool update_binlog_end_pos_after_sync;
   if (unlikely(!is_open())) {
-    final_queue = fetch_and_process_flush_stage_queue(false, true);
+    final_queue = fetch_and_process_flush_stage_queue(true);
     leave_mutex_before_commit_stage =
         consensus_log_manager.get_sequence_stage1_lock();
     /*
@@ -9274,7 +9454,7 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
   DBUG_EXECUTE_IF("force_rotate_binlog", { do_rotate = true; });
 
   if (flush_error == 0 && total_bytes > 0) {
-    if (!opt_initialize) { /* let the paxos send the log */
+    if (!opt_initialize && alisql_server) { /* let the paxos send the log */
       alisql_server->writeCacheLogDone();
     }
     DBUG_EXECUTE_IF("crash_before_flush_binlog", { /* let follower get the log */
@@ -9374,7 +9554,7 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
   }
 
   // protected by LOCK_sync
-  if (opt_enable_appliedindex_checker) {
+  if (consensus_ptr && opt_enable_appliedindex_checker && sync_error == 0) {
     uint64 maxi = 0, mini = UINT64_MAX, size = 0;
     for (THD *head = final_queue; head; head = head->next_to_commit) {
       if (head->consensus_index == 0) continue;
@@ -9390,9 +9570,12 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
 
   DEBUG_SYNC(thd, "bgc_after_sync_stage_before_commit_stage");
 
-  // leave_mutex_before_commit_stage = &LOCK_sync;
-  // must release LOCK_sync after fetch_queue_for()
-  mysql_mutex_unlock(&LOCK_sync);
+  if (opt_binlog_order_commits || Clone_handler::need_commit_order()) {
+    leave_mutex_before_commit_stage = &LOCK_sync;
+  } else {
+    mysql_mutex_unlock(&LOCK_sync);
+    leave_mutex_before_commit_stage = nullptr;
+  }
 
   // set last index and write log done out of order is supported
   for (THD *head = final_queue; head; head = head->next_to_commit) {
@@ -9404,10 +9587,8 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
 
   if (group_max_log_index > 0) {
     consensus_log_manager.set_sync_index_if_greater(group_max_log_index);
-    if (!opt_initialize) alisql_server->writeLogDone(group_max_log_index);
+    if (!opt_initialize && alisql_server) alisql_server->writeLogDone(group_max_log_index);
   }
-
-  leave_mutex_before_commit_stage = nullptr;
 
   DBUG_EXECUTE_IF("simulate_crash_after_consensus_append_log",
                   { DBUG_SUICIDE(); });
@@ -9521,9 +9702,11 @@ commit_stage :
     If we need to rotate, we do it without commit error.
     Otherwise the thd->commit_error will be possibly reset.
    */
-  if (DBUG_EVALUATE_IF("force_rotate", 1, 0) ||
-      (do_rotate && thd->commit_error == THD::CE_NONE &&
-       !is_rotating_caused_by_incident)) {
+  if (DBUG_EVALUATE_IF("force_rotate", 1, 0)
+      || (do_rotate
+          && thd->commit_error == THD::CE_NONE
+          && !is_rotating_caused_by_incident 
+          && sync_error == 0)) {
     auto consensus_guard2 = create_lock_guard(
       [&] { consensus_log_manager.rdlock_consensus_status(); },
       [&] { consensus_log_manager.unlock_consensus_status(); }
@@ -11201,6 +11384,9 @@ bool THD::is_xa_gtid_compatible(bool some_non_transactional_table,
                                 bool non_transactional_tables_are_tmp) {
   DBUG_TRACE;
 
+  if (!ConsensusLogManager::enable_consensus())
+    return true;
+
   // If @@session.sql_log_bin has been manually turned off (only
   // doable by SUPER), then no problem, we can execute any statement.
   if ((variables.option_bits & OPTION_BIN_LOG) == 0 ||
@@ -12068,13 +12254,9 @@ int THD::binlog_query(THD::enum_binlog_query_type qtype, const char *query_arg,
 }
 
 namespace {
-void finish_transaction_in_engines(
-    THD *thd, bool all, bool run_after_commit,
-    bool need_check_transaction_rollback_request) {
+void finish_transaction_in_engines(THD *thd, bool all, bool run_after_commit) {
   if (thd->get_transaction()->m_flags.commit_low) {
-    if ((!need_check_transaction_rollback_request ||
-         !thd->transaction_rollback_request) &&
-        trx_coordinator::commit_in_engines(thd, all, run_after_commit))
+    if (trx_coordinator::commit_in_engines(thd, all, run_after_commit))
       thd->commit_error = THD::CE_COMMIT_ERROR;
   } else if (is_xa_rollback(thd)) {
     if (trx_coordinator::rollback_in_engines(thd, all))
@@ -12138,28 +12320,50 @@ bool Gcn_manager::write_gcn(THD *thd, Binlog_event_writer *writer) {
 bool Gcn_manager::assign_gcn_to_flush_group(THD *first_seen) {
   bool err = false;
 
+  /**
+    Some components, such as CDC, rely on the order of GCN and Binlog to meet
+    certain conditions. For example, if the Binlog has the form:
+    P1...C1...P2...C2, then it is assumed that the GCN of C1 must be less than
+    C2. In regular TSO transactions, this is satisfied. This is because the
+    timing is as follows:
+    1.  XA PREPARE (P1)
+    2.  GET GCN1
+    3.1 XA COMMIT with GCN1 (C1)
+    3.2 XA PREPARE (P2)
+    4.  GET GCN2
+    5.  XA COMMIT (C2)
+    Step-3.1 and Step-3.2 can happen in any order, but Step-4 definitely occurs
+    after Step-2.
+
+    However, for Async Commit, the above conditions may not be met:
+    1.  ac_prepare (P1 with PRE_GCN1 = 85)
+    2.  decide PROPOSAL_GCN1 = max(PRE_GCN1 = 85, SYS_GCN = 90)
+    3.1 ac_commit (C1 with GCN1 = 100), and SYS_GCN is not yet pushed up
+    3.2 ac_prepare (P2 with PRE_GCN2 = 87)
+    3.3 decide PROPOSAL_GCN2 = max(PRE_GCN2 = 87, SYS_GCN = 90)
+    3.4 push up SYS_GCN = 100 because C1 (GCN1 = 100)
+    4.  ac_commit (C2 with GCN2 = 87)
+    Notes, 3.1-3.4 belong to the same BGC (Binlog Group Commit).
+    The above situation obviously violates the preset assumptions because:
+    GCN1 > GCN2
+
+    Delaying the increase of SYS_GCN does not violate any distributed
+    consistency guarantee, but in order to maintain the original assumption, the
+    increase of SYS_GCN will be done when ac_commit deciding to ensure that the
+    following conditions are met:
+    GCN1 <= PROPOSAL_GCN2 <= GCN2
+
+    More specifically, for Async Commit, the above process will become:
+    1.  ac_prepare (P1 with PRE_GCN1 = 85)
+    2.  decide PROPOSAL_GCN1 = max(PRE_GCN1 = 85, SYS_GCN = 90)
+    3.1 ac_commit (C1 with GCN1 = 100), and SYS_GCN is also pushed up to 100
+    3.2 ac_prepare (P2 with PRE_GCN2 = 87)
+    3.3 decide PROPOSAL_GCN2 = max(PRE_GCN2 = 87, SYS_GCN = 100)
+    4.  ac_commit (C2 with GCN2 >= 100)
+
+  */
   for (THD *head = first_seen; head; head = head->next_to_commit) {
-    if (head->owned_commit_gcn.is_pmmt_gcn()) {
-      innodb_hton->ext.decide_xa_when_prepare(&head->owned_commit_gcn);
-    } else {
-      assert(head->owned_commit_gcn.is_cmmt_gcn() ||
-             head->owned_commit_gcn.is_null());
-      auto xid_state = head->get_transaction()->xid_state();
-
-      if (!xid_state->check_in_xa(false) || !xid_state->is_detached()) {
-        innodb_hton->ext.decide_xa_when_commit(head, &head->owned_commit_gcn,
-                                               &head->owned_master_addr);
-      } else {
-        innodb_hton->ext.decide_xa_when_commit_by_xid(
-            innodb_hton, xid_state->get_xid(), &head->owned_commit_gcn,
-            &head->owned_master_addr);
-      }
-    }
-
-    assert(!head->owned_commit_gcn.is_null());
-
-    DBUG_EXECUTE_IF("simulate_old_8018_allow_null_gcn",
-                    { head->owned_commit_gcn.reset(); });
+    lizard::commit_policy_decide(head);
   }
   return err;
 }

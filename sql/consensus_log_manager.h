@@ -63,6 +63,13 @@ enum Consensus_log_event_flag {
   FLAG_BLOB_START = 1 << 7 /* we should mark the start for SDK */
 };
 
+enum Consensus_Leader_Transfer_State {
+  CLTS_LIMIT_NONE = 0,
+  CLTS_LIMIT_NEW_TRX = 1,
+  CLTS_LIMIT_XA_FINISH = 2,
+  CLTS_LIMIT_ALL = 3,
+};
+
 struct ConsensusStateChange;
 
 class ConsensusCommitPos {
@@ -87,8 +94,6 @@ class ConsensusLogManager {
   int init_service();
   int cleanup();
 
-  bool option_invalid(bool log_bin);
-
   // class args
   Relay_log_info *get_relay_log_info() { return rli_info; }
   IO_CACHE *get_cache();
@@ -102,6 +107,8 @@ class ConsensusLogManager {
   uint64 get_apply_term() { return apply_term; }
   uint64 get_apply_ev_sequence() { return apply_ev_seq; }
   uint64 get_stop_term() { return stop_term; }
+  uint64 get_apply_ev_finish_count() { return apply_ev_finish_count; }
+  bool is_trx_apply_finished() { return apply_ev_finish_count == apply_ev_seq; }
   bool get_in_large_trx_applying() { return in_large_trx_applying; }
   bool get_in_large_trx_appending() { return in_large_trx_appending; }
   bool get_in_large_event_appending() { return in_large_event_appending; }
@@ -117,6 +124,7 @@ class ConsensusLogManager {
   ConsensusPreFetchManager *get_prefetch_manager() { return prefetch_manager; }
   ConsensusLogIndex *get_log_file_index() { return log_file_index; }
   mysql_mutex_t *get_sequence_stage1_lock() {
+    //TODD::@yanhua remove it better
     return &LOCK_consensuslog_sequence_stage1;
   }
   mysql_mutex_t *get_term_lock() { return &LOCK_consensuslog_term; }
@@ -154,6 +162,7 @@ class ConsensusLogManager {
   void set_apply_term(uint64 apply_term_arg) { apply_term = apply_term_arg; }
   void set_apply_ev_sequence(uint64 apply_ev_seq_arg) {
     apply_ev_seq = apply_ev_seq_arg;
+    apply_ev_finish_count = apply_ev_seq_arg;
   }
   void set_apply_catchup(uint apply_catchup_arg) {
     apply_catchup = apply_catchup_arg;
@@ -173,10 +182,16 @@ class ConsensusLogManager {
   }
   void incr_current_index() { current_index++; }
   void incr_apply_ev_sequence() { apply_ev_seq++; }
+  void incr_apply_ev_finish_count() { apply_ev_finish_count++; }
   uint64 get_cache_index();
   void set_cache_index(uint64 cache_index_arg);
   uint64 get_sync_index(bool serious = false);
   uint64 get_final_sync_index();
+  uint64 get_final_sync_index_no_lock();
+  uint64 get_wait_milliseconds_for_old_trx_finish();
+  void wait_old_trx_finish();
+  void wait_old_xa_finish();
+  uint64 wait_old_bgc_finish();
   void set_sync_index(uint64 sync_index_arg);
   void set_sync_index_if_greater(uint64 sync_index_arg);
   void set_enable_rotate(bool arg) { enable_rotate = arg; }
@@ -204,10 +219,9 @@ class ConsensusLogManager {
                             uint64 consensus_index);
   int get_log_position(uint64 consensus_index, bool need_lock, char *log_name,
                        uint64 *pos);
-  uint64 get_next_trx_index(uint64 consensus_index);
+  uint64 get_next_trx_index(uint64 consensus_index, bool enable_retry = true);
   uint32 serialize_cache(uchar **buffer);
   int truncate_log(uint64 consensus_index);
-
   int purge_log(uint64 consensus_index);
 
   uint64 get_exist_log_length();
@@ -217,6 +231,7 @@ class ConsensusLogManager {
     atomic_logging_flag = 3 - atomic_logging_flag;
   }
 
+  void force_update_applied_index(const uint64_t index);
   void lock_consensus_state_change();
   void unlock_consensus_state_change();
   void wait_state_change_cond();
@@ -242,6 +257,19 @@ class ConsensusLogManager {
   bool is_state_machine_ready();
   void set_event_timestamp(uint32 t) { ev_tt_.store(t); }
   uint32 get_event_timestamp() { return ev_tt_.load(); }
+
+  void set_limit_none() { leader_transfer_state.store(CLTS_LIMIT_NONE); }
+  void set_limit_new_trx() { leader_transfer_state.store(CLTS_LIMIT_NEW_TRX); }
+  void set_limit_xa_finish() { leader_transfer_state.store(CLTS_LIMIT_XA_FINISH); }
+  void set_limit_all() { leader_transfer_state.store(CLTS_LIMIT_ALL); }
+  bool is_in_leader_transfer() const { return leader_transfer_state.load() != CLTS_LIMIT_NONE; }
+  bool is_in_limit_all() const { return leader_transfer_state.load() == CLTS_LIMIT_ALL; }
+  bool is_in_limit_xa_finish() const { return leader_transfer_state.load() >= CLTS_LIMIT_XA_FINISH; }
+  uint64_t get_leader_transfer_state() const { return leader_transfer_state.load(); }
+  uint64_t get_limit_new_trx_state() const { return CLTS_LIMIT_NEW_TRX; }
+  uint64_t get_limit_none_state() const { return CLTS_LIMIT_NONE; }
+
+  static bool enable_consensus() { return opt_enable_consensus; }
 
  private:
   void wait_replay_log_finished();
@@ -273,20 +301,17 @@ class ConsensusLogManager {
       current_index;  // last log index in the log system, protected by LOCK_log
   std::atomic<uint64> cache_index;  // used to tell last cache log entry
   std::atomic<uint64> sync_index;   // used to tell last log entry
-  std::atomic<uint64>
-      apply_index;  // used to record sql thread coordinator apply index
-  std::atomic<uint64> real_apply_index;     // for large trx
-  std::atomic<uint64> apply_index_end_pos;  // used to record sql thread
-                                            // coordinator apply index end pos
-  std::atomic<uint64>
-      apply_index_current_pos;  // used to record sql thread coordinator apply
-                                // index current pos
-  std::atomic<uint64>
-      apply_term;  // used to record sql thread coordinator apply term
-  std::atomic<uint64>
-      stop_term;  // used to mark sql thread coordinator stop condition
-  std::atomic<uint64> apply_ev_seq;  // used to record sql thread coordinator
-                                     // apply event sequence in one index
+  std::atomic<uint64> stop_term;  // used to mark sql thread coordinator stop condition
+  uint64 apply_index;  // used to record sql thread coordinator apply index
+  uint64 real_apply_index;     // for large trx
+  uint64 apply_index_end_pos;  // used to record sql thread
+                               // coordinator apply index end pos
+  uint64 apply_index_current_pos;  // used to record sql thread coordinator apply
+                                   // index current pos
+  uint64 apply_term;  // used to record sql thread coordinator apply term
+  uint64 apply_ev_seq;  // used to record sql thread coordinator
+                        // apply event sequence in one index
+  uint64 apply_ev_finish_count;
   std::atomic<uint64> current_term;  // record the current system term, changed
                                      // by stageChange callback
   std::atomic<bool> in_large_trx_applying;
@@ -339,6 +364,7 @@ class ConsensusLogManager {
 
   std::atomic<uint32>
       ev_tt_;  // store last log event timestamp received from leader
+  std::atomic<uint32> leader_transfer_state{CLTS_LIMIT_NONE};
 
   MYSQL_BIN_LOG *binlog;  // point to the MySQL binlog object
   Relay_log_info
@@ -351,9 +377,10 @@ void *run_consensus_stage_change(void *arg);
 void *run_consensus_commit_pos_watcher(void *arg);
 int cluster_force_purge_gtid();
 uint64 show_fifo_cache_size(THD *, SHOW_VAR *var, char *buff);
-uint64 show_first_index_in_fifo_cache(THD *, SHOW_VAR *var, char *buff);
+uint64 show_fifo_cache_first_index(THD *, SHOW_VAR *var, char *buff);
 uint64 show_log_count_in_fifo_cache(THD *, SHOW_VAR *var, char *buff);
 int show_appliedindex_checker_queue(THD *, SHOW_VAR *var, char *);
+uint64 show_consensus_in_leader_transfer(THD *, SHOW_VAR *var, char *buff);
 
 
 #define GUARDED_READ_CONSENSUS_LOG()                                        \

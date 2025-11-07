@@ -77,7 +77,6 @@ class Server : public NetServer {
 
   // const uint64_t serverId;
   uint64_t serverId;
-  // std::string strAddr;
   Paxos *paxos;
   bool forceSync;
   uint electionWeight;
@@ -132,8 +131,6 @@ class LocalServer : public Server {
   std::atomic<uint64_t> lastSyncedIndex;
   /* for logType node, try more times for electionWeightAction */
   bool logType;
-  /* timeout for long rtt learner (default 0) */
-  uint64_t learnerConnTimeout;
   uint64_t cidx;
 
 }; /* end of class LocalServer */
@@ -170,7 +167,7 @@ class RemoteServer : public Server {
   void beginLeadership(void *) override;
   void stepDown(void *) override;
   void stop(void *) override;
-  void sendMsg(void *) override;
+  void sendMsg(void *ptr) override { sendMsgFunc(false, false, ptr); }
   void connect(void *) override;
   void disconnect(void *) override;
   void fillInfo(void *) override;
@@ -212,6 +209,12 @@ class RemoteServer : public Server {
   std::atomic<uint64_t> nextIndex;
   std::atomic<uint64_t> matchIndex;
   std::atomic<uint64_t> lastAckEpoch;
+  std::string serverIp;
+  uint64_t serverPort{0};
+  uint64_t applyDelaySeconds{0};
+  bool applyThreadRunning{false};
+  bool disableElection{false};
+  bool logInstance{false};
   bool hasVote;
   bool isLeader;
   bool isLearner;
@@ -241,9 +244,6 @@ class RemoteServer : public Server {
   */
   std::atomic<uint64_t> lastEntrySize;
 
- protected:
-  uint64_t getConnTimeout();
-
  private:
   void sendMessageLow(PaxosMsg *msg);
 }; /* end of class RemoteServer */
@@ -271,7 +271,7 @@ class SendMsgTask {
     return false;
   }
   void printMergeInfo(uint64_t mergedNum) {
-    easy_warn_log("SendMsgTask: %llu tasks merged for server %llu", mergedNum,
+    easy_info_log("SendMsgTask: %llu tasks merged for server %llu", mergedNum,
                   server->serverId);
   }
 };

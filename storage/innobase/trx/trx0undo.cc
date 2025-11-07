@@ -63,7 +63,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "lizard0gcs.h"
 #include "lizard0mon.h"
 #include "lizard0scn.h"
-#include "lizard0txn.h"
+#include "lizard0txn0space.h"
 #include "lizard0undo.h"
 #include "lizard0xa.h"
 
@@ -271,13 +271,18 @@ trx_undo_rec_t *trx_undo_get_next_rec(
 
   space = page_get_space_id(page_align(rec));
 
+
+#ifdef UNIV_DEBUG
   bool found;
   const page_size_t &page_size = fil_space_get_page_size(space, &found);
-
   ut_ad(found);
 
-  return (trx_undo_get_next_rec_from_next_page(
-      space, page_size, page_align(rec), page_no, offset, RW_S_LATCH, mtr));
+  ut_ad(page_size.equals_to(univ_page_size));
+#endif
+
+  return (trx_undo_get_next_rec_from_next_page(space, univ_page_size,
+                                               page_align(rec), page_no, offset,
+                                               RW_S_LATCH, mtr));
 }
 
 /** Gets the first record in an undo log.
@@ -1028,8 +1033,8 @@ static page_no_t trx_undo_free_page_low(
 
   lizard_verify_txn_tablespace_by_id(space, false);
 
-  undo_page =
-      trx_undo_page_get(page_id_t(space, page_no), rseg->page_size, mtr);
+  undo_page = lizard::trx_undo_page_get_with_hint(
+      page_id_t(space, page_no), rseg->page_size, Cache_hint::KEEP_OLD, mtr);
 
   header_page =
       trx_undo_page_get(page_id_t(space, hdr_page_no), rseg->page_size, mtr);
@@ -1424,7 +1429,6 @@ static trx_undo_t *trx_undo_mem_init(
     UT_LIST_ADD_LAST(rseg->txn_undo_cached, undo);
 
     MONITOR_INC(MONITOR_NUM_UNDO_SLOT_CACHED);
-    LIZARD_MONITOR_INC_TXN_CACHED(1);
 
     lizard_info(ER_LIZARD) << "Found a recycled txn undo log segment";
     return undo;
@@ -1446,7 +1450,7 @@ static trx_undo_t *trx_undo_mem_init(
     trx_undo_read_xid(undo_header, &xid);
   }
 
-  lizard::trx_undo_hdr_read_slot(undo_header, &slot_addr, mtr);
+  slot_addr = lizard::trx_undo_hdr_read_slot(undo_header, mtr);
 
   undo = trx_undo_mem_create(rseg, id, type, trx_id, &xid, page_no, offset,
                              slot_addr);
@@ -1802,7 +1806,7 @@ void trx_undo_mem_free(trx_undo_t *undo) /*!< in: the undo object to be freed */
 
     lizard::txn_undo_hash_insert(*undo);
 
-    lizard::lizard_stats.txn_undo_log_create.inc();
+    lizard::generic_stats.txn_undo_log_create.inc();
   }
 
   if (*undo == nullptr) {
@@ -1864,8 +1868,7 @@ trx_undo_t *trx_undo_reuse_cached(trx_t *trx, trx_rseg_t *rseg, ulint type,
 
     MONITOR_DEC(MONITOR_NUM_UNDO_SLOT_CACHED);
 
-    LIZARD_MONITOR_DEC_TXN_CACHED(1);
-    lizard::lizard_stats.txn_undo_log_reuse.inc();
+    lizard::generic_stats.txn_undo_log_reuse.inc();
   }
 
   ut_ad(undo->size == 1);
@@ -2091,7 +2094,7 @@ page_t *trx_undo_set_state_at_finish(
 
   if (undo->type == TRX_UNDO_TXN) {
     ut_ad(undo->size == 1);
-    state = lizard::decide_txn_undo_state_at_finish(free_offset);
+    state = lizard::txn_undo_decide_state_at_finish(free_offset);
   } else if (undo->size == 1 && free_offset < TRX_UNDO_PAGE_REUSE_LIMIT) {
     state = TRX_UNDO_CACHED;
   } else if (undo->type == TRX_UNDO_INSERT) {
@@ -2155,7 +2158,7 @@ page_t *trx_undo_set_state_at_prepare(trx_t *trx, trx_undo_t *undo,
   trx_undo_write_xid(undo_header, &undo->xid, mtr);
 
   if (lizard::fsp_is_txn_tablespace_by_id(undo->space)) {
-    ut_a(lizard::xa::trx_slot_check_validity(trx));
+    ut_a(lizard::trx_slot_check_validity(trx));
   }
 
   return (undo_page);
@@ -2451,8 +2454,10 @@ bool trx_undo_truncate_tablespace(undo::Tablespace *marked_space) {
 
     rseg->page_no = trx_rseg_header_create(new_space_id, univ_page_size,
                                            PAGE_NO_MAX, rseg->id, &mtr);
-
     ut_a(rseg->page_no != FIL_NULL);
+
+    rseg->is_txn = lizard::fsp_is_txn_tablespace_by_id(new_space_id);
+    ut_a(!rseg->is_txn);
 
     auto rseg_header =
         trx_rsegf_get_new(new_space_id, rseg->page_no, rseg->page_size, &mtr);
@@ -2481,7 +2486,6 @@ bool trx_undo_truncate_tablespace(undo::Tablespace *marked_space) {
       UT_LIST_REMOVE(rseg->txn_undo_cached, undo);
       MONITOR_DEC(MONITOR_NUM_UNDO_SLOT_CACHED);
 
-      LIZARD_MONITOR_DEC_TXN_CACHED(1);
       trx_undo_mem_free(undo);
     }
 

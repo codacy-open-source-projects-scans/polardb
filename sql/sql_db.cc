@@ -106,8 +106,8 @@
   .frm is left in this list so that any orphan files can be removed on upgrade.
   .SDI needs to be there for now... need to investigate why...
 */
-const char *del_exts[] = {".frm", ".BAK", ".TMD", ".opt",
-                          ".OLD", ".cfg", ".SDI", NullS};
+const char *del_exts[] = {".frm", ".BAK", ".TMD", ".opt", ".OLD",
+                          ".cfg", ".SDI", ".cfp", NullS};
 static TYPELIB deletable_extentions = {array_elements(del_exts) - 1, "del_exts",
                                        del_exts, nullptr};
 
@@ -502,7 +502,7 @@ bool mysql_create_db(THD *thd, const char *db, HA_CREATE_INFO *create_info) {
     return true;
   }
 
-  my_ok(thd, 1);
+  if(set_my_ok(thd, 1)) return true;
   return false;
 }
 
@@ -649,7 +649,7 @@ bool mysql_alter_db(THD *thd, const char *db, HA_CREATE_INFO *create_info) {
     }
   }
 
-  my_ok(thd, 1);
+  if (set_my_ok(thd, 1)) return true;
   return false;
 }
 
@@ -944,7 +944,7 @@ bool mysql_rm_db(THD *thd, const LEX_CSTRING &db, bool if_exists) {
   }
 
   thd->server_status |= SERVER_STATUS_DB_DROPPED;
-  my_ok(thd, deleted_tables);
+  if(set_my_ok(thd, deleted_tables)) return true;
   return false;
 }
 

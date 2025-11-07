@@ -79,7 +79,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "lizard0row.h"
 #include "lizard0scn.h"
 #include "lizard0tcn.h"
-#include "lizard0txn.h"
+#include "lizard0txn0space.h"
 #include "lizard0undo.h"
 #include "lizard0undo0types.h"
 #include "lizard0xa.h"
@@ -255,6 +255,7 @@ static void trx_init(trx_t *trx) {
   trx->flush_observer = nullptr;
 
   /** Lizard added */
+  /** Have held trx->mutex after commit. */
   trx->txn_desc.reset();
 
   trx->gp_state = GP_STATE_NULL;
@@ -263,7 +264,9 @@ static void trx_init(trx_t *trx) {
 
   trx->vision.reset();
 
-  trx->xad.reset();
+  lizard::trx_release_xa_group_if_need(trx);
+
+  trx->xa_desc.reset();
 
   trx->xa_spec = nullptr;
 
@@ -288,7 +291,7 @@ struct TrxFactory {
 
     new (&trx->gp_wait) gp_wait_t();
 
-    new (&trx->xad) XAD();
+    new (&trx->xa_desc) xa_desc_t();
 
     new (&trx->vision) lizard::Vision();
 
@@ -312,6 +315,8 @@ struct TrxFactory {
     lock_trx_alloc_locks(trx);
 
     lizard::alloc_commit_cleanout(trx);
+
+    trx->min_active_tid.store(0);
   }
 
   /** Release resources held by the transaction object.
@@ -369,7 +374,7 @@ struct TrxFactory {
 
     trx->gp_wait.~gp_wait_t();
 
-    trx->xad.~XAD();
+    trx->xa_desc.~xa_desc_t();
 
     trx->vision.~Vision();
 
@@ -557,6 +562,10 @@ static void trx_free(trx_t *&trx) {
 
   trx->mod_tables.clear();
 
+  lizard::trx_release_xa_group_if_need(trx);
+
+  trx->xa_desc.reset();
+
   // ut_ad(trx->read_view == nullptr);
 
   ut_ad(!trx->vision.is_active());
@@ -683,6 +692,7 @@ void trx_free_prepared_or_active_recovered(trx_t *trx) {
   assert_trx_in_rw_list(trx);
 
   trx_release_impl_and_expl_locks(trx, false);
+
   trx_undo_free_trx_with_prepared_or_active_logs(trx, was_prepared);
 
   ut_ad(!trx->in_rw_trx_list);
@@ -793,6 +803,7 @@ static void trx_resurrect_table_ids(trx_t *trx, const trx_undo_ptr_t *undo_ptr,
     ulint type;
     undo_no_t undo_no;
     table_id_t table_id;
+    space_index_t index_id;
     ulint cmpl_info;
     bool updated_extern;
     type_cmpl_t type_cmpl;
@@ -805,7 +816,7 @@ static void trx_resurrect_table_ids(trx_t *trx, const trx_undo_ptr_t *undo_ptr,
     }
 
     trx_undo_rec_get_pars(undo_rec, &type, &cmpl_info, &updated_extern,
-                          &undo_no, &table_id, &is_2pp, type_cmpl);
+                          &undo_no, &table_id, &index_id, &is_2pp, type_cmpl);
     tables.insert(table_id);
 
     undo_rec = trx_undo_get_prev_rec(undo_rec, undo->hdr_page_no,
@@ -886,7 +897,7 @@ static trx_t *trx_resurrect_insert(
 
   assert_trx_commit_mark_initial(trx);
   assert_txn_desc_initial(trx);
-  ut_ad(lizard::slot_addr_validate(undo->slot_addr));
+  ut_ad(slot_addr_validate(undo->slot_addr));
 
   /* This is single-threaded startup code, we do not need the
   protection of trx->mutex or trx_sys->mutex here. */
@@ -1125,7 +1136,6 @@ static inline void trx_remove_from_rw_trx_list(trx_t *trx) {
   UT_LIST_REMOVE(trx_sys->rw_trx_list, trx);
   ut_d(trx->in_rw_trx_list = false);
 }
-
 /** Creates trx objects for transactions and initializes the trx list of
  trx_sys at database start. Rollback segments and undo log lists must
  already exist when this function is called, because the lists of
@@ -1502,6 +1512,8 @@ static void trx_start_low(
 
     trx_sys_rw_trx_add(trx);
 
+    lizard::trx_add_to_xa_group_if_need(trx);
+
     trx_set_trx_id_for_audit_trx_ctx(trx);
   } else {
     trx->id = 0;
@@ -1632,7 +1644,7 @@ static bool trx_write_serialisation_history(
     /** Lizard: txn undo header */
     commit_mark_t cmmt;
     lizard::TxnUndoRsegs elem;
-    bool has_collected = lizard::trx_collect_rsegs_for_purge(
+    bool has_collected = lizard::trx_purge_collect_rsegs(
         &elem, redo_rseg_undo_ptr, temp_rseg_undo_ptr, txn_rseg_undo_ptr);
 
     ulint txn_rseg_len = 0;
@@ -1729,7 +1741,7 @@ static bool trx_write_serialisation_history(
     /** Add the rseg into purge queue */
     if (has_collected) {
       ut_ad(elem.get_scn() != SCN_NULL);
-      lizard::trx_add_rsegs_for_purge(cmmt, &elem);
+      lizard::trx_purge_add_rsegs(cmmt, &elem);
     }
   }
 
@@ -1833,8 +1845,9 @@ static void trx_finalize_for_fts(
 
 /** If required, flushes the log to disk based on the value of
  innodb_flush_log_at_trx_commit. */
-static void trx_flush_log_if_needed_low(lsn_t lsn, bool no_flush) /*!< in: lsn up to which logs
-                                                   are to be flushed. */
+static void trx_flush_log_if_needed_low(lsn_t lsn,
+                                        bool no_flush) /*!< in: lsn up to which
+                                        logs are to be flushed. */
 {
 #ifdef _WIN32
   bool flush = true;
@@ -1876,8 +1889,9 @@ static void trx_flush_log_if_needed(lsn_t lsn, /*!< in: lsn up to which logs are
     auto wait_stats = log_write_up_to(*log_sys, lsn, true);
     MONITOR_INC_WAIT_STATS(MONITOR_TRX_ON_LOG_, wait_stats);
   } else {
-    //Note:: xpaxos follower apply worker no need flush immediately
-    bool no_flush = trx->mysql_thd && trx->mysql_thd->xpaxos_replication_channel;
+    // Note:: xpaxos follower apply worker no need flush immediately
+    bool no_flush =
+        trx->mysql_thd && trx->mysql_thd->xpaxos_replication_channel;
     trx_flush_log_if_needed_low(lsn, no_flush);
   }
 
@@ -1940,12 +1954,7 @@ static void trx_erase_lists(trx_t *trx) {
     // if (trx->read_view != nullptr) {
     //   trx_sys->mvcc->view_close(trx->read_view, true);
     // }
-
-    if (trx->vision.is_active()) {
-      lizard::trx_vision_release(&trx->vision);
-    }
-
-    lizard::gcs_mod_min_active_trx_id(trx);
+    lizard::gcs_mod_min_active_tid(trx);
   }
 
   DEBUG_SYNC_C("after_trx_erase_lists");
@@ -2016,10 +2025,10 @@ static void trx_release_impl_and_expl_locks(trx_t *trx, bool serialised) {
     trx_sys->get_shard_by_trx_id(trx->id).active_rw_trxs.latch_and_execute(
         [&](Trx_by_id_with_min &trx_by_id_with_min) {
           state_transition();
-          ut_d(const size_t trx_shard_no = trx_get_shard_no(trx->id));
-          ut_ad(trx_get_shard_no(trx_by_id_with_min.min_id()) == trx_shard_no);
+          // ut_d(const size_t trx_shard_no = trx_get_shard_no(trx->id));
+          // ut_ad(trx_get_shard_no(trx_by_id_with_min.min_id()) == trx_shard_no);
           trx_by_id_with_min.erase(trx->id);
-          ut_ad(trx_get_shard_no(trx_by_id_with_min.min_id()) == trx_shard_no);
+          //ut_ad(trx_get_shard_no(trx_by_id_with_min.min_id()) == trx_shard_no);
         },
         UT_LOCATION_HERE);
   } else {
@@ -2147,14 +2156,13 @@ written */
       // if (trx->read_view != nullptr) {
       //   trx_sys->mvcc->view_close(trx->read_view, false);
       // }
-
-      if (trx->vision.is_active()) {
-        lizard::trx_vision_release(&trx->vision);
-      }
-
     } else {
       ut_ad(trx->id > 0);
       MONITOR_INC(MONITOR_TRX_RW_COMMIT);
+    }
+
+    if (trx->vision.is_active()) {
+      lizard::trx_vision_release(&trx->vision);
     }
   }
 
@@ -2361,7 +2369,7 @@ void trx_commit_low(trx_t *trx, mtr_t *mtr) {
 
     mtr_commit(mtr);
 
-    lizard::trx_cache_tcn(trx, serialised);
+    lizard::txn_commit_in_memory(trx, serialised);
 
     DBUG_PRINT("trx_commit", ("commit lsn at " LSN_PF, mtr->commit_lsn()));
 
@@ -2443,7 +2451,7 @@ void trx_cleanup_at_db_startup(trx_t *trx) /*!< in: transaction */
   ut_a(!trx->read_only);
   trx_remove_from_rw_trx_list(trx);
 
-  lizard::gcs_mod_min_active_trx_id(trx);
+  lizard::gcs_mod_min_active_tid(trx);
 
   trx_sys_mutex_exit();
 
@@ -2486,7 +2494,7 @@ lizard::Vision *trx_assign_read_view(
   }
 
   /* NOTES: This may result in performance degradation. */
-  vision_collect_trx_group_ids(trx, &trx->vision);
+  trx->vision.xa_refresh(trx);
 
   return (&trx->vision);
 }
@@ -3239,6 +3247,10 @@ static void trx_prepare(trx_t *trx) {
   trx_sys->n_prepared_trx++;
   trx_sys_mutex_exit();
 
+  /* close xa group for extern Xa transaction. */
+  if (!trx->xa_desc.is_group_null()) {
+    trx->xa_desc.group()->close();
+  }
   /* Force isolation level to RC and release GAP locks
   for test purpose. */
   DBUG_EXECUTE_IF("ib_force_release_gap_lock_prepare",
@@ -3713,6 +3725,8 @@ void trx_set_rw_mode(trx_t *trx) /*!< in/out: transaction that is RW */
   trx_sys_mutex_exit();
 
   trx_sys_rw_trx_add(trx);
+
+  lizard::trx_add_to_xa_group_if_need(trx);
 
   trx_set_trx_id_for_audit_trx_ctx(trx);
 }

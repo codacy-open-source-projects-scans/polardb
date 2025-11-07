@@ -112,6 +112,7 @@
 #include "thr_lock.h"
 
 #include "sql/sql_implicit_common.h"
+#include "sql/sql_update.h"
 
 namespace dd {
 class Table;
@@ -526,6 +527,10 @@ bool Sql_cmd_insert_values::execute_inner(THD *thd) {
   returning_stmt.setup(thd, const_cast<Query_block *>(query_block));
   if (thd->is_error()) return true;
 
+  if (returning_stmt.is_backfill_returning()) {
+    info.backfill_returning = 1;
+  }
+
   // Current error state inside and after the insert loop
   bool has_error = false;
 
@@ -654,16 +659,24 @@ bool Sql_cmd_insert_values::execute_inner(THD *thd) {
         has_error = true;
         break;
       }
-      if (write_record(thd, insert_table, &info, &update)) {
+      if (write_record(thd, insert_table, &info, &update, &returning_stmt)) {
         has_error = true;
         break;
       }
 
       /* Send data if it is returning clause */
-      if ((info.prev_errno == 0 || !thd->lex->is_ignore()) &&
-          returning_stmt.send_data(thd)) {
-        has_error = true;
-        break;
+      if (returning_stmt.is_backfill_returning()) {
+        if ((info.prev_errno == 0 && info.backfill_dup == 1 && thd->lex->is_ignore()) && 
+            returning_stmt.send_data(thd)) {
+          has_error = true;
+          break;
+        }
+      } else {
+        if ((info.prev_errno == 0 || !thd->lex->is_ignore()) &&
+            returning_stmt.send_data(thd)) {
+          has_error = true;
+          break;
+        }
       }
 
       thd->get_stmt_da()->inc_current_row_for_condition();
@@ -782,13 +795,15 @@ bool Sql_cmd_insert_values::execute_inner(THD *thd) {
           (thd->get_protocol()->has_client_capability(CLIENT_FOUND_ROWS)
                ? info.stats.touched
                : info.stats.updated));
-    } else
-      my_ok(thd,
-            info.stats.copied + info.stats.deleted +
-                (thd->get_protocol()->has_client_capability(CLIENT_FOUND_ROWS)
-                     ? info.stats.touched
-                     : info.stats.updated),
-            id);
+    } else {
+      has_error = set_my_ok(thd,
+          info.stats.copied + info.stats.deleted +
+              (thd->get_protocol()->has_client_capability(CLIENT_FOUND_ROWS)
+                   ? info.stats.touched
+                   : info.stats.updated),
+          id);
+      if (has_error) return true;
+    }
   } else {
     char buff[160];
     ha_rows updated =
@@ -808,8 +823,10 @@ bool Sql_cmd_insert_values::execute_inner(THD *thd) {
     if (returning_stmt.is_returning()) {
       returning_stmt.send_eof(thd);
       thd->set_row_count_func(info.stats.copied + info.stats.deleted + updated);
-    } else
-      my_ok(thd, info.stats.copied + info.stats.deleted + updated, id, buff);
+    } else {
+      has_error= set_my_ok(thd, info.stats.copied + info.stats.deleted + updated, id, buff);
+      if (has_error) return true;
+    }
   }
 
   /*
@@ -1843,7 +1860,8 @@ static bool last_uniq_key(TABLE *table, uint keynr) {
   @returns false if success, true if error
 */
 
-bool write_record(THD *thd, TABLE *table, COPY_INFO *info, COPY_INFO *update) {
+bool write_record(THD *thd, TABLE *table, COPY_INFO *info, COPY_INFO *update,
+                  im::Update_returning_statement *returning_stmt) {
   int error, trg_error = 0;
   char *key = nullptr;
   MY_BITMAP *save_read_set, *save_write_set;
@@ -1852,6 +1870,8 @@ bool write_record(THD *thd, TABLE *table, COPY_INFO *info, COPY_INFO *update) {
   DBUG_TRACE;
 
   info->prev_errno = 0;
+  info->backfill_dup = 0;
+  bool is_backfill_returning = (info->backfill_returning == 1);
 
   /* Here we are using separate MEM_ROOT as this memory should be freed once we
      exit write_record() function. This is marked as not instumented as it is
@@ -1864,7 +1884,7 @@ bool write_record(THD *thd, TABLE *table, COPY_INFO *info, COPY_INFO *update) {
 
   const enum_duplicates duplicate_handling = info->get_duplicate_handling();
 
-  if (duplicate_handling == DUP_REPLACE || duplicate_handling == DUP_UPDATE) {
+  if (duplicate_handling == DUP_REPLACE || duplicate_handling == DUP_UPDATE || is_backfill_returning) {
     assert(duplicate_handling != DUP_UPDATE || update != nullptr);
     while ((error = table->file->ha_write_row(table->record[0]))) {
       uint key_nr;
@@ -1970,7 +1990,13 @@ bool write_record(THD *thd, TABLE *table, COPY_INFO *info, COPY_INFO *update) {
         error = HA_ERR_FOUND_DUPP_KEY; /* Database can't find key */
         goto err;
       }
-      if (duplicate_handling == DUP_UPDATE) {
+      if (is_backfill_returning && duplicate_handling != DUP_UPDATE && duplicate_handling != DUP_REPLACE)
+      {
+        if (!records_are_comparable(table) || compare_records_for_backfill(table)) {
+          info->backfill_dup = 1;
+        }
+        goto ok_or_after_trg_err;
+      } else if (duplicate_handling == DUP_UPDATE) {
         int res = 0;
         /*
           We don't check for other UNIQUE keys - the first row
@@ -2004,6 +2030,16 @@ bool write_record(THD *thd, TABLE *table, COPY_INFO *info, COPY_INFO *update) {
           of the caller.
         */
         table->autoinc_field_has_explicit_non_null_value = false;
+        /* Send  before data image. */
+        if (returning_stmt != nullptr && returning_stmt->is_full_image()) {
+          /* Dont support trigger. */
+          if (table->triggers != nullptr) return true;
+          if ((info->prev_errno == 0 || !thd->lex->is_ignore()) 
+              && returning_stmt->send_data(thd, true)) {
+            return true;
+          }
+        }
+
         bool is_row_changed = false;
         if (fill_record_n_invoke_before_triggers(
                 thd, update, *update->get_changed_columns(),
@@ -2113,6 +2149,17 @@ bool write_record(THD *thd, TABLE *table, COPY_INFO *info, COPY_INFO *update) {
         goto ok_or_after_trg_err;
       } else /* DUP_REPLACE */
       {
+        /* Send before data iamge, the diff is used for move data_ptr */
+        if (returning_stmt != nullptr && returning_stmt->is_full_image()) {
+          ptrdiff_t diff = (table->record[1] - table->record[0]);
+          /* Dont support trigger. */
+          if (table->triggers != nullptr) return true; 
+          if ((info->prev_errno == 0 || !thd->lex->is_ignore()) 
+              && returning_stmt->send_data(thd, true, diff)) {
+            return true;
+          }
+        }
+
         Table_ref *view = table->pos_in_table_list->belong_to_view;
 
         if (view && view->replace_filter) {
@@ -2589,7 +2636,7 @@ bool Query_result_insert::send_eof(THD *thd) {
                   ? thd->first_successful_insert_id_in_prev_stmt
                   : (info.stats.copied ? autoinc_value_of_last_inserted_row
                                        : 0));
-  my_ok(thd, row_count, id, buff);
+  if (set_my_ok(thd, row_count, id, buff)) return true;
 
   /*
     If we have inserted into a VIEW, and the base table has
@@ -3093,7 +3140,8 @@ int Query_result_create::binlog_show_create_table(THD *thd) {
 
   result = store_create_info(thd, &tmp_table_list, &query, create_info,
                              /* show_database */ true,
-                             /* SHOW CREATE TABLE */ false);
+                             /* SHOW CREATE TABLE */ false,
+                             /* for_show_secondary_engine_attribute */ false);
   assert(result == 0); /* store_create_info() always return 0 */
 
   if (mysql_bin_log.is_open()) {

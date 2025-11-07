@@ -115,7 +115,7 @@ class MYSQL_RDS_AUDIT_LOG {
   enum enum_log_format { PLAIN, JSON };
 
   /* PolorDB 8.0 supports MYSQL_V2, we don't */
-  enum enum_log_version { MYSQL_V1, MYSQL_V3 };
+  enum enum_log_version { MYSQL_V1, MYSQL_V3, MYSQL_V4 };
 
   /*
     The strategy used when write to audit log file.
@@ -439,6 +439,11 @@ class MYSQL_RDS_AUDIT_LOG {
     block user thread writting in buffered-write strategy.
   */
   Partitioned_rwlock LOCK_file;
+
+  /*
+    Count of pwrite returning error.
+  */
+  ulong pwrite_err_num;
 
   /* Issue audit log flushing thread to exit loop. */
   void set_abort() { m_aborted = true; }
@@ -764,6 +769,13 @@ class MYSQL_RDS_AUDIT_LOG {
   inline ulonglong get_log_file_writes() { return log_file_writes.load(); }
 
   inline ulonglong get_log_file_syncs() { return log_file_syncs.load(); }
+
+  /* Return count of pwrite error */
+  ulong get_pwrite_err() const { return pwrite_err_num; }
+#ifndef DBUG_OFF
+ public:
+  static uint log_debug;
+#endif
 };
 
 /* Singleton of MySQL_RDS_AUDIT_LOG */

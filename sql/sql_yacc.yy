@@ -169,7 +169,7 @@ Note: YYTHD is passed as an argument to yyparse(), and subsequently to yylex().
 #include "thr_lock.h"
 #include "violite.h"
 
-#include "sql/package/package_interface.h"  // find_native_proc_and_evoke
+#include "sql/package/package_interface.h"  // find_native_proc_and_invoke
 
 #include "sql/item_sequence_func.h"              // Item_func_nextval, Item_func_currval
 #include "sql/sql_sequence.h"                    // Sql_cmd_create_sequence
@@ -1932,6 +1932,7 @@ void warn_about_deprecated_binary(THD *thd)
         show_create_function_stmt
         show_create_procedure_stmt
         show_create_table_stmt
+        show_create_table_for_export_stmt
         show_create_trigger_stmt
         show_create_user_stmt
         show_create_view_stmt
@@ -2433,6 +2434,7 @@ simple_statement:
         | show_create_function_stmt
         | show_create_procedure_stmt
         | show_create_table_stmt
+        | show_create_table_for_export_stmt
         | show_create_trigger_stmt
         | show_create_user_stmt
         | show_create_view_stmt
@@ -3550,6 +3552,8 @@ create:
             lex->sql_command=SQLCOM_CREATE_DB;
             lex->name= $4;
             lex->create_info->options= $3 ? HA_LEX_CREATE_IF_NOT_EXISTS : 0;
+            const bool collation_used = (lex->create_info->used_fields & HA_CREATE_USED_DEFAULT_COLLATE) != 0;
+            check_implicit_collation_for_utf8mb4(YYTHD, lex->create_info->default_table_charset, collation_used, $4.str);
           }
         | CREATE view_or_trigger_or_sp_or_event
           {}
@@ -4072,7 +4076,7 @@ sp_suid:
 call_stmt:
           CALL_SYM sp_name opt_paren_expr_list
           {
-            $$ = im::find_native_proc_and_evoke(YYTHD, $2, $3);
+            $$ = im::find_native_proc_and_invoke(YYTHD, $2, $3);
             if ($$ == NULL)
               $$ = NEW_PTN PT_call($2, $3);
           }
@@ -4124,7 +4128,7 @@ sp_fdparam:
                                                    $1,
                                                    field_type,
                                                    sp_variable::MODE_IN);
-
+            check_implicit_collation_for_utf8mb4(thd, cs, $3 != nullptr, $1.str);
             if (spvar->field_def.init(thd, "", field_type,
                                       $2->get_length(), $2->get_dec(),
                                       $2->get_type_flags(),
@@ -4185,7 +4189,7 @@ sp_pdparam:
                                                    $2,
                                                    field_type,
                                                    (sp_variable::enum_mode) $1);
-
+            check_implicit_collation_for_utf8mb4(thd, cs, $4 != nullptr, $2.str);
             if (spvar->field_def.init(thd, "", field_type,
                                       $3->get_length(), $3->get_dec(),
                                       $3->get_type_flags(),
@@ -4316,6 +4320,7 @@ sp_decl:
               spvar->type= var_type;
               spvar->default_value= dflt_value_item;
 
+              check_implicit_collation_for_utf8mb4(thd, cs, $4 != nullptr, "DECLARE");
               if (spvar->field_def.init(thd, "", var_type,
                                         $3->get_length(), $3->get_dec(),
                                         $3->get_type_flags(),
@@ -8248,6 +8253,8 @@ alter_database_stmt:
             if (lex->name.str == NULL &&
                 lex->copy_db_to(&lex->name.str, &lex->name.length))
               MYSQL_YYABORT;
+            const bool collation_used = (lex->create_info->used_fields & HA_CREATE_USED_DEFAULT_COLLATE) != 0;
+            check_implicit_collation_for_utf8mb4(YYTHD, lex->create_info->default_table_charset, collation_used, $3.str);
           }
         ;
 
@@ -9162,10 +9169,12 @@ alter_list_item:
           }
         | CONVERT_SYM TO_SYM character_set charset_name opt_collate
           {
+            check_implicit_collation_for_utf8mb4(YYTHD, $4, $5 != nullptr, "CONVERT");
             $$= NEW_PTN PT_alter_table_convert_to_charset($4, $5);
           }
         | CONVERT_SYM TO_SYM character_set DEFAULT_SYM opt_collate
           {
+            check_implicit_collation_for_utf8mb4(YYTHD, YYTHD->variables.collation_database, $5 != nullptr, "CONVERT");
             $$ = NEW_PTN PT_alter_table_convert_to_charset(
                 YYTHD->variables.collation_database,
                 $5 ? $5 : YYTHD->variables.collation_database);
@@ -13972,6 +13981,13 @@ show_create_table_stmt:
           }
         ;
 
+show_create_table_for_export_stmt:
+          SHOW CREATE TABLE_SYM table_ident FOR_SYM EXPORT_SYM
+          {
+            $$ = NEW_PTN PT_show_create_table_for_export(@$, $4);
+          }
+        ;
+
 show_create_view_stmt:
           SHOW CREATE VIEW_SYM table_ident
           {
@@ -17954,6 +17970,7 @@ sf_tail:
               MYSQL_YYABORT;
             }
 
+            check_implicit_collation_for_utf8mb4(YYTHD, cs, $11 != nullptr, "RETURNS");
             if (sp->m_return_field_def.init(YYTHD, "", field_type,
                                             $10->get_length(), $10->get_dec(),
                                             $10->get_type_flags(), NULL, NULL, &NULL_CSTR, 0,

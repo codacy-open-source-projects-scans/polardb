@@ -35,168 +35,9 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "my_dbug.h"
 
-/*-----------------------------------------------------------------------------*/
-/** MyGCN structure that represent user behavior */
-/*-----------------------------------------------------------------------------*/
-struct MyGCN {
- private:
-  /** GCN tuple */
-  gcn_tuple_t m_gtuple;
-  /** proposal gcn or commit gcn. */
-  bool is_proposal;
-  /** Whether gcn is decided */
-  bool has_decided;
-  /** Whether SYS_GCN is pushed up by me */
-  bool has_pushed_up;
+struct trx_undo_t;
+struct txn_slot_t;
 
- public:
-  MyGCN()
-      : m_gtuple(),
-        is_proposal(false),
-        has_decided(false),
-        has_pushed_up(false) {}
-
-  gcn_tuple_t tuple() const { return m_gtuple; }
-
-  bool decided() const { return has_decided; }
-
-  bool pushed_up() const { return has_pushed_up; }
-
-  /**
-    Assign external GCN for AC PREPARE.
-    @param[in]    gcn           pre gcn
-  */
-  void assign_from_ac_prepare(gcn_t gcn);
-
-  /**
-    Assign external GCN for AC COMMIT.
-    @param[in]    gcn           commit gcn
-  */
-  void assign_from_ac_commit(gcn_t gcn);
-
-  /**
-    Decide from external assigned GCN.
-    @param[in]    gcn           assigned gcn
-  */
-  void assign_from_var(gcn_t gcn);
-
-  /**
-    Decide from Gcn_log_event. Might be proposal or non-proposal.
-  */
-  void assign_from_binlog(const gcn_tuple_t &gcn_tuple, bool proposal);
-
-  /**
-    Decide by loading local SYS_GCN.
-  */
-  void decide_if_null();
-
-  /**
-    Decide proposal_GCN.
-    @param[in]    proposal
-  */
-  void decide_if_ac_prepare(const gcn_tuple_t &proposal);
-
-  /**
-    Decide commit by hlc. Only allowed to negotiate csr
-    @param[in]    csr
-    @param[in]    external_automatic
-  */
-  void decide_if_ac_commit(const csr_t csr, bool external_automatic);
-
-  /**
-    Some components, such as CDC, rely on the order of GCN and Binlog to meet
-    certain conditions. For example, if the Binlog has the form:
-    P1...C1...P2...C2, then it is assumed that the GCN of C1 must be less than
-    C2. In regular TSO transactions, this is satisfied. This is because the
-    timing is as follows:
-    1.  XA PREPARE (P1)
-    2.  GET GCN1
-    3.1 XA COMMIT with GCN1 (C1)
-    3.2 XA PREPARE (P2)
-    4.  GET GCN2
-    5.  XA COMMIT (C2)
-    Step-3.1 and Step-3.2 can happen in any order, but Step-4 definitely occurs
-    after Step-2.
-
-    However, for Async Commit, the above conditions may not be met:
-    1.  ac_prepare (P1 with PRE_GCN1 = 85)
-    2.  decide PROPOSAL_GCN1 = max(PRE_GCN1 = 85, SYS_GCN = 90)
-    3.1 ac_commit (C1 with GCN1 = 100), and SYS_GCN is not yet pushed up
-    3.2 ac_prepare (P2 with PRE_GCN2 = 87)
-    3.3 decide PROPOSAL_GCN2 = max(PRE_GCN2 = 87, SYS_GCN = 90)
-    3.4 push up SYS_GCN = 100 because C1 (GCN1 = 100)
-    4.  ac_commit (C2 with GCN2 = 87)
-    Notes, 3.1-3.4 belong to the same BGC (Binlog Group Commit).
-    The above situation obviously violates the preset assumptions because:
-    GCN1 > GCN2
-
-    Delaying the increase of SYS_GCN does not violate any distributed
-    consistency guarantee, but in order to maintain the original assumption, the
-    increase of SYS_GCN will be advanced before the decision of PROPOSAL_GCN to
-    ensure that the following conditions are met:
-    GCN1 <= PROPOSAL_GCN2 <= GCN2
-  */
-  void push_up_sys_gcn();
-
-  bool is_pmmt_gcn() const { return !is_null() && is_proposal; }
-  bool is_cmmt_gcn() const { return !is_null() && !is_proposal; }
-  bool is_automatic() const { return csr() == csr_t::CSR_AUTOMATIC; }
-  bool is_assigned() const { return csr() == csr_t::CSR_ASSIGNED; }
-  gcn_t gcn() const { return m_gtuple.gcn; }
-  csr_t csr() const { return m_gtuple.csr; }
-
-  bool is_null() const {
-#ifndef NDEBUG
-    if (m_gtuple.is_null()) {
-      assert(!is_proposal);
-      assert(!has_pushed_up);
-      assert(!has_decided);
-    }
-#endif
-    return m_gtuple.is_null();
-  }
-
-  void reset() {
-    m_gtuple.reset();
-    is_proposal = false;
-    has_decided = false;
-    has_pushed_up = false;
-  }
-
-  std::string print() const {
-    char buf[64];
-    const char *csr_msg = nullptr;
-    switch (csr()) {
-      case csr_t::CSR_ASSIGNED:
-        csr_msg = "csr_t::CSR_ASSIGNED";
-        break;
-      case csr_t::CSR_AUTOMATIC:
-        csr_msg = "csr_t::CSR_AUTOMATIC";
-        break;
-    }
-
-    snprintf(buf, sizeof(buf), "Proposal = %s, GCN_SRC = %s, gcn_val = %lu",
-             is_proposal ? "true" : "false", csr_msg, gcn());
-    return buf;
-  }
-
- private:
-  /**
-    Copy from pmmt which must be already pushed up.
-    @param[in]    gcn_tuple     {gcn, csr}
-  */
-  void copy_pmmt(const gcn_tuple_t &gcn_tuple);
-
-  /**
-    Copy from cmmt which must be already pushed up.
-    @param[in]    gcn_tuple     {gcn, csr}
-  */
-  void copy_cmmt(const gcn_tuple_t &gcn_tuple);
-
- public:
-  friend struct commit_mark_t;
-  friend struct proposal_mark_t;
-};
 /*-----------------------------------------------------------------------------*/
 /** GCN vision represent user query readview. */
 struct MyVisionGCN {
@@ -204,11 +45,16 @@ struct MyVisionGCN {
   MyVisionGCN() { reset(); }
 
   MyVisionGCN(csr_t _csr, gcn_t _gcn, scn_t _scn) {
-    assert(_csr == csr_t::CSR_ASSIGNED ? _scn == SCN_NULL : _scn != SCN_NULL);
-
     csr = _csr;
     gcn = _gcn;
     current_scn = _scn;
+  }
+
+  MyVisionGCN &operator=(gcn_t _gcn) {
+    csr = CSR_ASSIGNED;
+    gcn = _gcn;
+    current_scn = SCN_NULL;
+    return *this;
   }
 
   void reset() {
@@ -244,12 +90,15 @@ enum XA_status {
 };
 
 struct MyXAInfo {
-  MyXAInfo(XA_status s) : status(s), gcn(), slot(), branch(), maddr() {}
+ public:
+  MyXAInfo(XA_status s)
+      : status(s), gcn(), is_proposal(false), slot(), branch(), maddr() {}
 
   XA_status status;
 
   /** Proposal GCN when prepare, or commit GCN after commit / rollback */
-  MyGCN gcn;
+  gcn_tuple_t gcn;
+  bool is_proposal;
 
   /* XA branch ID */
   xa_addr_t slot;
@@ -259,13 +108,29 @@ struct MyXAInfo {
 
   /* XA master branch ID */
   xa_addr_t maddr;
+
+ public:
+  bool is_null() {
+    return gcn.is_null() && slot.is_null() && branch.is_null() &&
+           maddr.is_null();
+  }
+  /** Init xa attributes from txn undo when active or prepare.
+   *
+   * @param[in]		trx id
+   * @param[in]		txn undo if allocate */
+  void init_by_txn_undo(const trx_id_t tid, const trx_undo_t *txn_undo);
+
+  /** Init xa attributes from txn slot after transaction finished.
+   *
+   * @param[in]		txn slot */
+  void init_by_txn_slot(const txn_slot_t *txn_slot);
 };
 
-#define MY_XA_INFO_ATTACH (MyXAInfo(XA_status::ATTACHED))
+const MyXAInfo MY_XA_INFO_ATTACH(XA_status::ATTACHED);
 
-#define MY_XA_INFO_FORGET (MyXAInfo(XA_status::NOTSTART_OR_FORGET))
+const MyXAInfo MY_XA_INFO_FORGET(XA_status::NOTSTART_OR_FORGET);
 
-#define MY_XA_INFO_NOT_SUPPORT (MyXAInfo(XA_status::NOT_SUPPORT))
+const MyXAInfo MY_XA_INFO_NOT_SUPPORT(XA_status::NOT_SUPPORT);
 
 namespace lizard {
 namespace xa {
@@ -275,11 +140,6 @@ enum Transaction_state {
   TRANS_STATE_ROLLBACK = 1,
   TRANS_STATE_ROLLBACKING_BACKGROUND = 2,
   TRANS_STATE_UNKNOWN = 3,
-};
-
-struct Transaction_info {
-  Transaction_state state;
-  MyGCN gcn;
 };
 
 }  // namespace xa

@@ -8,6 +8,8 @@
 # $TABLE_NAME
 # $FULL_TABLE_NAME
 # $INDEX_NAME
+# $IS_PARTITION
+# $PK_COL
 # $INDEX_COL          column name of the index
 # $INDEX_COL_MIN_VAL  minimum value of the index column
 # $INDEX_COL_MAX_VAL  maximum value of the index column
@@ -21,11 +23,7 @@
 if($FULL_TABLE_NAME){
   --let $tmp_table_name = $FULL_TABLE_NAME
 }
---let $options = query_get_value(SELECT options FROM information_schema.innodb_index_status WHERE SCHEMA_NAME = '$SCHEMA_NAME' AND TABLE_NAME = '$tmp_table_name' AND INDEX_NAME = '$INDEX_NAME', options, 1)
-# Extract the IFT value from the options
---let $ift_value = `SELECT CAST(SUBSTRING_INDEX(SUBSTRING_INDEX('$options', 'IFT=', -1), ';', 1) AS UNSIGNED)`
-# Check if IFT's lowest bit is set to 1
---let $has_gpp = `SELECT $ift_value & 1`
+--let $has_gpp = query_get_value(SELECT gpp_enabled FROM information_schema.innodb_index_status WHERE SCHEMA_NAME = '$SCHEMA_NAME' AND TABLE_NAME = '$tmp_table_name' AND INDEX_NAME = '$INDEX_NAME', gpp_enabled, 1)
 
 # Assert that the gpp option is equal to CONTAIN_GPP
 --let $assert_text = The options for $SCHEMA_NAME.$TABLE_NAME.$INDEX_NAME should match the expected IFT=$CONTAIN_GPP condition
@@ -35,8 +33,13 @@ if($FULL_TABLE_NAME){
 # Test actual gpp.
 if ($INDEX_COL!='') {
   call dbms_stat.flush_gpp();
-  --eval select $NON_INDEX_COL from $SCHEMA_NAME.$TABLE_NAME force index ($INDEX_NAME) where $INDEX_COL >= $INDEX_COL_MIN_VAL and $INDEX_COL <= $INDEX_COL_MAX_VAL;
-
+  if ($IS_PARTITION==1) {
+    --eval select $NON_INDEX_COL from $SCHEMA_NAME.$TABLE_NAME force index ($INDEX_NAME) where $PK_COL>=$INDEX_COL_MIN_VAL and $PK_COL<=$INDEX_COL_MAX_VAL and $INDEX_COL >= $INDEX_COL_MIN_VAL and $INDEX_COL <= $INDEX_COL_MAX_VAL;
+  }
+  if ($IS_PARTITION==0) {
+    --eval select $NON_INDEX_COL from $SCHEMA_NAME.$TABLE_NAME force index ($INDEX_NAME) where $INDEX_COL >= $INDEX_COL_MIN_VAL and $INDEX_COL <= $INDEX_COL_MAX_VAL;
+  }
+ 
   --let $guess_hit= query_get_value(show status like "Lizard_index_scan_guess_clust_hit", Value, 1)
   --let $guess_miss=query_get_value(show status like "Lizard_index_scan_guess_clust_miss", Value, 1)
   --let $actual_gpp=0

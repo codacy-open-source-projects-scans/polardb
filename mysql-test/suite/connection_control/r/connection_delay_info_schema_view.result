@@ -35,7 +35,7 @@ connect(localhost,u2,efgh,test,MASTER_PORT,MASTER_SOCKET);
 ERROR 28000: Access denied for user 'u2'@'localhost' (using password: YES)
 # connection_control_failed_login_attempts should contain entries
 # for u1@localhost and u2@localhost
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
 USERHOST	FAILED_ATTEMPTS
 'u1'@'localhost'	2
 'u2'@'localhost'	1
@@ -47,7 +47,7 @@ connect(localhost,u3,efgh,test,MASTER_PORT,MASTER_SOCKET);
 ERROR 28000: Access denied for user 'u3'@'localhost' (using password: YES)
 # connection_control_failed_login_attempts should contain entries
 # for u1@localhost, u2@localhost and u3@localhost
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
 USERHOST	FAILED_ATTEMPTS
 'u1'@'localhost'	2
 'u2'@'localhost'	2
@@ -59,7 +59,7 @@ ERROR 28000: Access denied for user 'u1'@'localhost' (using password: YES)
 connect(localhost,u3,efgh,test,MASTER_PORT,MASTER_SOCKET);
 ERROR 28000: Access denied for user 'u3'@'localhost' (using password: YES)
 # failed connection counts should have increased for all users
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
 USERHOST	FAILED_ATTEMPTS
 'u1'@'localhost'	3
 'u2'@'localhost'	3
@@ -77,24 +77,24 @@ ERROR 28000: Access denied for user 'u3'@'localhost' (using password: YES)
 connect(localhost,u1,haha,test,MASTER_PORT,MASTER_SOCKET);
 ERROR 28000: Access denied for user 'u1'@'localhost' (using password: YES)
 # Try various queries
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts
 WHERE USERHOST = '\'u1\'@\'localhost\'';
 USERHOST	FAILED_ATTEMPTS
 'u1'@'localhost'	6
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts
 WHERE USERHOST LIKE '%u2%';
 USERHOST	FAILED_ATTEMPTS
 'u2'@'localhost'	4
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts
 WHERE FAILED_ATTEMPTS > 4;
 USERHOST	FAILED_ATTEMPTS
 'u1'@'localhost'	6
 'u3'@'localhost'	5
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts
 WHERE FAILED_ATTEMPTS > 5;
 USERHOST	FAILED_ATTEMPTS
 'u1'@'localhost'	6
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts
 WHERE FAILED_ATTEMPTS < 5;
 USERHOST	FAILED_ATTEMPTS
 'u2'@'localhost'	4
@@ -102,12 +102,12 @@ CREATE USER viewer@localhost IDENTIFIED BY 'abcd';
 GRANT CONNECTION_ADMIN ON *.* TO viewer@localhost;
 # After successful login, corresponding entry should disappear
 # from the view
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
 USERHOST	FAILED_ATTEMPTS
 'u3'@'localhost'	5
 DROP USER viewer@localhost;
 # A user without privileges should not be able to any information
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
 USERHOST	FAILED_ATTEMPTS
 connect(localhost,u1,,test,MASTER_PORT,MASTER_SOCKET);
 ERROR 28000: Access denied for user 'u1'@'localhost' (using password: NO)
@@ -116,7 +116,7 @@ ERROR 28000: Access denied for user 'u3'@'localhost' (using password: YES)
 connect(localhost,u2,efgh,test,MASTER_PORT,MASTER_SOCKET);
 ERROR 28000: Access denied for user 'u2'@'localhost' (using password: YES)
 # Subsequent failed attempts should put entries back in the view
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
 USERHOST	FAILED_ATTEMPTS
 'u1'@'localhost'	1
 'u2'@'localhost'	1
@@ -128,7 +128,7 @@ ERROR 28000: Access denied for user 'u5'@'localhost' (using password: YES)
 connect(localhost,u6,efgh,test,MASTER_PORT,MASTER_SOCKET);
 ERROR 28000: Access denied for user 'u6'@'localhost' (using password: YES)
 # Attempts by invalid accounts should be shown in the view
-SELECT * FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
+SELECT USERHOST, FAILED_ATTEMPTS FROM INFORMATION_SCHEMA.connection_control_failed_login_attempts;
 USERHOST	FAILED_ATTEMPTS
 'u1'@'localhost'	1
 'u2'@'localhost'	1

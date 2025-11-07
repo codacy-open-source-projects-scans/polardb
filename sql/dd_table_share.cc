@@ -1096,6 +1096,17 @@ static bool fill_column_from_dd(THD *thd, TABLE_SHARE *share,
     reg_field->comment.length = comment.length();
   }
 
+  /** Here, for mysql.user table, we pretend to have encrypted_method. */
+  if (share->db.str != nullptr && share->table_name.str != nullptr &&
+      name != nullptr &&
+      !my_strcasecmp(&my_charset_latin1, share->db.str, "mysql") &&
+      !my_strcasecmp(&my_charset_latin1, share->table_name.str, "user")) {
+    if (!my_strcasecmp(&my_charset_latin1, name, "user"))
+      reg_field->set_encrypted_type(COLUMN_ENCRYPTED_TYPE_MASK_INTERNAL_USERS);
+    else if (!my_strcasecmp(&my_charset_latin1, name, "authentication_string"))
+      reg_field->set_encrypted_type(COLUMN_ENCRYPTED_TYPE_MASK_USERS_PASSWORD);
+  }
+
   // NOT SECONDARY column option.
   if (column_options->exists("not_secondary"))
     reg_field->set_flag(NOT_SECONDARY_FLAG);
@@ -1436,8 +1447,8 @@ static bool fill_index_from_dd(THD *thd, TABLE_SHARE *share,
 
   keyinfo->secondary_engine_attribute = LexStringDupRootUnlessEmpty(
       &share->mem_root, idx_obj->secondary_engine_attribute());
-  if (keyinfo->secondary_engine_attribute.length > 0)
-    keyinfo->flags |= HA_INDEX_USES_SECONDARY_ENGINE_ATTRIBUTE;
+  assert(keyinfo->secondary_engine_attribute.length == 0);
+  keyinfo->se_attr_hint = idx_obj->se_attr_hint();
   return (false);
 }
 

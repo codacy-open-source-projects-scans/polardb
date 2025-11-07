@@ -190,6 +190,7 @@
 #include "consensus_log_manager.h"
 #include "ppi/ppi_statement.h"
 #include "sql/ccl/ccl.h"
+#include "sql/group_update.h"
 #include "sql/consensus_admin.h"
 #include "sql/outline/outline_digest.h"
 #include "sql/outline/outline_interface.h"
@@ -2480,10 +2481,19 @@ bool dispatch_command(THD *thd, const COM_DATA *com_data,
       thd->get_stmt_da()->disable_status();
       break;
     }
-    case COM_PING:
+    case COM_PING: {
+      const uint64_t ping_check_result = is_ping_not_matched(
+        thd->variables.ping_mode, &thd->status_var.last_cluster_change_version);
       thd->status_var.com_other++;
-      my_ok(thd);  // Tell client we are alive
+      if (!ping_check_result) {
+        my_ok(thd);  // Tell client we are alive
+      } else {
+        my_error(ER_PING_CHECK_FAILED, MYF(0), 
+                 thd->variables.ping_mode,
+                 get_ping_mode_name(ping_check_result));
+      }
       break;
+    }
     case COM_PROCESS_INFO:
       bool global_access;
       LEX_CSTRING db_saved;
@@ -2681,7 +2691,9 @@ bool shutdown(THD *thd, enum mysql_enum_shutdown_level level) {
   my_ok(thd);
 
   LogErr(SYSTEM_LEVEL, ER_SERVER_SHUTDOWN_INFO,
-         thd->security_context()->user().str, server_version,
+         thd->security_context()->user().str, 
+         thd->security_context()->host_or_ip().str,
+         server_version,
          MYSQL_COMPILATION_COMMENT_SERVER);
 
   DBUG_PRINT("quit", ("Got shutdown command for level %u", level));
@@ -3239,7 +3251,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
         */
         binlog_gtid_end_transaction(thd);
         /* Lizard: DROP TRIGGER IF EXISTS might forget to reset it. */
-        thd->reset_gcn_variables();
+        thd->reset_trans_policy();
         return 0;
       }
 
@@ -3380,7 +3392,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
   */
   if (stmt_causes_implicit_commit(thd, CF_IMPLICIT_COMMIT_BEGIN)) {
     /** Implicit Commit might reset all lizard THD vars. Backup and restore it. */
-    lizard::GCN_context_backup gcn_ctx_backup(thd);
+    lizard::Implicit_trans_policy_guard guard(thd);
     /*
       Note that this should never happen inside of stored functions
       or triggers as all such statements prohibited there.
@@ -3805,10 +3817,6 @@ int mysql_execute_command(THD *thd, bool first_level) {
       if (consensus_log_manager.get_status() == RELAY_LOG_WORKING &&
           !opt_cluster_log_type_instance) {
         res = stop_slave_cmd(thd);
-        LogErr(INFORMATION_LEVEL, ER_CONSENSUS_CMD_LOG,
-               thd->m_main_security_ctx.user().str,
-               thd->m_main_security_ctx.host_or_ip().str, thd->query().str,
-               res);
       } else
         my_error(ER_CONSENSUS_SERVER_NOT_READY, MYF(0));
       break;
@@ -4512,7 +4520,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
       thd->mdl_context.release_transactional_locks();
       /* Begin transaction with the same isolation level. */
       if (tx_chain) {
-        thd->reset_gcn_variables();
+        thd->reset_trans_policy();
         if (trans_begin(thd)) goto error;
       } else {
         /* Reset the isolation level and access mode if no chaining
@@ -4943,14 +4951,14 @@ int mysql_execute_command(THD *thd, bool first_level) {
     case SQLCOM_EXPLAIN_OTHER:
     case SQLCOM_RESTART_SERVER:
     case SQLCOM_CREATE_SRS:
-    case SQLCOM_DROP_SRS: {
-      case SQLCOM_ADMIN_PROC:
-      case SQLCOM_TRANS_PROC:
-        assert(lex->m_sql_cmd != nullptr);
+    case SQLCOM_DROP_SRS:
+    case SQLCOM_ADMIN_PROC:
+    case SQLCOM_TRANS_PROC: {
+      assert(lex->m_sql_cmd != nullptr);
 
-        res = lex->m_sql_cmd->execute(thd);
+      res = lex->m_sql_cmd->execute(thd);
 
-        break;
+      break;
     }
     case SQLCOM_ALTER_USER: {
       LEX_USER *user, *tmp_user;
@@ -5188,10 +5196,30 @@ finish:
     DEBUG_SYNC(thd, "execute_command_after_close_tables");
 #endif
 
-  if (!thd->in_sub_stmt && lex->opt_hints_global &&
-      lex->opt_hints_global->inventory_hint) {
-    im::process_inventory_transactional_hint(
-        thd, lex->opt_hints_global->inventory_hint);
+  if (!thd->in_sub_stmt) {
+    if (lex->opt_hints_global && lex->opt_hints_global->inventory_hint) {
+      im::process_inventory_transactional_hint(
+          thd, lex->opt_hints_global->inventory_hint);
+    }
+
+    if (thd->gu_ctx.need_release_gu()) {
+      thd->gu_ctx.set_need_release_gu(false);
+      ++group_update_ignore_count;
+      GroupUpdatePool::get_instance()->try_release_gu(
+          thd->gu_ctx.get_gu(), thd->gu_ctx.reuse_version);
+    }
+    /*
+      This case means that some error occured for the leader after update.
+      Normally the leader's gu_ctx will be reseted in the finish_commit.
+    */
+    if (thd->gu_ctx.is_gu()) {
+      GroupUpdate *gu;
+
+      DEBUG_SYNC_C("error_done_before");
+      if ((gu = thd->gu_ctx.get_gu()->error_done(thd)) != nullptr)
+        GroupUpdatePool::get_instance()->try_release_gu(
+            gu, thd->gu_ctx.reuse_version);
+    }
   }
 
   if (!thd->in_sub_stmt && thd->transaction_rollback_request) {
@@ -5459,6 +5487,11 @@ void THD::reset_for_next_command() {
 #ifndef NDEBUG
   thd->set_tmp_table_seq_id(1);
 #endif
+
+  /* For some case, the query fail without reset the gu_ctx. for defense.*/
+  if (thd->gu_ctx.is_gu()) thd->gu_ctx.reset();
+
+  thd->enable_mask_internal_user = im::opt_mask_internal_user;
 }
 
 /*

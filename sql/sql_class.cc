@@ -29,6 +29,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <algorithm>
+#include <regex>
 #include <utility>
 
 #include "field_types.h"
@@ -374,8 +375,6 @@ void THD::Transaction_state::backup(THD *thd) {
   this->m_transaction_rollback_request = thd->transaction_rollback_request;
 
   this->m_ppi_transaction = thd->ppi_transaction;
-
-  this->owned_commit_gcn = thd->owned_commit_gcn;
 }
 
 void THD::Transaction_state::restore(THD *thd) {
@@ -396,18 +395,19 @@ void THD::Transaction_state::restore(THD *thd) {
   thd->transaction_rollback_request = this->m_transaction_rollback_request;
 
   thd->ppi_transaction = this->m_ppi_transaction;
-
-  thd->owned_commit_gcn = this->owned_commit_gcn;
 }
 
 THD::Attachable_trx::Attachable_trx(THD *thd, Attachable_trx *prev_trx)
     : m_thd(thd),
       m_reset_lex(RESET_LEX),
       m_prev_attachable_trx(prev_trx),
-      m_trx_state() {
+      m_trx_state(),
+      m_policy_state() {
   // Save the transaction state.
 
   m_trx_state.backup(m_thd);
+
+  m_policy_state.backup(m_thd);
 
   // Save and reset query-tables-list and reset the sql-command.
   //
@@ -496,7 +496,7 @@ THD::Attachable_trx::Attachable_trx(THD *thd, Attachable_trx *prev_trx)
 
   m_thd->ppi_transaction = nullptr;
 
-  m_thd->owned_commit_gcn.reset();
+  m_thd->new_attachable_policy();
 
   PPI_TRANSACTION_CALL(backup_transaction)(m_thd->ppi_thread);
 
@@ -537,6 +537,8 @@ THD::Attachable_trx::~Attachable_trx() {
   // Restore the transaction state.
 
   m_trx_state.restore(m_thd);
+
+  m_policy_state.restore(m_thd);
 
   m_thd->restore_backup_open_tables_state(&m_trx_state.m_open_tables_state);
 
@@ -741,10 +743,13 @@ THD::THD(bool enable_plugins)
       m_inside_system_variable_global_update(false),
       bind_parameter_values(nullptr),
       bind_parameter_values_count(0),
-      owned_commit_gcn(),
       owned_vision_gcn(),
+      cpolicy_ctx(),
       lex_returning(new im::Lex_returning(false, mem_root)),
-      xpaxos_replication_channel(false) {
+      xpaxos_replication_channel(false),
+      sqb_should_block(false),
+      m_trx_affected_rows(0),
+      sqb_ret_error(Sqb_ret_error::SQB_RET_ERROR_NONE) {
   main_lex->reset();
   set_psi(nullptr);
   mdl_context.init(this);
@@ -753,6 +758,7 @@ THD::THD(bool enable_plugins)
   m_catalog.str = "std";
   m_catalog.length = 3;
   password = 0;
+  conn_comment = nullptr;
   query_start_usec_used = false;
   check_for_truncated_fields = CHECK_FIELD_IGNORE;
   killed = NOT_KILLED;
@@ -819,6 +825,15 @@ THD::THD(bool enable_plugins)
                    MY_MUTEX_INIT_FAST);
   mysql_cond_init(key_COND_group_replication_connection_cond_var,
                   &COND_group_replication_connection_cond_var);
+
+  mysql_mutex_init(key_LOCK_tx_commit_pending_mutex,
+                   &LOCK_tx_commit_pending_mutex, MY_MUTEX_INIT_FAST);
+  mysql_cond_init(key_COND_tx_commit_pending_cond_var,
+                  &COND_tx_commit_pending_cond_var);
+#ifndef NDEBUG
+  mysql_cond_init(key_COND_bgc_preempt_cond_var,
+                  &COND_bgc_preempt_cond_var);
+#endif
 
   /* Variables with default values */
   set_proc_info("login");
@@ -1166,6 +1181,12 @@ void THD::init(void) {
     ALTER USER statements.
   */
   m_disable_password_validation = false;
+
+  /** Lizard : init all gcn variables here. */
+  variables.innodb_snapshot_gcn = GCN_NULL;
+  variables.innodb_commit_gcn = GCN_NULL;
+  variables.innodb_current_snapshot_gcn = false;
+  variables.opt_query_via_flashback_area = false;
 }
 
 void THD::init_query_mem_roots() {
@@ -1479,10 +1500,13 @@ THD::~THD() {
   mysql_mutex_destroy(&LOCK_thd_security_ctx);
   mysql_mutex_destroy(&LOCK_current_cond);
   mysql_mutex_destroy(&LOCK_group_replication_connection_mutex);
+  mysql_mutex_destroy(&LOCK_tx_commit_pending_mutex);
 
   mysql_cond_destroy(&COND_thr_lock);
   mysql_cond_destroy(&COND_group_replication_connection_cond_var);
+  mysql_cond_destroy(&COND_tx_commit_pending_cond_var);
 #ifndef NDEBUG
+  mysql_cond_destroy(&COND_bgc_preempt_cond_var);
   dbug_sentry = THD_SENTRY_GONE;
 #endif
 
@@ -1516,6 +1540,8 @@ THD::~THD() {
   destroy_hash(seq_thd_hash);
   seq_thd_hash = nullptr;
   delete recycle_state;
+  if (conn_comment != nullptr) my_free(conn_comment);
+  conn_comment = nullptr;
 }
 
 /**
@@ -1861,6 +1887,8 @@ void THD::cleanup_after_query() {
   if (rli_slave) rli_slave->cleanup_after_query();
   // Set the default "cute" mode for the execution environment:
   check_for_truncated_fields = CHECK_FIELD_IGNORE;
+
+  enable_mask_internal_user = false;
 }
 
 /*
@@ -2184,6 +2212,22 @@ Prepared_statement_map::~Prepared_statement_map() {
   assert(st_hash.empty());
 }
 
+void THD::sqb_send_kill_message(int err) const {
+  switch (sqb_ret_error) {
+    case Sqb_ret_error::SQB_RET_ERROR_NONE:
+      my_error(err, MYF(ME_FATALERROR));
+      break;
+    case Sqb_ret_error::SQB_RET_ERROR_TIME:
+      my_error(ER_SLOW_QUERY_EXCEED_TIME, MYF(ME_FATALERROR));
+      break;
+    case Sqb_ret_error::SQB_RET_ERROR_CPU_AND_TIME:
+      my_error(ER_SLOW_QUERY_TIME_FOR_CPU_EXECEED, MYF(ME_FATALERROR));
+      break;
+    default:
+      my_error(err, MYF(ME_FATALERROR));
+  }
+}
+
 void THD::send_kill_message() const {
   int err = killed;
   if (m_mem_cnt.is_error()) {
@@ -2207,7 +2251,11 @@ void THD::send_kill_message() const {
       can look at the execution plan and statistics so far.
     */
     if (!running_explain_analyze) {
-      my_error(err, MYF(ME_FATALERROR));
+      if (sqb_is_enabled) {
+        sqb_send_kill_message(err);
+      } else {
+        my_error(err, MYF(ME_FATALERROR));
+      }
     }
   }
 }
@@ -2934,6 +2982,52 @@ bool THD::send_result_set_row(const mem_root_deque<Item *> &row_items) {
     */
     str_buffer.set(buffer, sizeof(buffer), &my_charset_bin);
   }
+
+
+  return false;
+}
+
+bool THD::send_returning_result_set_row(const mem_root_deque<Item *> &row_items, ptrdiff_t diff, bool is_before) {
+  char buffer[MAX_FIELD_WIDTH];
+  String str_buffer(buffer, sizeof(buffer), &my_charset_bin);
+
+  DBUG_TRACE;
+  Item_field* item_field = nullptr;
+  Item_ref* item_ref = nullptr;
+  for (Item *item : VisibleFields(row_items)) {
+    if (is_before) {
+      /* Point data_ptr to the old data. */
+      item_field = dynamic_cast<Item_field*>(item);
+      if (item_field != nullptr) {
+        item_field->field->move_field_offset(diff);
+      }
+
+      item_ref = dynamic_cast<Item_ref*>(item);
+      if (item_ref != nullptr) {
+        item_ref->get_result_field()->move_field_offset(diff);
+      }
+    }
+    
+
+    if (item->send(m_protocol, &str_buffer) || is_error()) return true;
+    /*
+      Reset str_buffer to its original state, as it may have been altered in
+      Item::send().
+    */
+    str_buffer.set(buffer, sizeof(buffer), &my_charset_bin);
+
+    /* reset data_ptr */
+    if (is_before) {
+      if (item_field != nullptr) {
+        item_field->field->move_field_offset(-diff);
+      }
+      if (item_ref != nullptr) {
+        item_ref->get_result_field()->move_field_offset(-diff);
+      }
+    }
+  }
+
+
   return false;
 }
 
@@ -3238,6 +3332,56 @@ void THD::pop_protocol() {
   m_protocol = m_protocol->pop_protocol();
   assert(m_protocol != nullptr);
 }
+/*----------------------------------------------------------------*/
+/* Functions used for GongHang slow query block.  */
+/*----------------------------------------------------------------*/
+bool THD::sqb_is_block_command() const {
+  return lex->sql_command == SQLCOM_SELECT ||
+         lex->sql_command == SQLCOM_UPDATE ||
+         lex->sql_command == SQLCOM_DELETE ||
+         lex->sql_command == SQLCOM_INSERT ||
+         lex->sql_command == SQLCOM_REPLACE ||
+         lex->sql_command == SQLCOM_INSERT_SELECT ||
+         lex->sql_command == SQLCOM_REPLACE_SELECT;
+}
+
+/** Used for GongHang slow query block get cpu start time. */
+void THD::sqb_set_cpu_start_time() {
+  if (!sqb_should_block) return;
+  using namespace std::chrono;
+  clockid_t cid;
+  if (pthread_getcpuclockid((pthread_t)real_id, &cid) == 0) {
+    struct timespec ts;
+    clock_gettime(cid, &ts);
+    auto start_s = seconds(ts.tv_sec);
+    auto start_ns = nanoseconds(ts.tv_nsec);
+    sqb_cpu_start_time = duration_cast<milliseconds>(start_s).count() +
+                         duration_cast<milliseconds>(start_ns).count();
+  }
+}
+
+/** Used for GongHang slow query block get cpu start time. */
+void THD::sqb_set_time_and_error() {
+  sqb_is_enabled = sqb_enable_slow_query_block;
+  sqb_ret_error = Sqb_ret_error::SQB_RET_ERROR_NONE;
+  if (sqb_is_enabled) {
+    /** Every new sql comes, reset sqb error status and get enable status. */
+    sqb_start_time = sqb_query_start_in_ms();
+    sqb_set_cpu_start_time();
+  }
+}
+
+ulonglong THD::sqb_query_start_in_ms() const {
+  using namespace std::chrono;
+  auto start_s = seconds(start_time.tv_sec);
+  auto start_usec = microseconds(start_time.tv_usec);
+  return duration_cast<milliseconds>(start_s).count() +
+         duration_cast<milliseconds>(start_usec).count();
+}
+
+/*----------------------------------------------------------------*/
+/* Functions used for GongHang slow query block.  */
+/*----------------------------------------------------------------*/
 
 void THD::set_time() {
   start_utime = my_micro_time();
@@ -3246,6 +3390,8 @@ void THD::set_time() {
     start_time = user_time;
   else
     my_micro_time_to_timeval(start_utime, &start_time);
+
+  sqb_set_time_and_error();
 
 #ifdef HAVE_PSI_THREAD_INTERFACE
   PSI_THREAD_CALL(set_thread_start_time)(query_start_in_secs());
@@ -3268,6 +3414,7 @@ void THD::inc_lock_usec(ulonglong lock_usec) {
 }
 
 void THD::update_slow_query_status() {
+  sqb_reset_time_and_error();
   if (my_micro_time() > start_utime + variables.long_query_time)
     server_status |= SERVER_QUERY_WAS_SLOW;
 }
@@ -3325,6 +3472,25 @@ void Transactional_ddl_context::post_ddl() {
   m_hton = nullptr;
   m_db = "";
   m_tablename = "";
+}
+
+bool set_my_ok(THD *thd, ulonglong affected_rows, ulonglong id,
+               const char *message) {
+  /** When trx_max_affected_rows unset, it will not be blocked */
+  ulonglong max_trx_affected_rows = sqb_max_trx_affected_rows;
+  if (max_trx_affected_rows == 0) {
+    my_ok(thd, affected_rows, id, message);
+    return false;
+  }
+
+  ulonglong trx_affected_rows = thd->m_trx_affected_rows + affected_rows;
+  if (trx_affected_rows > max_trx_affected_rows) {
+    my_error(ER_TRANSACTION_TOO_BIG, MYF(0), "");
+    return true;
+  }
+  thd->m_trx_affected_rows = trx_affected_rows;
+  my_ok(thd, affected_rows, id, message);
+  return false;
 }
 
 void my_ok(THD *thd, ulonglong affected_rows, ulonglong id,

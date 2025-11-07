@@ -1,3 +1,7 @@
+select @@force_print_utf8mb4_implicit_collation;
+@@force_print_utf8mb4_implicit_collation
+0
+set @@force_print_utf8mb4_implicit_collation=OFF;
 SELECT @@GLOBAL.default_collation_for_utf8mb4;
 @@GLOBAL.default_collation_for_utf8mb4
 utf8mb4_0900_ai_ci
@@ -423,9 +427,11 @@ Warning	1681	Updating 'default_collation_for_utf8mb4' is deprecated. It will be 
 SHOW GLOBAL VARIABLES LIKE '%default_collation_for_utf8mb4%';
 Variable_name	Value
 default_collation_for_utf8mb4	utf8mb4_0900_ai_ci
+disable_default_collation_for_utf8mb4	OFF
 SHOW SESSION VARIABLES LIKE '%default_collation_for_utf8mb4%';
 Variable_name	Value
 default_collation_for_utf8mb4	utf8mb4_general_ci
+disable_default_collation_for_utf8mb4	OFF
 CREATE DATABASE db1;
 USE db1;
 CREATE TABLE st1 (c1 INT ,c3 varchar(10) UNIQUE KEY);

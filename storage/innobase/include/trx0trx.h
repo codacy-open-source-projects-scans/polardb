@@ -62,13 +62,10 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "lizard0tcn.h"
 #include "lizard0trx.h"
 #include "lizard0undo0types.h"
-#include "lizard0xa.h"
+#include "lizard0read0xa.h"
 
+class XA_specification;
 
-namespace binlog {
-class Binlog_xa_specification;
-}  // namespace binlog
-   //
 // Forward declaration
 struct mtr_t;
 
@@ -1195,7 +1192,7 @@ struct trx_t {
   dberr_t gp_error_state;
 
   /** Descripe XA attributes from server */
-  XAD xad;
+  xa_desc_t xa_desc;
 
   /** XA specification interpreted from TC log when recovery. */
   XA_specification *xa_spec;
@@ -1205,6 +1202,9 @@ struct trx_t {
 
   /** Lizard-3.0: true if the finished state is rollback */
   bool is_rollback;
+
+  /** Cache a min active trx id locally. */
+  std::atomic<trx_id_t> min_active_tid{0};
 };
 
 #ifndef UNIV_HOTBACKUP

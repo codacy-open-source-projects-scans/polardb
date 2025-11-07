@@ -30,7 +30,7 @@ namespace im {
 
 void collect_show_global_results(
     MEM_ROOT *mem_root, std::vector<Consensus_show_global_result *> &results) {
-  if (opt_consensus_force_recovery) return;
+  if (opt_consensus_force_recovery || !consensus_ptr) return;
   alisql::Paxos::MemberInfoType mi;
   std::vector<alisql::Paxos::ClusterInfoType> cis;
   consensus_ptr->getMemberInfo(&mi);
@@ -88,6 +88,18 @@ void collect_show_global_results(
     result->send_applied.str = res;
     result->send_applied.length = strlen(res);
 
+    res = ci.logInstance ? "Log" : "Normal";
+    result->instance_type.str = res;
+    result->instance_type.length = strlen(res);
+
+    res = ci.disableElection ? "Yes" : "No";
+    result->disable_election.str = res;
+    result->disable_election.length = strlen(res);
+    result->server_ip.str =
+        strmake_root(mem_root, ci.serverIp.c_str(), ci.serverIp.length());
+    result->server_ip.length = ci.serverIp.length();
+    result->server_port = ci.serverPort;
+
     results.push_back(result);
   }
   return;
@@ -95,8 +107,9 @@ void collect_show_global_results(
 
 void collect_show_local_results(MEM_ROOT *mem_root,
                                 Consensus_show_local_result *result) {
-  if (opt_consensus_force_recovery) return;
+  if (opt_consensus_force_recovery || !consensus_ptr) return;
   const char *res = NULL;
+  Consensus_Log_System_Status rw_status = consensus_log_manager.get_status();
   alisql::Paxos::MemberInfoType mi;
   consensus_ptr->getMemberInfo(&mi);
   result->id = mi.serverId;
@@ -115,7 +128,13 @@ void collect_show_local_results(MEM_ROOT *mem_root,
       res = "Candidate";
       break;
     case alisql::Paxos::StateType::LEADER:
-      res = "Leader";
+      /* not a stable leader if server_ready_for_rw is no and
+      * consensus_auto_leader_transfer is on */
+      if (opt_consensus_auto_leader_transfer &&
+          (opt_cluster_log_type_instance || rw_status == RELAY_LOG_WORKING))
+        res = "Prepared";
+      else
+        res = "Leader";
       break;
     case alisql::Paxos::StateType::LEARNER:
       res = "Learner";
@@ -124,18 +143,15 @@ void collect_show_local_results(MEM_ROOT *mem_root,
       res = "No Role";
       break;
   }
+
   result->role.str = res;
   result->role.length = strlen(res);
   result->vote_for = mi.votedFor;
   result->applied_index = mi.lastAppliedIndex;
-  Consensus_Log_System_Status rw_status = consensus_log_manager.get_status();
-  if (opt_cluster_log_type_instance) {
+  if (opt_cluster_log_type_instance || rw_status == RELAY_LOG_WORKING) {
     res = "No";
   } else {
-    if (rw_status == BINLOG_WORKING)
-      res = "Yes";
-    else
-      res = "No";
+    res = "Yes";
   }
   result->server_ready_for_rw.str = res;
   result->server_ready_for_rw.length = strlen(res);
@@ -145,6 +161,19 @@ void collect_show_local_results(MEM_ROOT *mem_root,
     res = "Normal";
   result->instance_type.str = res;
   result->instance_type.length = strlen(res);
+
+  res = opt_consensus_disable_election ? "Yes" : "No";
+  result->disable_election.str = res;
+  result->disable_election.length = strlen(res);
+
+  res = consensus_ptr->getApplyThreadRunning() ? "Yes" : "No";
+  result->apply_running.str = res;
+  result->apply_running.length = strlen(res);
+
+  result->leader_ip.str =
+      strmake_root(mem_root, mi.leaderIp.c_str(), mi.leaderIp.length());
+  result->leader_ip.length = mi.leaderIp.length();
+  result->leader_port = mi.leaderPort;
   return;
 }
 
